@@ -262,8 +262,9 @@ contract StockRunVault {
         try circuits.eval(circuitId, input) returns (bytes memory r) { out = r; } catch { revert CircuitFailed(); }
     }
 
-    // ---- bit packing: MSB-first, fields in spec order, zero-padded to whole bytes.
-    // MUST match circuits/reference/pack.ts. TODO (blocking): confirm TapeOut's eval bit order.
+    // ---- bit packing (TAP-02 §5): vector bit i = bit (i mod 8) of byte floor(i/8), LSB-first.
+    // Fields in docs/CIRCUITS.md order; field wire k = bit k of the value. The vector is the
+    // little-endian integer sum(v_j << offset_j). MUST match circuits/reference/pack.ts.
     struct F { uint256 v; uint256 w; }
     function _f(uint256 v, uint256 w) internal pure returns (F memory) { require(w == 0 || v < (1 << w), "field"); return F(v, w); }
 
@@ -272,26 +273,21 @@ contract StockRunVault {
     {
         F[8] memory fs = [a, b, c, d, e, f, g, h];
         uint256 acc; uint256 nbits;
-        for (uint256 i; i < 8; i++) { acc = (acc << fs[i].w) | fs[i].v; nbits += fs[i].w; }
-        uint256 nbytes = (nbits + 7) / 8;
-        acc <<= (nbytes * 8 - nbits);
-        bytes memory out = new bytes(nbytes);
-        for (uint256 i; i < nbytes; i++) out[i] = bytes1(uint8(acc >> (8 * (nbytes - 1 - i))));
+        for (uint256 i; i < 8; i++) { acc |= fs[i].v << nbits; nbits += fs[i].w; }
+        bytes memory out = new bytes((nbits + 7) / 8);
+        for (uint256 i; i < out.length; i++) out[i] = bytes1(uint8(acc >> (8 * i)));
         return out;
     }
 
     function _unpack(bytes memory data, uint256[] memory widths) internal pure returns (uint256[] memory vals) {
+        uint256 total;
+        for (uint256 i; i < widths.length; i++) total += widths[i];
+        if (data.length * 8 < total || data.length > 32) revert CircuitFailed();
+        uint256 acc;
+        for (uint256 i; i < data.length; i++) acc |= uint256(uint8(data[i])) << (8 * i);
         vals = new uint256[](widths.length);
         uint256 pos;
-        for (uint256 i; i < widths.length; i++) {
-            uint256 v;
-            for (uint256 k; k < widths[i]; k++) {
-                if ((pos >> 3) >= data.length) revert CircuitFailed();
-                v = (v << 1) | ((uint8(data[pos >> 3]) >> (7 - (pos & 7))) & 1);
-                pos++;
-            }
-            vals[i] = v;
-        }
+        for (uint256 i; i < widths.length; i++) { vals[i] = (acc >> pos) & ((1 << widths[i]) - 1); pos += widths[i]; }
     }
 
     function _w2(uint256 a, uint256 b) internal pure returns (uint256[] memory w) { w = new uint256[](2); w[0] = a; w[1] = b; }

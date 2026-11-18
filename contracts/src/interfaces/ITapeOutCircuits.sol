@@ -2,8 +2,8 @@
 pragma solidity ^0.8.24;
 
 /// @notice Minimal view of a TapeOut processor's circuits contract.
-/// @dev VERIFY against the official ABI before deploying. One hackathon project reports
-///      `eval(uint256,bytes)` with selector 0x934d06ea. Return type and bit order are unconfirmed.
+/// @dev Per TAP-02 §6: `eval(uint256,bytes) returns (bytes)`, selector 0x934d06ea. Bits are LSB-first (§5).
+///      Verified on BNB only; confirm on an X Layer fork (docs/TAPEOUT_NOTES.md, "Fork check").
 interface ITapeOutCircuits {
     function eval(uint256 circuitId, bytes calldata input) external view returns (bytes memory output);
 }

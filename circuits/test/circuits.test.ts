@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { restockGuard, pickupCheck, deliveryCheck, Decision } from '../reference/circuits';
-import { packFields, unpackFields, packRestock } from '../reference/pack';
+import { packFields, unpackFields, packRestock, packPickup, PICKUP_OUT } from '../reference/pack';
 
 const base = { total: 20, budget: 100, limit: 40, sup: 0b01, cat: 0, dist: 0, ownerOk: false };
 
@@ -77,6 +77,25 @@ describe('packing', () => {
     expect(unpackFields(bytes, [3, 8, 1])).toEqual([5, 200, 1]);
   });
   it('RestockGuard packs to 34 bits padded to 5 bytes', () => expect(packRestock(base).length).toBe(5));
+
+  // Golden vectors for the TAP-02 §5 layout (LSB-first). StockRunVault.t.sol checks the same bytes.
+  it('puts input 0 at bit 0 of byte 0', () => {
+    expect([...packFields([[1, 1]])]).toEqual([0x01]);
+    expect([...packFields([[0, 1], [1, 1]])]).toEqual([0x02]);
+    expect([...packFields([[0b10, 2], [1, 1]])]).toEqual([0x06]); // field LSB on the lower wire
+    expect([...packFields([[0, 8], [1, 1]])]).toEqual([0x00, 0x01]);
+  });
+  it('RestockGuard golden vector', () => {
+    const bytes = packRestock({ total: 0x12, budget: 0x34, limit: 0x56, sup: 1, cat: 2, dist: 3, ownerOk: true });
+    expect([...bytes]).toEqual([0x12, 0x34, 0x56, 0xe9, 0x00]);
+  });
+  it('PickupCheck golden vector', () => {
+    const bytes = packPickup({ atSupplier: true, ordered: 20, aiCount: 18, riderCount: 19, damage: false, bonded: true });
+    expect([...bytes]).toEqual([0x29, 0x24, 0x26, 0x04]);
+  });
+  it('unpacks outputs LSB-first: PAY_PART(1), payQty 18, reason 5', () =>
+    expect(unpackFields(new Uint8Array([0x49, 0x14]), PICKUP_OUT)).toEqual([1, 18, 5]));
+  it('rejects short output', () => expect(() => unpackFields(new Uint8Array([0x49]), PICKUP_OUT)).toThrow());
 });
 
 function rnd(n: number) { return Math.floor(Math.random() * n); }
