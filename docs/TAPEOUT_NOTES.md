@@ -11,7 +11,7 @@ Status legend:
 - **BNB-only**: TAP-02 verified it on BNB Chain (56) and says it did not read the X Layer and Base contracts.
 - **verify**: still unknown.
 
-Everything BNB-only must be confirmed on an X Layer fork before we rely on it (see "Fork check" below).
+The `eval`/`circuitInfo`/`netlist` ABI and the bit packing are now **confirmed on X Layer** (see "Fork check: results"). `tapeout` and the fees are still BNB-only.
 
 ## Network
 - X Layer mainnet: chain ID **196**, RPC `https://rpc.xlayer.tech`, explorer OKLink, native coin OKB.
@@ -93,12 +93,16 @@ Our circuits have no LATCH, so we use `eval`.
 - TAP-02 and TAP-10 are Draft. No independent audit has been published.
 - TapeKit (2026-10-22): processors are frozen on BNB, X Layer and Base (circuit beacons are ownerless), but the factory is still upgradeable.
 
-## Fork check (to do once Foundry is installed)
-On `anvil --fork-url https://rpc.xlayer.tech`, confirm the BNB-only items above:
-1. Call `factory.cpuCount()` and `cpuAt(0)`, and confirm the factory address.
-2. On a processor with existing circuits, call `circuitInfo`, `netlist` and `eval`. Check that the selectors match.
-3. Simulate the netlist locally and compare with `eval`. This confirms the bit packing on X Layer.
-4. Find `createCPU`, the NAND mint function and the fee constants from the factory and processor bytecode/ABI (or from third-party scripts such as OpenGate or Cerebr), then check them on the fork.
+## Fork check: results (2026-11-18, X Layer mainnet, read-only RPC)
+Scripts: `circuits/scripts/fork-check.ts` and `circuits/scripts/find-circuits.ts` (`npm run fork-check -- <processor> <id>`).
+- [x] Factory `0x1f09…0761` is live on chain 196. It reports `cpuCount() = 430`. `cpuAt(0)` = `0x839bdD6fa7A66416A609A735e11DE5411B98574e`, and `isCPU` returns true for it.
+- [x] `circuitInfo`, `netlist`, `nextId` and `eval` (`0x934d06ea`) all work on X Layer with the TAP-02 signatures.
+- [x] **Bit packing CONFIRMED on X Layer.** Our TAP-02 simulator matches on-chain `eval` on:
+  - `0x839b…574e` #1 and #2: 2-in/1-out, exhaustive.
+  - `0x526b96238cc418d909005e2e2d79e327da4bd0f7` #4: 16-in/16-out, 1,204 gates. 50/50 vectors matched: all-zeros, all-ones, all 16 one-hot inputs and 32 random.
+- [ ] Not yet:
+  - `createCPU`, the NAND mint function and its price, and the X Layer tapeout fee. Get these from the factory/processor ABI (third-party scripts) and test on an anvil fork.
+  - REF on X Layer.
 
 ## Ecosystem tools we use
 - **DeWEB**: sites stored onchain under `x.y.z.tape` names. Public gateway: `https://<x-y-z>.tapekit.org/`.
@@ -116,6 +120,7 @@ On `anvil --fork-url https://rpc.xlayer.tech`, confirm the BNB-only items above:
 ## First-day checklist
 - [x] Read the TAPs. Fill in what they answer.
 - [x] Eval bit order (TAP-02 §5) and the StockRun field convention.
-- [ ] Fork check on X Layer (above)
+- [x] Fork check of eval + bit packing on X Layer
+- [ ] Find createCPU / NAND mint / tapeout fee; rehearse on anvil fork
 - [ ] Create a processor and record its address in the README
 - [ ] Mint enough NAND for all circuits, plus a margin for a re-spin
