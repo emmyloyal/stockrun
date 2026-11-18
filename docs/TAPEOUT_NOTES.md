@@ -79,11 +79,34 @@ Our circuits have no LATCH, so we use `eval`.
   - nIn ≤ 65,536 and 1 ≤ nOut ≤ 65,536.
   - State ≤ 2^24 bits.
   - Total gates ≤ 2^32−1.
-- Gas (BNB measurement): about **2,317 gas per gate** in `eval`. The vault calls eval on-chain, so a 500-gate circuit costs about 1.2M gas per settle. Keep circuits small.
-- Tapeout fee:
-  - TAP-02 does not specify it. BNB charges 0.0002 BNB.
-  - X Layer figures observed by one third-party project: 0.0013 OKB tapeout + 0.0001 OKB per NAND + 0.00066 OKB protocol fee. **verify**
-- **verify:** how to create a processor (TAP-10 says this "is not described"), the NAND mint function, and the price.
+- **Measured eval gas on the X Layer fork (2026-11-18), worst case over our vectors:**
+
+  | Circuit | eval gas |
+  | --- | --- |
+  | CMP8 | 0.10M (approx.) |
+  | MIN8 | 189k |
+  | SUB8 | 207k |
+  | RestockGuard | 310k |
+  | PickupCheck | 517k |
+  | DeliveryCheck | 358k |
+
+### ⚠ Fees moved to the BEM token (verified on the X Layer fork, 2026-11-18)
+The factory proxy `0x1f09…0761` has been **upgraded** to implementation `0x336e9F0F4c3fEe7C8c803377e4DEA00293f4ae2a`. TAP-10 lists `0x7495…`, which is out of date. New processors get the transistor beacon `0x41Cb2bfd1cccA8f505EEDad0181eef44f1B9Ce65` (implementation `0x44Ebf3345bcf9aB329e7a28E53fd8EcfAd1a5EFE`). The third-party repos describe the old OKB-paid flow.
+
+**BEM token:** `0x60e62Efa9405d6873C5deaBD4E6CC91c25363952` (ERC-20, 8 decimals), returned by `factory.bem()`.
+
+| Step | Call | Payment (live values 2026-11-18) |
+| --- | --- | --- |
+| Create processor | `factory.createCPU(name, symbol, story, supply, mintPrice)`: **nonpayable** | Pulls `deployFee()` = 10,000,000 units = **0.1 BEM** via `transferFrom`. Goes to the protocol wallet `0x571d…af15` |
+| Mint NAND | `transistors.mint(0, amount)`: **nonpayable** | Pulls `amount × mintPrice + protocolFee` in **BEM**. `protocolFee` = 0.01 BEM per mint call. `mintPrice` is ours to set and is paid to us |
+| Tape out | `circuits.tapeout(netlist, nIn, nOut)`: **payable** | Exactly `TAPEOUT_FEE()` = **0.0013 OKB** (native). Wrong amounts revert `"tapeout fee"` |
+
+- Factory caps: `MAX_MINT_PRICE` = 10,000 BEM, `MAX_DEPLOY_FEE` = 100 BEM, `MAX_PROTOCOL_FEE` = 10 BEM.
+- The factory owner is `0xb3d85b42a045c1a88d800cad0f55d2566a4d3138` and can change the fees within those caps. **Always read fees live.**
+- **Our mainnet cost** for 6 circuits (657 NAND):
+  - 0.1 BEM to create the processor, plus 0.01 BEM protocol fee for the mint, plus 657 × mintPrice (paid to ourselves).
+  - Plus 6 × 0.0013 = **0.0078 OKB**, plus gas.
+- **verify:** where to obtain BEM on X Layer (DEX pool or faucet).
 
 ## Containers (TAP-10 §1)
 - One ERC-6551 account per circuit NFT, at `opener.accountOf(processor, id)`.
@@ -100,9 +123,13 @@ Scripts: `circuits/scripts/fork-check.ts` and `circuits/scripts/find-circuits.ts
 - [x] **Bit packing CONFIRMED on X Layer.** Our TAP-02 simulator matches on-chain `eval` on:
   - `0x839b…574e` #1 and #2: 2-in/1-out, exhaustive.
   - `0x526b96238cc418d909005e2e2d79e327da4bd0f7` #4: 16-in/16-out, 1,204 gates. 50/50 vectors matched: all-zeros, all-ones, all 16 one-hot inputs and 32 random.
+- [x] **Full tapeout rehearsal on the fork** (`contracts/test/fork/Tapeout.fork.t.sol`):
+  - Create a processor, mint 657 NAND and tape out all 6 netlists.
+  - `circuitInfo`/`netlist` match, and the NAND burn equals the gate count.
+  - 1,000/1,000 reference vectors match `eval`.
 - [ ] Not yet:
-  - `createCPU`, the NAND mint function and its price, and the X Layer tapeout fee. Get these from the factory/processor ABI (third-party scripts) and test on an anvil fork.
   - REF on X Layer.
+  - How to obtain BEM.
 
 ## Ecosystem tools we use
 - **DeWEB**: sites stored onchain under `x.y.z.tape` names. Public gateway: `https://<x-y-z>.tapekit.org/`.
@@ -121,6 +148,7 @@ Scripts: `circuits/scripts/fork-check.ts` and `circuits/scripts/find-circuits.ts
 - [x] Read the TAPs. Fill in what they answer.
 - [x] Eval bit order (TAP-02 §5) and the StockRun field convention.
 - [x] Fork check of eval + bit packing on X Layer
-- [ ] Find createCPU / NAND mint / tapeout fee; rehearse on anvil fork
+- [x] Find createCPU / NAND mint / tapeout fee; rehearse on the fork
+- [ ] Get BEM + OKB into the deployer wallet
 - [ ] Create a processor and record its address in the README
 - [ ] Mint enough NAND for all circuits, plus a margin for a re-spin
