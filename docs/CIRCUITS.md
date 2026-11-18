@@ -79,6 +79,7 @@ Outputs: `decision` (2), `shortQty` (8; 0 unless COMPENSATE), `reason` (3).
 - `SUB8`: 8-bit a − b (DeliveryCheck only; inputs guarantee a ≥ b when used).
 Reuse via REF if the processor supports it; otherwise inline (flatten).
 
-## Bit order — TODO (blocking)
-Confirm how `eval()` maps `bytes` to input wires and output wires to returned bytes, then fix
-`circuits/reference/pack.ts` and `StockRunVault._pack*` together. Field order in this file is the packing order.
+## Bit order
+TapeOut (TAP-02 §5): vector bit i = bit (i mod 8) of byte floor(i/8), LSB-first. Input i is signal 2+i, and outputs are the last nOut signals.
+StockRun convention: fields are laid out in the order listed in this file. Within a field, wire k = bit k of the value (LSB-first).
+`circuits/reference/pack.ts`, `StockRunVault._pack/_unpack` and the netlists must all follow this. See docs/TAPEOUT_NOTES.md.
