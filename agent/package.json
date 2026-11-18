@@ -5,7 +5,8 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc -p .",
-    "demo": "node src/demo.ts"
+    "demo": "node src/demo.ts",
+    "live": "node src/live.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.10.0",

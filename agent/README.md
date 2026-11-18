@@ -36,8 +36,26 @@ npm run demo -- "5 cartons of Indomie, 10 bags of rice at 80k, within 5 km"
 ## Data
 `data/suppliers.json` holds **fictional** demo suppliers (`simulated: true`, invented names, placeholder phone numbers, demo prices) located at public Lagos markets. Add real suppliers only with their consent, as `simulated: false`.
 
+## WhatsApp (`src/channels/`)
+`WhatsAppChannel` is the real `SupplierChannel`. It sends text through the Cloud API, and `webhook.ts` receives replies.
+- **Signed webhooks only:** the webhook rejects any request whose `X-Hub-Signature-256` does not match `WHATSAPP_APP_SECRET`, so nobody can inject fake supplier replies.
+- **Retries:** duplicate deliveries from Meta are ignored.
+
+### Live WhatsApp test (`npm run live`)
+You play the supplier on your own phone. Only the negotiation runs: no vault, no chain, nothing is bought.
+1. Fill these in `../.env`: `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_TEST_RECIPIENT`, `WHATSAPP_VERIFY_TOKEN` (any random string) and `WHATSAPP_APP_SECRET`.
+2. Open a tunnel: `cloudflared tunnel --url http://localhost:8787`, then copy the `https://….trycloudflare.com` address.
+3. In the Meta app, go to WhatsApp → Configuration → Webhook and set:
+   - **Callback URL:** `<tunnel>/webhook`
+   - **Verify token:** the same value as `WHATSAPP_VERIFY_TOKEN`
+
+   Then subscribe to the **messages** field. Keep `npm run live` running while you click Verify.
+4. Send "hi" to the test number. The agent asks for a price; reply as a supplier would.
+- **Tunnel address:** the quick-tunnel address changes every time cloudflared restarts, so update the callback URL each time.
+- **24-hour window:** WhatsApp only delivers free-form text within 24 hours of the contact's last message. To start a conversation with a supplier who hasn't messaged first, you need an approved template (`order_request`), which is not registered yet.
+
 ## Not built yet (say so in the demo)
-- **WhatsApp Cloud API channel:** sending the template, plus the webhook that receives replies. `SupplierChannel` is the interface to implement. Today only `BotChannel` (simulated suppliers) exists.
+- **WhatsApp template and hosting:** the `order_request` template for first contact is not registered, and there is no hosted webhook yet. The agent and webhook run locally behind a tunnel.
 - **Owner replies:** handling "YES <id>" as `approveOrder` is not built. The owner must sign that with the owner key; the agent key cannot do it.
 - **Photo check service:** the separate key that calls `attestPickup` / `attestDelivery`.
 - **Fallbacks and inputs:** voice-call fallback, voice-note transcription, and OpenStreetMap search beyond `suppliers.json`.
