@@ -5,6 +5,8 @@
 - `sim/netlist.ts`: software evaluator for TAP-02 netlists (NAND + REF). It matches on-chain `eval` on X Layer.
 - `netlists/builder.ts`: NAND compiler (constant folding, gate sharing, dead-gate removal, outputs placed last).
 - `netlists/blocks.ts`: CMP8, MIN8, SUB8 generators.
+- `netlists/circuits.ts`: RestockGuard, PickupCheck, DeliveryCheck (flat; blocks inlined).
+- `scripts/fault-check.ts`: stuck-at fault injection on every gate (checks that the tests can catch bugs).
 - `build/*.json`: generated netlists to tape out (`npm run build-netlists`). Tests fail if they drift from the generator.
 - `scripts/fork-check.ts`: compares a deployed circuit's `eval` with the simulator (read-only).
 - `scripts/find-circuits.ts`: scans X Layer processors for circuits.

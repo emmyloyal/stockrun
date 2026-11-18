@@ -5,10 +5,11 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { BLOCKS } from '../netlists/blocks.ts';
+import { CIRCUITS } from '../netlists/circuits.ts';
 
 const dir = new URL('../build/', import.meta.url);
 mkdirSync(dir, { recursive: true });
-for (const [name, gen] of Object.entries(BLOCKS)) {
+for (const [name, gen] of Object.entries({ ...BLOCKS, ...CIRCUITS })) {
   const c = gen();
   const hex = '0x' + Buffer.from(c.netlist).toString('hex');
   const art = { name, nIn: c.nIn, nOut: c.nOut, gates: c.gates, bytes: c.netlist.length, sha256: createHash('sha256').update(c.netlist).digest('hex'), netlist: hex };

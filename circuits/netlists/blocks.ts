@@ -4,10 +4,14 @@
 
 import { Builder, type Sig } from './builder.ts';
 
-/** a > b, ripple from LSB: g' = MAJ(a_i, !b_i, g), g starts at 0. About 6 NANDs per bit. */
-export function gt(B: Builder, a: Sig[], b: Sig[]): Sig {
-  let g: Sig = Builder.ZERO;
-  for (let i = 0; i < a.length; i++) {
+/**
+ * a > b, ripple from LSB: g' = MAJ(a_i, !b_i, g), g starts at 0. About 6 NANDs per bit.
+ * With `tieFree`, the result is only guaranteed when a != b (a == b may give either value).
+ * Then bit 0 seeds g = a0, which saves 3 NANDs. This is enough for MIN, where a tie picks equal values.
+ */
+export function gt(B: Builder, a: Sig[], b: Sig[], tieFree = false): Sig {
+  let g: Sig = tieFree ? a[0] : Builder.ZERO;
+  for (let i = tieFree ? 1 : 0; i < a.length; i++) {
     const t1 = B.nand(a[i], B.not(b[i])); // !(a & !b)
     const t3 = B.nand(B.not(a[i]), b[i]); // a | !b
     const t2 = B.nand(g, t3);             // !(g & (a | !b))
@@ -18,7 +22,7 @@ export function gt(B: Builder, a: Sig[], b: Sig[]): Sig {
 
 /** min(a, b) = (a > b) ? b : a */
 export function min(B: Builder, a: Sig[], b: Sig[]): Sig[] {
-  return B.muxN(gt(B, a, b), b, a);
+  return B.muxN(gt(B, a, b, true), b, a); // on a tie both mux inputs are equal
 }
 
 /** (a − b) mod 2^n as a + !b + 1, with a ripple carry. Also returns the carry out (1 iff a ≥ b). */

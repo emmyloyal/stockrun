@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { evalNetlist, type Circuit } from '../sim/netlist.ts';
 import { BLOCKS } from '../netlists/blocks.ts';
+import { CIRCUITS } from '../netlists/circuits.ts';
 import { Builder } from '../netlists/builder.ts';
 import { cmp8, min8, sub8 } from '../reference/circuits.ts';
 import { packFields, unpackFields } from '../reference/pack.ts';
@@ -30,7 +31,7 @@ describe('shared blocks: netlists match the reference model exhaustively', () =>
   });
 
   it('build/ artifacts are exactly what the generator produces (we tape out what we tested)', () => {
-    for (const [name, gen] of Object.entries(BLOCKS)) {
+    for (const [name, gen] of Object.entries({ ...BLOCKS, ...CIRCUITS })) {
       const c = gen();
       const art = JSON.parse(readFileSync(new URL(`../build/${name}.json`, import.meta.url), 'utf8'));
       expect({ nIn: art.nIn, nOut: art.nOut, gates: art.gates, netlist: art.netlist }).toEqual({ nIn: c.nIn, nOut: c.nOut, gates: c.gates, netlist: '0x' + hex(c.netlist) });
