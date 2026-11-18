@@ -6,7 +6,7 @@
 // The packed vector is therefore the little-endian integer sum(value_j << offset_j).
 // StockRunVault._pack/_unpack and MockCircuits MUST use the same convention.
 
-import type { RestockInput, PickupInput, DeliveryInput } from './circuits';
+import type { RestockInput, PickupInput, DeliveryInput } from './circuits.ts';
 
 type Field = [value: number, width: number];
 

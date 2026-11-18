@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { restockGuard, pickupCheck, deliveryCheck, Decision } from '../reference/circuits';
-import { packFields, unpackFields, packRestock, packPickup, PICKUP_OUT } from '../reference/pack';
+import { restockGuard, pickupCheck, deliveryCheck, Decision } from '../reference/circuits.ts';
+import { packFields, unpackFields, packRestock, packPickup, PICKUP_OUT } from '../reference/pack.ts';
 
 const base = { total: 20, budget: 100, limit: 40, sup: 0b01, cat: 0, dist: 0, ownerOk: false };
 

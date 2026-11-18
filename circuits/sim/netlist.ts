@@ -63,26 +63,3 @@ export function evalBits(c: Circuit, inputs: number[], refs?: RefResolver): numb
 export function evalNetlist(c: Circuit, inputs: Uint8Array, refs?: RefResolver): Uint8Array {
   return bitsToBytes(evalBits(c, bytesToBits(inputs, c.nIn), refs));
 }
-
-/** Small builder for hand-written netlists (tests, tiny blocks). Returns the produced signal index. */
-export class NetlistBuilder {
-  private bytes: number[] = [];
-  private next: number;
-  readonly nIn: number;
-  constructor(nIn: number) { this.nIn = nIn; this.next = 2 + nIn; }
-  static readonly ZERO = 0;
-  static readonly ONE = 1;
-  input(i: number) { return 2 + i; }
-  nand(a: number, b: number): number {
-    this.bytes.push(0x00, (a >> 16) & 255, (a >> 8) & 255, a & 255, (b >> 16) & 255, (b >> 8) & 255, b & 255);
-    return this.next++;
-  }
-  not(a: number) { return this.nand(a, a); }
-  and(a: number, b: number) { return this.not(this.nand(a, b)); }
-  or(a: number, b: number) { return this.nand(this.not(a), this.not(b)); }
-  xor(a: number, b: number) { const n = this.nand(a, b); return this.nand(this.nand(a, n), this.nand(b, n)); }
-  /** Copy signal `a` so it becomes one of the trailing output signals (2 NANDs). */
-  buf(a: number) { return this.not(this.not(a)); }
-  build(nOut: number): Circuit { return { netlist: Uint8Array.from(this.bytes), nIn: this.nIn, nOut }; }
-  get gates() { return this.next - 2 - this.nIn; }
-}

@@ -58,4 +58,13 @@ export function deliveryCheck(i: DeliveryInput): DeliveryOutput {
   return wait(5);
 }
 
+// ---------- Shared blocks (docs/CIRCUITS.md "Shared sub-circuits") ----------
+// I/O layout for all three: inputs a (8 bits) then b (8 bits), LSB-first.
+/** CMP8 → 1 bit: 1 iff a > b. */
+export const cmp8 = (a: number, b: number) => (u8(a, 'a') > u8(b, 'b') ? 1 : 0);
+/** MIN8 → 8 bits: min(a, b). */
+export const min8 = (a: number, b: number) => Math.min(u8(a, 'a'), u8(b, 'b'));
+/** SUB8 → 8 bits: (a − b) mod 256. Callers only use it when a ≥ b. */
+export const sub8 = (a: number, b: number) => (u8(a, 'a') - u8(b, 'b')) & 0xff;
+
 export { bit };
