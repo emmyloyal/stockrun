@@ -20,6 +20,11 @@ An AI restocking agent for small shops in Lagos, built on TapeOut and X Layer fo
 ## Repo
 See `CLAUDE.md` for the layout and the design rules, and `docs/PLAN.md` for the schedule.
 
+## Website (`site/`)
+`site/index.html` is the public landing page. It is one static file with no build step. It includes a working RestockGuard demo, which runs a JavaScript copy of the reference model.
+- **Deploy on Vercel:** import the repo, set **Root Directory** to `site`, set **Framework Preset** to *Other*, and leave the build command empty. Alternatively, run `npx vercel site` from the repo root.
+- **Keep it honest:** the page's "Where we are" section lists what is built, what is simulated and what is not built yet. Update it, and the gate counts, whenever those change.
+
 ## Status
 | Item | Value |
 | --- | --- |

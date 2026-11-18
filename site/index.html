@@ -1,0 +1,516 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>StockRun</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="StockRun restocks small Lagos shops from WhatsApp. Suppliers are paid only after a bonded rider checks the goods, and every payment decision is made by a circuit on X Layer.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,500..900&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a market ticket. Big condensed signage type on the left, a receipt of one real order on the right,
+   then the flow, the two checks, a working RestockGuard, and a plain status board. */
+:root {
+  --bg: #F2F3EE;
+  --surface: #FFFFFF;
+  --ink: #141B2E;
+  --muted: #586074;
+  --line: #D6D9CF;
+  --danfo: #F4C20D;        /* Lagos bus yellow: highlights and bands only, never body text */
+  --on-danfo: #141B2E;
+  --ok: #18794A;
+  --ask: #A35F00;
+  --no: #B42318;
+  --ok-bg: #E3F2E9;
+  --ask-bg: #FBEFD9;
+  --no-bg: #FBE4E1;
+  --font-display: "Archivo", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+  --font-body: "Instrument Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --step--1: 0.875rem; --step-0: 1rem; --step-1: 1.25rem; --step-2: 1.75rem; --step-3: clamp(2.1rem, 4.5vw, 3.2rem); --step-4: clamp(2.8rem, 7.4vw, 5.6rem);
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E1320; --surface: #171E30; --ink: #ECEEF4; --muted: #A2AABD; --line: #2A3349;
+    --danfo: #F4C20D; --on-danfo: #141B2E;
+    --ok: #4CC487; --ask: #F0A93B; --no: #F2766A;
+    --ok-bg: #12301F; --ask-bg: #33250E; --no-bg: #3A1714;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0E1320; --surface: #171E30; --ink: #ECEEF4; --muted: #A2AABD; --line: #2A3349;
+  --danfo: #F4C20D; --on-danfo: #141B2E;
+  --ok: #4CC487; --ask: #F0A93B; --no: #F2766A;
+  --ok-bg: #12301F; --ask-bg: #33250E; --no-bg: #3A1714;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } *, *::before, *::after { animation: none !important; transition: none !important; } }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: var(--step-0); line-height: 1.6; }
+a { color: inherit; }
+a:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible { outline: 3px solid var(--danfo); outline-offset: 2px; border-radius: 4px; }
+.wrap { max-width: 1160px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; line-height: 1.02; }
+h2 { font-size: var(--step-3); font-weight: 800; font-stretch: 82%; letter-spacing: -0.01em; }
+h3 { font-size: var(--step-1); font-weight: 700; font-stretch: 95%; line-height: 1.2; }
+p { margin: 0; }
+.eyebrow { font-family: var(--font-mono); font-size: 0.75rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.lede { color: var(--muted); font-size: var(--step-1); line-height: 1.5; max-width: 60ch; }
+section { padding-block: clamp(56px, 9vw, 104px); }
+.section-head { display: grid; gap: 14px; margin-bottom: 40px; max-width: 760px; }
+
+/* Nav */
+header.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; background: var(--bg); border-bottom: 1px solid var(--line); }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 21; background: var(--bg); }
+.nav { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-block: 14px; }
+.brand { display: flex; align-items: center; gap: 10px; font-family: var(--font-display); font-weight: 900; font-stretch: 80%; font-size: 1.45rem; text-decoration: none; letter-spacing: 0.01em; }
+.brand-mark { width: 26px; height: 26px; border-radius: 6px; background: var(--danfo); display: grid; place-items: center; }
+.brand-mark span { display: block; width: 14px; height: 4px; background: var(--on-danfo); box-shadow: 0 -6px 0 var(--on-danfo), 0 6px 0 var(--on-danfo); }
+.nav-links { display: flex; gap: 22px; font-size: var(--step--1); font-weight: 500; }
+.nav-links a { text-decoration: none; color: var(--muted); }
+.nav-links a:hover { color: var(--ink); }
+@media (max-width: 760px) { .nav-links { display: none; } }
+.pill-status { font-family: var(--font-mono); font-size: 0.72rem; padding: 5px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); white-space: nowrap; }
+
+/* Hero */
+.hero { padding-block: clamp(40px, 7vw, 88px) clamp(48px, 7vw, 88px); }
+.hero-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr); gap: clamp(32px, 5vw, 64px); align-items: start; }
+@media (max-width: 920px) { .hero-grid { grid-template-columns: minmax(0, 1fr); } }
+.hero h1 { font-size: var(--step-4); font-weight: 900; font-stretch: 72%; letter-spacing: -0.015em; line-height: 0.95; text-transform: uppercase; }
+.hero h1 .mark { background: linear-gradient(transparent 12%, var(--danfo) 12%, var(--danfo) 92%, transparent 92%); color: var(--on-danfo); padding: 0 0.08em; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.hero-copy { display: grid; gap: 26px; min-width: 0; }
+.cta-row { display: flex; flex-wrap: wrap; gap: 12px; }
+.btn { display: inline-flex; align-items: center; gap: 8px; padding: 13px 20px; border-radius: 8px; font-weight: 600; text-decoration: none; font-size: var(--step-0); border: 1.5px solid var(--ink); }
+.btn-primary { background: var(--ink); color: var(--bg); }
+.btn-primary:hover { background: transparent; color: var(--ink); }
+.btn-ghost:hover { background: var(--ink); color: var(--bg); }
+.hero-note { font-size: var(--step--1); color: var(--muted); max-width: 56ch; }
+
+/* Receipt */
+.ticket { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 18px 40px -24px rgba(20, 27, 46, 0.35); overflow: hidden; min-width: 0; }
+.ticket-head { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 12px 18px; background: var(--danfo); color: var(--on-danfo); font-family: var(--font-mono); font-size: 0.75rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.ticket-body { padding: 18px; display: grid; gap: 14px; font-size: 0.93rem; }
+.msg { padding: 10px 13px; border-radius: 10px; max-width: 92%; line-height: 1.45; }
+.msg-owner { justify-self: end; background: var(--ink); color: var(--bg); border-bottom-right-radius: 3px; }
+.msg-bot { background: var(--bg); border: 1px solid var(--line); border-bottom-left-radius: 3px; }
+.who { display: block; font-family: var(--font-mono); font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.7; margin-bottom: 3px; }
+.ledger { border-top: 1.5px dashed var(--line); padding-top: 14px; display: grid; gap: 8px; font-family: var(--font-mono); font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+.ledger-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: baseline; }
+.ledger-row span:first-child { color: var(--muted); }
+.ledger-row.total { font-weight: 600; font-size: 0.88rem; border-top: 1px solid var(--line); padding-top: 8px; }
+.ledger-row.total span:first-child { color: var(--ink); }
+.verdicts { display: grid; gap: 8px; }
+.verdict { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: center; font-size: 0.85rem; }
+.stamp { font-family: var(--font-mono); font-size: 0.7rem; font-weight: 600; letter-spacing: 0.06em; padding: 4px 8px; border-radius: 5px; border: 1.5px solid currentColor; white-space: nowrap; }
+.stamp.ok { color: var(--ok); background: var(--ok-bg); }
+.stamp.ask { color: var(--ask); background: var(--ask-bg); }
+.stamp.no { color: var(--no); background: var(--no-bg); }
+.ticket-foot { padding: 10px 18px; border-top: 1px solid var(--line); font-size: 0.75rem; color: var(--muted); }
+
+/* Fact band */
+.band { background: var(--ink); color: var(--bg); }
+.band .wrap { padding-block: 26px; }
+.facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px; }
+@media (max-width: 760px) { .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.fact { display: grid; gap: 2px; }
+.fact b { font-family: var(--font-display); font-size: var(--step-2); font-weight: 800; font-stretch: 80%; color: var(--danfo); line-height: 1.1; font-variant-numeric: tabular-nums; }
+.fact span { font-size: var(--step--1); opacity: 0.82; }
+
+/* Flow */
+.flow { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1.5px solid var(--ink); }
+@media (max-width: 900px) { .flow { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .flow { grid-template-columns: minmax(0, 1fr); } }
+.flow li { padding: 22px 22px 26px 0; border-bottom: 1px solid var(--line); display: grid; gap: 10px; align-content: start; min-width: 0; }
+.flow li + li { }
+.step-no { font-family: var(--font-mono); font-size: 0.78rem; color: var(--muted); }
+.flow p { color: var(--muted); max-width: 40ch; }
+.flow li.money h3::after { content: "Circuit decides"; margin-left: 10px; vertical-align: 3px; font-family: var(--font-mono); font-size: 0.65rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; padding: 3px 7px; border-radius: 4px; background: var(--danfo); color: var(--on-danfo); white-space: nowrap; }
+
+/* Checks */
+.checks { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+@media (max-width: 960px) { .checks { grid-template-columns: minmax(0, 1fr); } }
+.check { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 24px; display: grid; gap: 16px; align-content: start; min-width: 0; }
+.check-top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.gates { font-family: var(--font-mono); font-size: 0.75rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.check .when { color: var(--muted); font-size: var(--step--1); }
+.rules { list-style: none; margin: 0; padding: 0; display: grid; gap: 9px; font-size: 0.9rem; }
+.rules li { display: grid; grid-template-columns: 118px minmax(0, 1fr); gap: 10px; align-items: start; }
+.rules .stamp { justify-self: start; font-size: 0.64rem; }
+
+/* Rules strip */
+.principles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0; border-top: 1.5px solid var(--ink); margin-top: 56px; }
+@media (max-width: 760px) { .principles { grid-template-columns: minmax(0, 1fr); } }
+.principle { padding: 20px 24px 22px 0; border-bottom: 1px solid var(--line); display: grid; gap: 6px; }
+.principle p { color: var(--muted); max-width: 52ch; }
+
+/* Playground */
+.play { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+@media (max-width: 900px) { .play { grid-template-columns: minmax(0, 1fr); } }
+.play-in { padding: 26px; display: grid; gap: 18px; border-right: 1px solid var(--line); }
+@media (max-width: 900px) { .play-in { border-right: 0; border-bottom: 1px solid var(--line); } }
+.presets { display: flex; flex-wrap: wrap; gap: 8px; }
+.preset { font: inherit; font-size: 0.82rem; padding: 7px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); cursor: pointer; }
+.preset:hover, .preset[aria-pressed="true"] { border-color: var(--ink); }
+.preset[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+.fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 16px; }
+@media (max-width: 480px) { .fields { grid-template-columns: minmax(0, 1fr); } }
+.field { display: grid; gap: 6px; min-width: 0; }
+.field label { font-size: 0.8rem; font-weight: 600; }
+.field input, .field select { font: inherit; font-size: 0.95rem; padding: 9px 11px; border-radius: 7px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); width: 100%; min-width: 0; font-variant-numeric: tabular-nums; }
+.field .hint { font-size: 0.74rem; color: var(--muted); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.toggle { display: flex; gap: 10px; align-items: center; font-size: 0.9rem; grid-column: 1 / -1; }
+.toggle input { width: 18px; height: 18px; accent-color: var(--ink); }
+.play-out { padding: 26px; display: grid; gap: 20px; align-content: start; background: var(--bg); min-width: 0; }
+.decision { display: grid; gap: 8px; }
+.decision-word { font-family: var(--font-display); font-size: clamp(2.2rem, 5vw, 3.4rem); font-weight: 900; font-stretch: 72%; line-height: 1; text-transform: uppercase; }
+.decision-word.ok { color: var(--ok); } .decision-word.ask { color: var(--ask); } .decision-word.no { color: var(--no); }
+.decision-reason { font-size: var(--step-1); line-height: 1.4; max-width: 40ch; }
+.wire { display: grid; gap: 8px; font-family: var(--font-mono); font-size: 0.78rem; font-variant-numeric: tabular-nums; }
+.wire-row { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 10px; }
+.wire-row span:first-child { color: var(--muted); }
+.wire-row code { overflow-wrap: anywhere; }
+.bits { display: flex; flex-wrap: wrap; gap: 3px; }
+.bits i { font-style: normal; width: 15px; height: 20px; display: grid; place-items: center; border-radius: 3px; font-size: 0.68rem; border: 1px solid var(--line); color: var(--muted); }
+.bits i.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.play-note { font-size: 0.8rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 14px; }
+
+/* Audiences */
+.people { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px; }
+@media (max-width: 860px) { .people { grid-template-columns: minmax(0, 1fr); } }
+.person { display: grid; gap: 12px; align-content: start; }
+.person .role { font-family: var(--font-display); font-weight: 800; font-stretch: 78%; font-size: var(--step-2); text-transform: uppercase; line-height: 1; border-bottom: 6px solid var(--danfo); padding-bottom: 10px; }
+.person ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; color: var(--muted); }
+
+/* Status */
+.status { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+@media (max-width: 860px) { .status { grid-template-columns: minmax(0, 1fr); } }
+.col { border-top: 4px solid var(--c); padding-top: 16px; display: grid; gap: 12px; align-content: start; }
+.col.built { --c: var(--ok); } .col.sim { --c: var(--ask); } .col.next { --c: var(--muted); }
+.col h3 { display: flex; justify-content: space-between; gap: 8px; }
+.col ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+.col li { font-size: 0.93rem; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.col li small { display: block; color: var(--muted); font-size: 0.8rem; font-family: var(--font-mono); margin-top: 2px; }
+
+footer { border-top: 1px solid var(--line); }
+footer .wrap { padding-block: 32px 40px; display: flex; flex-wrap: wrap; gap: 16px 32px; justify-content: space-between; font-size: var(--step--1); color: var(--muted); }
+footer p { max-width: 70ch; }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap nav">
+    <a class="brand" href="#top" aria-label="StockRun home"><span class="brand-mark" aria-hidden="true"><span></span></span>StockRun</a>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="#how">How it works</a>
+      <a href="#checks">The checks</a>
+      <a href="#try">Try RestockGuard</a>
+      <a href="#status">Status</a>
+    </nav>
+    <span class="pill-status">Build X prototype</span>
+  </div>
+</header>
+
+<main id="top">
+  <section class="hero">
+    <div class="wrap hero-grid">
+      <div class="hero-copy">
+        <p class="eyebrow">Restocking for small shops in Lagos</p>
+        <h1>Order on WhatsApp. Pay the supplier <span class="mark">after the rider checks.</span></h1>
+        <p class="lede">Tell StockRun what your shop needs. It finds wholesalers near you, haggles in your name and books a bonded rider. The supplier is paid when the rider has counted the goods at pickup. A circuit on X Layer makes that call, not the AI.</p>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="#how">See how an order runs</a>
+          <a class="btn btn-ghost" href="#try">Try the approval rule</a>
+        </div>
+        <p class="hero-note">No deposits to suppliers. No money moved by software that can be talked out of it. If a check fails or cannot run, the order holds.</p>
+      </div>
+
+      <aside class="ticket" aria-label="Example order from the local demo">
+        <div class="ticket-head"><span>Order #1 · Ojota</span><span>Demo run</span></div>
+        <div class="ticket-body">
+          <p class="msg msg-owner"><span class="who">Shop owner</span>5 cartons of Indomie, within 5 km</p>
+          <p class="msg msg-bot"><span class="who">StockRun</span>Adeyemi Provisions at Mile 12 agreed ₦13,300 a carton after two rounds. Tunde will collect.</p>
+          <div class="ledger">
+            <div class="ledger-row"><span>Goods · 5 × ₦13,300</span><span>₦66,500</span></div>
+            <div class="ledger-row"><span>Rider fee · Tunde (bonded)</span><span>₦2,300</span></div>
+            <div class="ledger-row total"><span>Locked in the vault</span><span>₦68,800</span></div>
+          </div>
+          <div class="verdicts">
+            <div class="verdict"><span class="stamp ok">APPROVE</span><span>RestockGuard: approved supplier, under budget and limit</span></div>
+            <div class="verdict"><span class="stamp ok">PAY FULL</span><span>PickupCheck: rider counted 5 of 5 at the supplier. Supplier paid.</span></div>
+            <div class="verdict"><span class="stamp ok">PAY RIDER</span><span>DeliveryCheck: 5 of 5 delivered, owner confirmed</span></div>
+          </div>
+        </div>
+        <p class="ticket-foot">Price, fee and escrow come from the local demo run. The pickup and delivery verdicts follow the vault tests. Supplier and rider are simulated.</p>
+      </aside>
+    </div>
+  </section>
+
+  <div class="band">
+    <div class="wrap facts">
+      <div class="fact"><b>₦0</b><span>paid to a supplier before pickup</span></div>
+      <div class="fact"><b>3</b><span>payment circuits: guard, pickup, delivery</span></div>
+      <div class="fact"><b>470</b><span>NAND gates across all three</span></div>
+      <div class="fact"><b>0</b><span>transfers the AI can make</span></div>
+    </div>
+  </div>
+
+  <section id="how">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">How an order runs</p>
+        <h2>Six steps from a text message to stock on your shelf</h2>
+        <p class="lede">The AI does the talking. Money only moves at the two handovers, and only when a circuit says so.</p>
+      </div>
+      <ol class="flow">
+        <li><span class="step-no">Step 1</span><h3>You send the order</h3><p>Plain English or Pidgin: "20 cartons of Indomie, 10 bags of rice, within 5 km." StockRun reads it against a product list and confirms the quantities.</p></li>
+        <li><span class="step-no">Step 2</span><h3>It finds suppliers</h3><p>Wholesalers within your radius who stock the item. Your preferred suppliers come first, then approved ones. Blocked suppliers are never contacted.</p></li>
+        <li><span class="step-no">Step 3</span><h3>It haggles on WhatsApp</h3><p>Starts 5% under the ask, meets halfway, and walks away above your ceiling. Every message says the supplier is paid once the rider has checked the goods.</p></li>
+        <li class="money"><span class="step-no">Step 4</span><h3>Money is locked</h3><p>The vault asks RestockGuard. Inside your budget and limit, the goods and rider fee are held in escrow. Otherwise it asks you, or refuses.</p></li>
+        <li class="money"><span class="step-no">Step 5</span><h3>Rider checks at pickup</h3><p>A rider with a posted bond counts the goods at the supplier. PickupCheck pays the supplier for what was counted, in naira.</p></li>
+        <li class="money"><span class="step-no">Step 6</span><h3>Delivered to your shop</h3><p>DeliveryCheck pays the rider when you confirm. If cartons are missing, you are paid back from the rider's bond.</p></li>
+      </ol>
+    </div>
+  </section>
+
+  <section id="checks" style="padding-top: 0;">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">Two handovers, two checks</p>
+        <h2>The rules are wired in logic gates, so nobody can talk them round</h2>
+        <p class="lede">Each rule is a TapeOut circuit built from NAND gates. The vault gathers the inputs from its own storage and signed evidence, then reads the circuit's answer. The circuit can only answer. It cannot send money or change anything.</p>
+      </div>
+      <div class="checks">
+        <article class="check">
+          <div class="check-top"><h3>RestockGuard</h3><span class="gates">119 NAND · 34 in → 5 out</span></div>
+          <p class="when">Runs when the agent proposes an order.</p>
+          <ul class="rules">
+            <li><span class="stamp no">REJECT</span><span>Supplier unknown or blocked</span></li>
+            <li><span class="stamp no">REJECT</span><span>Over the remaining weekly budget</span></li>
+            <li><span class="stamp ask">ASK OWNER</span><span>Above your auto-approve limit</span></li>
+            <li><span class="stamp ask">ASK OWNER</span><span>Alcohol, tobacco or high-value goods</span></li>
+            <li><span class="stamp ask">ASK OWNER</span><span>Supplier more than 10 km away</span></li>
+            <li><span class="stamp ok">APPROVE</span><span>Everything else: money goes into escrow</span></li>
+          </ul>
+        </article>
+        <article class="check">
+          <div class="check-top"><h3>PickupCheck</h3><span class="gates">210 NAND · 27 in → 13 out</span></div>
+          <p class="when">Runs when the rider reports from the supplier.</p>
+          <ul class="rules">
+            <li><span class="stamp no">HOLD</span><span>Rider is not at the supplier</span></li>
+            <li><span class="stamp no">HOLD</span><span>Rider has no bond posted</span></li>
+            <li><span class="stamp no">HOLD</span><span>Damaged goods reported</span></li>
+            <li><span class="stamp ask">PAY PART</span><span>Fewer counted than ordered: pay for the lower of the photo count and the rider's count</span></li>
+            <li><span class="stamp ok">PAY FULL</span><span>Both counts match the order</span></li>
+          </ul>
+        </article>
+        <article class="check">
+          <div class="check-top"><h3>DeliveryCheck</h3><span class="gates">141 NAND · 21 in → 13 out</span></div>
+          <p class="when">Runs when the goods reach your shop.</p>
+          <ul class="rules">
+            <li><span class="stamp no">WAIT</span><span>Rider is not at the shop, or damage reported</span></li>
+            <li><span class="stamp ask">COMPENSATE</span><span>Short delivery: you are paid from the rider's bond</span></li>
+            <li><span class="stamp no">WAIT</span><span>You raised an issue</span></li>
+            <li><span class="stamp ok">PAY RIDER</span><span>You confirmed, or the confirmation window ran out</span></li>
+          </ul>
+        </article>
+      </div>
+
+      <div class="principles">
+        <div class="principle"><h3>The AI never moves money</h3><p>The agent's key can propose an order and nothing else. It cannot pick where money goes, approve its own order or submit pickup evidence.</p></div>
+        <div class="principle"><h3>No deposits to suppliers</h3><p>The supplier is paid at pickup, after the count, in naira through an off-ramp partner. There is no "send half first".</p></div>
+        <div class="principle"><h3>A failed check holds the order</h3><p>If a circuit call fails, nothing is paid. The default is to wait, never to pay.</p></div>
+        <div class="principle"><h3>Your yes has limits</h3><p>Approving an order clears "ask owner" rules. It never overrides a reject, so a blocked supplier stays blocked.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="try" style="padding-top: 0;">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">Try it</p>
+        <h2>Run RestockGuard on an order</h2>
+        <p class="lede">Change the order and watch the decision. Money is counted in units of ₦5,000, because the circuit works on 8-bit numbers. The order is rounded up and your budget rounded down, so rounding can never let an order through.</p>
+      </div>
+      <div class="play">
+        <form class="play-in" id="guard-form" aria-label="RestockGuard inputs">
+          <div class="presets" role="group" aria-label="Example orders">
+            <button type="button" class="preset" data-preset="indomie" aria-pressed="true">5 cartons Indomie</button>
+            <button type="button" class="preset" data-preset="rice" aria-pressed="false">10 bags of rice</button>
+            <button type="button" class="preset" data-preset="beer" aria-pressed="false">5 crates of beer</button>
+            <button type="button" class="preset" data-preset="budget" aria-pressed="false">Late in the week</button>
+          </div>
+          <div class="fields">
+            <div class="field"><label for="amount">Order total (₦)</label><input id="amount" type="number" min="0" step="100" inputmode="numeric"><span class="hint" id="amount-hint"></span></div>
+            <div class="field"><label for="budget">Weekly budget left (₦)</label><input id="budget" type="number" min="0" step="1000" inputmode="numeric"><span class="hint" id="budget-hint"></span></div>
+            <div class="field"><label for="limit">Auto-approve limit (₦)</label><input id="limit" type="number" min="0" step="1000" inputmode="numeric"><span class="hint" id="limit-hint"></span></div>
+            <div class="field"><label for="sup">Supplier</label>
+              <select id="sup"><option value="0">Unknown</option><option value="1">Approved</option><option value="2">Preferred</option><option value="3">Blocked</option></select></div>
+            <div class="field"><label for="cat">Category</label>
+              <select id="cat"><option value="0">Staples</option><option value="1">Drinks</option><option value="2">Cooking</option><option value="3">Toiletries</option><option value="4">Snacks</option><option value="5">Household</option><option value="6">Alcohol and tobacco</option><option value="7">High value</option></select></div>
+            <div class="field"><label for="dist">Distance to supplier</label>
+              <select id="dist"><option value="0">Under 2 km</option><option value="1">2 to 5 km</option><option value="2">5 to 10 km</option><option value="3">Over 10 km</option></select></div>
+            <label class="toggle" for="ownerOk"><input id="ownerOk" type="checkbox"> Owner has already said yes to this order</label>
+          </div>
+        </form>
+        <div class="play-out" aria-live="polite">
+          <div class="decision">
+            <span class="eyebrow">Circuit output</span>
+            <span class="decision-word ok" id="d-word">Approve</span>
+            <p class="decision-reason" id="d-reason">Approved. Goods and rider fee go into escrow.</p>
+          </div>
+          <div class="wire">
+            <div class="wire-row"><span>Input bytes</span><code id="w-in"></code></div>
+            <div class="wire-row"><span>Input wires</span><div class="bits" id="w-bits" aria-label="34 input bits, wire 0 first"></div></div>
+            <div class="wire-row"><span>Output</span><code id="w-out"></code></div>
+          </div>
+          <p class="play-note">This page runs a JavaScript copy of the reference model. In StockRun the vault packs these same 34 bits and calls <code>eval</code> on the taped-out circuit. The netlist was checked against this model on 100,000 random inputs.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section style="padding-top: 0;">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">Who it is for</p>
+        <h2>Three people, one order, nobody trusting a stranger</h2>
+      </div>
+      <div class="people">
+        <div class="person"><p class="role">Shop owners</p><ul><li>Restock without closing the shop to go to market</li><li>Set a weekly budget and an auto-approve limit</li><li>Pay only for what was counted and delivered</li><li>Short delivery is paid back from the rider's bond</li></ul></div>
+        <div class="person"><p class="role">Suppliers</p><ul><li>Orders arrive on WhatsApp, as they do today</li><li>Paid in naira at pickup, once the count is done</li><li>No chasing payment after the goods leave</li></ul></div>
+        <div class="person"><p class="role">Riders</p><ul><li>Post a bond once to take higher-value jobs</li><li>Fee set up front: ₦1,500 plus ₦250 per km</li><li>Paid automatically when the owner confirms or the window runs out</li></ul></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="status" style="padding-top: 0;">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">Where we are</p>
+        <h2>What works today, and what is still simulated</h2>
+        <p class="lede">StockRun is a hackathon prototype for X Layer × TapeOut Build X. Nothing here is live with real shops yet, and we would rather say so.</p>
+      </div>
+      <div class="status">
+        <div class="col built"><h3>Built and tested</h3><ul>
+          <li>Reference model of all three circuits<small>42 tests, DeliveryCheck checked on every input</small></li>
+          <li>NAND netlists for all three circuits<small>119 + 210 + 141 gates</small></li>
+          <li>Vault contract with attack tests<small>70 tests against a fork of X Layer mainnet</small></li>
+          <li>AI agent: reading, search, haggling, rider booking<small>26 tests, including a full local run</small></li>
+        </ul></div>
+        <div class="col sim"><h3>Simulated in the demo</h3><ul>
+          <li>Suppliers<small>Bots with invented names and prices</small></li>
+          <li>The chain<small>A local test chain, not X Layer mainnet</small></li>
+          <li>Rider GPS and the naira payout alert</li>
+        </ul></div>
+        <div class="col next"><h3>Not built yet</h3><ul>
+          <li>Live WhatsApp messaging with real suppliers</li>
+          <li>Rider app with the photo count</li>
+          <li>Owner approvals by WhatsApp reply</li>
+          <li>Circuits taped out on X Layer mainnet<small>Rehearsed on a fork; no on-chain IDs yet</small></li>
+        </ul></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p><b>StockRun</b> · Built for the X Layer × TapeOut Build X hackathon, Lagos, 2026.</p>
+    <p>Demo figures only. No order on this page is a real transaction.</p>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var UNIT = 5000;
+  var $ = function (id) { return document.getElementById(id); };
+  var presets = {
+    indomie: { amount: 68800, budget: 1000000, limit: 200000, sup: 1, cat: 0, dist: 1, ownerOk: false },
+    rice:    { amount: 802300, budget: 931200, limit: 200000, sup: 2, cat: 0, dist: 1, ownerOk: false },
+    beer:    { amount: 47300, budget: 931200, limit: 200000, sup: 1, cat: 6, dist: 1, ownerOk: false },
+    budget:  { amount: 160000, budget: 120000, limit: 200000, sup: 1, cat: 0, dist: 2, ownerOk: true }
+  };
+  var reasons = {
+    0: 'Approved. Goods and rider fee go into escrow.',
+    1: 'This supplier is not on your approved list, or is blocked.',
+    2: 'It is over your remaining weekly budget.',
+    3: 'It is above your auto-approve limit, so StockRun asks you first.',
+    4: 'This kind of item always needs your approval.',
+    5: 'The supplier is more than 10 km away, so StockRun asks you first.'
+  };
+  var naira = function (n) { return '₦' + Math.round(n).toLocaleString('en-NG'); };
+
+  // Reference model, docs/CIRCUITS.md (circuits/reference/circuits.ts).
+  function restockGuard(i) {
+    if (i.sup === 0 || i.sup === 3) return { decision: 0, reason: 1 };
+    if (i.total > i.budget) return { decision: 0, reason: 2 };
+    if (!i.ownerOk && i.total > i.limit) return { decision: 1, reason: 3 };
+    if (!i.ownerOk && i.cat >= 6) return { decision: 1, reason: 4 };
+    if (!i.ownerOk && i.dist === 3) return { decision: 1, reason: 5 };
+    return { decision: 2, reason: 0 };
+  }
+  // LSB-first packing (TAP-02): field order total, budget, limit, sup, cat, dist, ownerOk, 2 spare.
+  function pack(fields) {
+    var bits = [];
+    fields.forEach(function (f) { for (var k = 0; k < f[1]; k++) bits.push((f[0] >> k) & 1); });
+    var bytes = new Array(Math.ceil(bits.length / 8)).fill(0);
+    bits.forEach(function (b, p) { if (b) bytes[p >> 3] |= 1 << (p & 7); });
+    return { bits: bits, bytes: bytes };
+  }
+  var hex = function (bytes) { return '0x' + bytes.map(function (b) { return b.toString(16).padStart(2, '0'); }).join(''); };
+
+  function read() {
+    var num = function (id) { var v = Number($(id).value); return Number.isFinite(v) && v > 0 ? v : 0; };
+    return { amount: num('amount'), budget: num('budget'), limit: num('limit'), sup: Number($('sup').value), cat: Number($('cat').value), dist: Number($('dist').value), ownerOk: $('ownerOk').checked };
+  }
+  function render() {
+    var v = read();
+    var total = Math.ceil(v.amount / UNIT);
+    var budget = Math.min(255, Math.floor(v.budget / UNIT));
+    var limit = Math.min(255, Math.floor(v.limit / UNIT));
+    $('amount-hint').textContent = total + ' units (rounded up)';
+    $('budget-hint').textContent = budget + ' units (rounded down' + (v.budget / UNIT > 255 ? ', max 255' : '') + ')';
+    $('limit-hint').textContent = limit + ' units (rounded down' + (v.limit / UNIT > 255 ? ', max 255' : '') + ')';
+    var word = $('d-word');
+    if (total > 255) {
+      word.textContent = 'Too large'; word.className = 'decision-word no';
+      $('d-reason').textContent = 'Over ' + naira(255 * UNIT) + ' in one order. The vault refuses before it calls the circuit. Split the order.';
+      $('w-in').textContent = 'not sent'; $('w-out').textContent = 'none'; $('w-bits').innerHTML = '';
+      return;
+    }
+    var input = { total: total, budget: budget, limit: limit, sup: v.sup, cat: v.cat, dist: v.dist, ownerOk: v.ownerOk };
+    var out = restockGuard(input);
+    var names = { 0: ['Reject', 'no'], 1: ['Ask owner', 'ask'], 2: ['Approve', 'ok'] };
+    word.textContent = names[out.decision][0]; word.className = 'decision-word ' + names[out.decision][1];
+    $('d-reason').textContent = reasons[out.reason];
+    var p = pack([[total, 8], [budget, 8], [limit, 8], [v.sup, 2], [v.cat, 3], [v.dist, 2], [v.ownerOk ? 1 : 0, 1], [0, 2]]);
+    $('w-in').textContent = hex(p.bytes);
+    $('w-bits').innerHTML = p.bits.map(function (b) { return '<i class="' + (b ? 'on' : '') + '">' + b + '</i>'; }).join('');
+    var o = pack([[out.decision, 2], [out.reason, 3]]);
+    $('w-out').textContent = hex(o.bytes) + '  decision=' + out.decision.toString(2).padStart(2, '0') + ' reason=' + out.reason;
+  }
+  function load(name) {
+    var p = presets[name];
+    $('amount').value = p.amount; $('budget').value = p.budget; $('limit').value = p.limit;
+    $('sup').value = String(p.sup); $('cat').value = String(p.cat); $('dist').value = String(p.dist); $('ownerOk').checked = p.ownerOk;
+    document.querySelectorAll('.preset').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.preset === name)); });
+    render();
+  }
+  document.querySelectorAll('.preset').forEach(function (b) { b.addEventListener('click', function () { load(b.dataset.preset); }); });
+  $('guard-form').addEventListener('input', function () {
+    document.querySelectorAll('.preset').forEach(function (b) { b.setAttribute('aria-pressed', 'false'); });
+    render();
+  });
+  $('guard-form').addEventListener('submit', function (e) { e.preventDefault(); });
+  load('indomie');
+})();
+</script>
+</body>
+</html>
