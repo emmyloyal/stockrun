@@ -1,0 +1,83 @@
+{
+  "_note": "Demo data. Every supplier below is FICTIONAL (simulated: true) and answered by a supplier bot. Names are invented; locations are public markets; phone numbers are non-dialable placeholders. Prices are demo prices in naira, not market quotes. Add real suppliers only with their consent, with simulated: false.",
+  "suppliers": [
+    {
+      "id": "sim-mile12-adeyemi",
+      "name": "Adeyemi Provisions (demo)",
+      "market": "Mile 12 Market",
+      "lat": 6.6089, "lng": 3.3967,
+      "whatsapp": "+2340000000001",
+      "simulated": true,
+      "stocks": [
+        { "item": "Indomie noodles carton (40 x 70g)", "category": "staples", "listPriceNaira": 13500 },
+        { "item": "Rice 50kg bag", "category": "staples", "listPriceNaira": 82000 },
+        { "item": "Vegetable oil 25L", "category": "cooking", "listPriceNaira": 58000 },
+        { "item": "Sugar 50kg bag", "category": "cooking", "listPriceNaira": 71000 }
+      ]
+    },
+    {
+      "id": "sim-mile12-blessing",
+      "name": "Blessing Wholesale (demo)",
+      "market": "Mile 12 Market",
+      "lat": 6.6102, "lng": 3.3951,
+      "whatsapp": "+2340000000002",
+      "simulated": true,
+      "stocks": [
+        { "item": "Indomie noodles carton (40 x 70g)", "category": "staples", "listPriceNaira": 13200 },
+        { "item": "Spaghetti carton (20 x 500g)", "category": "staples", "listPriceNaira": 16500 },
+        { "item": "Tomato paste carton (50 x 70g)", "category": "cooking", "listPriceNaira": 19000 }
+      ]
+    },
+    {
+      "id": "sim-ketu-chukwu",
+      "name": "Chukwu & Sons Depot (demo)",
+      "market": "Ketu",
+      "lat": 6.5950, "lng": 3.3910,
+      "whatsapp": "+2340000000003",
+      "simulated": true,
+      "stocks": [
+        { "item": "Rice 50kg bag", "category": "staples", "listPriceNaira": 80500 },
+        { "item": "Bottled water pack (12 x 75cl)", "category": "drinks", "listPriceNaira": 2600 },
+        { "item": "Soft drink crate (24 x 35cl)", "category": "drinks", "listPriceNaira": 9800 }
+      ]
+    },
+    {
+      "id": "sim-oyingbo-folake",
+      "name": "Folake Stores (demo)",
+      "market": "Oyingbo Market",
+      "lat": 6.4848, "lng": 3.3800,
+      "whatsapp": "+2340000000004",
+      "simulated": true,
+      "stocks": [
+        { "item": "Indomie noodles carton (40 x 70g)", "category": "staples", "listPriceNaira": 13900 },
+        { "item": "Detergent carton (12 x 900g)", "category": "toiletries", "listPriceNaira": 21000 },
+        { "item": "Bar soap carton (36 pcs)", "category": "toiletries", "listPriceNaira": 15500 }
+      ]
+    },
+    {
+      "id": "sim-tejuosho-ibrahim",
+      "name": "Ibrahim General Goods (demo)",
+      "market": "Tejuosho Market",
+      "lat": 6.5050, "lng": 3.3700,
+      "whatsapp": "+2340000000005",
+      "simulated": true,
+      "stocks": [
+        { "item": "Biscuits carton (48 packs)", "category": "snacks", "listPriceNaira": 11000 },
+        { "item": "Vegetable oil 25L", "category": "cooking", "listPriceNaira": 59500 },
+        { "item": "Candles carton (48 pcs)", "category": "household", "listPriceNaira": 7200 }
+      ]
+    },
+    {
+      "id": "sim-ikotun-nkechi",
+      "name": "Nkechi Beverages (demo)",
+      "market": "Ikotun Market",
+      "lat": 6.5480, "lng": 3.2630,
+      "whatsapp": "+2340000000006",
+      "simulated": true,
+      "stocks": [
+        { "item": "Soft drink crate (24 x 35cl)", "category": "drinks", "listPriceNaira": 9500 },
+        { "item": "Beer crate (12 x 60cl)", "category": "restricted", "listPriceNaira": 14000 }
+      ]
+    }
+  ]
+}
