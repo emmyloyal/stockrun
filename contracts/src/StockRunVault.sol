@@ -14,7 +14,7 @@ contract StockRunVault {
 
     struct Order {
         bytes32 supplierId;
-        address payout;        // off-ramp address that pays the supplier in naira
+        address payout;        // supplier's off-ramp address, copied from the owner's registry at proposal
         address rider;
         uint8 ordered;         // order units
         uint8 cat;
@@ -55,7 +55,10 @@ contract StockRunVault {
     mapping(bytes32 => uint8) public supplierStatus;            // 0 unknown, 1 approved, 2 preferred, 3 blocked
     mapping(bytes32 => uint8) public pendingSupplierStatus;
     mapping(bytes32 => uint256) public supplierEffectiveAt;
+    mapping(bytes32 => address) public supplierPayout;          // owner-registered off-ramp address per supplier
+    mapping(bytes32 => address) public pendingSupplierPayout;
     mapping(address => uint256) public bond;                    // rider bonds
+    uint256 public totalBonds;                                  // sum of bonds: never withdrawable by the owner
     uint256 public locked;                                      // funds locked in open orders
     Order[] public orders;
 
@@ -69,7 +72,7 @@ contract StockRunVault {
     event DeliveryHeld(uint256 indexed id, uint8 reason);
     event Refunded(uint256 indexed id, uint256 amount);
 
-    error NotAuthorized(); error BadStatus(); error CircuitFailed(); error Rejected(uint8 reason);
+    error NotAuthorized(); error BadStatus(); error CircuitFailed(); error Rejected(uint8 reason); error OrderTooLarge(); error NoPayout();
 
     modifier only(address who) { if (msg.sender != who) revert NotAuthorized(); _; }
 
@@ -86,9 +89,9 @@ contract StockRunVault {
     // ================================================================ owner settings
     function deposit(uint256 amount) external { require(token.transferFrom(msg.sender, address(this), amount)); }
 
-    function withdraw(uint256 amount, uint256 balance) external only(owner) {
-        // `balance` is passed in to avoid a balanceOf dependency in this skeleton; TODO: read token.balanceOf.
-        require(amount + locked <= balance, "locked");
+    /// @notice Owner withdraws free funds. Locked order funds and rider bonds stay in the vault.
+    function withdraw(uint256 amount) external only(owner) {
+        require(amount + locked + totalBonds <= token.balanceOf(address(this)), "locked");
         require(token.transfer(owner, amount));
     }
 
@@ -96,29 +99,37 @@ contract StockRunVault {
     function queueLimit(uint256 l) external only(owner) { pendingLimit = l; limitEffectiveAt = block.timestamp + DELAY; }
     function applyLimit() external { require(limitEffectiveAt != 0 && block.timestamp >= limitEffectiveAt); limit = pendingLimit; limitEffectiveAt = 0; }
 
-    function queueSupplier(bytes32 id, uint8 status_) external only(owner) {
+    /// @notice Owner sets a supplier's status and payout address. Only the owner, never the agent, decides
+    ///         where supplier money goes. Changes wait DELAY; blocking (3) is immediate.
+    function queueSupplier(bytes32 id, uint8 status_, address payout_) external only(owner) {
         require(status_ <= 3);
-        if (status_ == 3) { supplierStatus[id] = 3; return; }        // blocking is immediate
-        pendingSupplierStatus[id] = status_; supplierEffectiveAt[id] = block.timestamp + DELAY;
+        if (status_ == 3) { supplierStatus[id] = 3; supplierEffectiveAt[id] = 0; return; }
+        if ((status_ == 1 || status_ == 2) && payout_ == address(0)) revert NoPayout();
+        pendingSupplierStatus[id] = status_; pendingSupplierPayout[id] = payout_;
+        supplierEffectiveAt[id] = block.timestamp + DELAY;
     }
     function applySupplier(bytes32 id) external {
         require(supplierEffectiveAt[id] != 0 && block.timestamp >= supplierEffectiveAt[id]);
-        supplierStatus[id] = pendingSupplierStatus[id]; supplierEffectiveAt[id] = 0;
+        supplierStatus[id] = pendingSupplierStatus[id]; supplierPayout[id] = pendingSupplierPayout[id];
+        supplierEffectiveAt[id] = 0;
     }
 
     function setAgent(address a) external only(owner) { agent = a; }
 
     // ================================================================ riders
-    function postBond(uint256 amount) external { require(token.transferFrom(msg.sender, address(this), amount)); bond[msg.sender] += amount; }
+    function postBond(uint256 amount) external {
+        require(token.transferFrom(msg.sender, address(this), amount));
+        bond[msg.sender] += amount; totalBonds += amount;
+    }
     // TODO: bond withdrawal with a cooldown and no open orders.
 
     // ================================================================ 1. order → RestockGuard
     function proposeOrder(
-        bytes32 supplierId, address payout, uint8 ordered, uint256 unitPrice, uint8 cat, uint8 dist, address rider, uint256 riderFee
+        bytes32 supplierId, uint8 ordered, uint256 unitPrice, uint8 cat, uint8 dist, address rider, uint256 riderFee
     ) external only(agent) returns (uint256 id) {
         id = orders.length;
         Order storage o = orders.push();
-        o.supplierId = supplierId; o.payout = payout; o.ordered = ordered; o.unitPrice = unitPrice;
+        o.supplierId = supplierId; o.payout = supplierPayout[supplierId]; o.ordered = ordered; o.unitPrice = unitPrice;
         o.cat = cat; o.dist = dist; o.rider = rider; o.riderFee = riderFee; o.createdAt = uint64(block.timestamp);
         _guard(id, false);
     }
@@ -134,8 +145,11 @@ contract StockRunVault {
         uint256 amount = _orderValue(o) + o.riderFee;
         uint256 remaining = weeklyBudget > spentThisWeek ? weeklyBudget - spentThisWeek : 0;
 
+        // Rounding never favours spending: the order total rounds UP, budget and limit round DOWN.
+        uint256 totalUnits = (amount + unit - 1) / unit;
+        if (totalUnits > 255) revert OrderTooLarge();     // does not fit the 8-bit circuit: never approve by capping
         bytes memory input = _pack(
-            _f(_toUnits(amount), 8), _f(_toUnits(remaining), 8), _f(_toUnits(limit), 8),
+            _f(totalUnits, 8), _f(_unitsDown(remaining), 8), _f(_unitsDown(limit), 8),
             _f(supplierStatus[o.supplierId], 2), _f(o.cat, 3), _f(o.dist, 2), _f(ownerOk ? 1 : 0, 1), _f(0, 2)
         );
         uint256[] memory out = _unpack(_eval(restockGuardId, input), _w2(2, 3));
@@ -228,7 +242,7 @@ contract StockRunVault {
             if (shortQty == 0 || shortQty > o.picked) revert CircuitFailed();
             uint256 comp = uint256(shortQty) * o.unitPrice;
             if (comp > bond[o.rider]) comp = bond[o.rider];
-            bond[o.rider] -= comp;                                           // comp stays in vault for the owner
+            bond[o.rider] -= comp; totalBonds -= comp;                       // comp stays in vault for the owner
             spentThisWeek = spentThisWeek > o.riderFee + comp ? spentThisWeek - o.riderFee - comp : 0;
             emit OwnerCompensated(id, shortQty, comp);
         } else revert CircuitFailed();
@@ -249,8 +263,10 @@ contract StockRunVault {
     // ================================================================ internals
     function _orderValue(Order storage o) internal view returns (uint256) { return uint256(o.ordered) * o.unitPrice; }
 
-    function _toUnits(uint256 amount) internal view returns (uint256) {
-        uint256 u = (amount + unit - 1) / unit;               // round up so totals are never understated
+    /// Budget-side amounts round down (never overstated). Capping at 255 is safe here because
+    /// the order total is at most 255 units, so "total > capped value" stays exact.
+    function _unitsDown(uint256 amount) internal view returns (uint256) {
+        uint256 u = amount / unit;
         return u > 255 ? 255 : u;
     }
 

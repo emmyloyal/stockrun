@@ -8,7 +8,7 @@ call `proposeOrder` on the vault. It can never move money.
 - `search_suppliers(items, location, radius)` → ranked suppliers from `data/suppliers.json` (+ OSM)
 - `message_supplier(supplier, template|text)` → WhatsApp Cloud API (see docs/WHATSAPP.md); voice-call fallback
 - `book_rider(pickup, dropoff, window)` → bonded rider from the rider pool (simulated in the demo)
-- `propose_order(...)` → vault `proposeOrder`; reports the circuit's decision + reason code back to the owner
+- `propose_order(...)` → vault `proposeOrder(supplierId, ordered, unitPrice, cat, dist, rider, riderFee)`; reports the circuit's decision + reason code back to the owner. The agent cannot set where the supplier is paid: the payout address comes from the owner's supplier registry (`queueSupplier(id, status, payout)`, 24 h delay)
 
 ## Photo check service (separate key)
 - Counts units and flags damage in pickup/delivery photos; calls `attestPickup` / `attestDelivery`.
