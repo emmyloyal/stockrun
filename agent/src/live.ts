@@ -36,8 +36,9 @@ console.log(`Reader: ${extractor instanceof RuleExtractor ? 'rule-based (no Anth
 console.log(`\n1. Send "hi" from your phone to the test number (this opens WhatsApp's 24-hour window).`);
 console.log(`2. The agent will ask you for a price. Reply like a supplier: "13,800 per carton", "ok", "no stock"...\n`);
 
-const hi = await channel.nextReply(you, 10 * 60_000);
-if (hi === null) { console.log('No message within 10 minutes. Is the webhook connected? Stopping.'); server.close(); process.exit(1); }
+const waitMin = Number(env.LIVE_WAIT_MIN ?? 60);
+const hi = await channel.nextReply(you, waitMin * 60_000);
+if (hi === null) { console.log(`No message within ${waitMin} minutes. Is the webhook connected? Stopping.`); server.close(); process.exit(1); }
 channel.clear(you);
 
 try {
