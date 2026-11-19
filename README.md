@@ -28,7 +28,7 @@ See `CLAUDE.md` for the layout and the design rules, and `docs/PLAN.md` for the 
 ## Status
 | Item | Value |
 | --- | --- |
-| Processor | _TBD after creation_ |
-| Circuit IDs | RestockGuard _TBD_ · PickupCheck _TBD_ · DeliveryCheck _TBD_ |
+| Processor (X Layer) | [`0x34efCc0a3191A48Feec787252E6d817b063A4017`](https://www.oklink.com/xlayer/address/0x34efCc0a3191A48Feec787252E6d817b063A4017), taped out 2026-11-19 (see `deployments/xlayer.json`) |
+| Circuit IDs | RestockGuard #1 (119 NAND) · PickupCheck #2 (210 NAND) · DeliveryCheck #3 (141 NAND) |
 | Vault | _TBD_ |
 | App (DeWEB) | _TBD_ |

@@ -149,6 +149,6 @@ Scripts: `circuits/scripts/fork-check.ts` and `circuits/scripts/find-circuits.ts
 - [x] Eval bit order (TAP-02 §5) and the StockRun field convention.
 - [x] Fork check of eval + bit packing on X Layer
 - [x] Find createCPU / NAND mint / tapeout fee; rehearse on the fork
-- [ ] Get BEM + OKB into the deployer wallet
-- [ ] Create a processor and record its address in the README
-- [ ] Mint enough NAND for all circuits, plus a margin for a re-spin
+- [x] Get BEM + OKB into the deployer wallet (BEM bridged from BNB Chain via tapeout.net BEM Bridge)
+- [x] Create a processor: `0x34efCc0a3191A48Feec787252E6d817b063A4017` (2026-11-19, see deployments/xlayer.json)
+- [x] Mint 1,000 NAND (470 used by RestockGuard #1, PickupCheck #2, DeliveryCheck #3; 530 left for a re-spin)

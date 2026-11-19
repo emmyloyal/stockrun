@@ -1,0 +1,22 @@
+{
+  "chainId": 196,
+  "network": "X Layer mainnet",
+  "tapedOutAt": "2026-11-19",
+  "deployer": "0x6053caF2Ea20D2d2108C88Fe0DcA2D30Fe964f6a",
+  "factory": "0x1f09DAeFA827f02CBb40967cc91b259763760761",
+  "processor": "0x34efCc0a3191A48Feec787252E6d817b063A4017",
+  "transistors": "0xe63af1B06D02Bb1B44741C0459d4083ec5b440d4",
+  "circuitIds": { "restock": 1, "pickup": 2, "delivery": 3 },
+  "circuits": {
+    "RestockGuard": { "id": 1, "nIn": 34, "nOut": 5, "gates": 119, "tx": "0xaf6429bf2e4a7bc4e435ca493815b8b868d7728389ed904e5eb0dd2a0feca6fd" },
+    "PickupCheck": { "id": 2, "nIn": 27, "nOut": 13, "gates": 210, "tx": "0x24b80f4d29c57371c33357cd9b9ece03038d9016ade3e296620747c5e18bacae" },
+    "DeliveryCheck": { "id": 3, "nIn": 21, "nOut": 13, "gates": 141, "tx": "0x0249042e8918f77cbe4056880fc10a0d54ab3bdb4599f47fe66fa313e86d66d2" }
+  },
+  "txs": {
+    "approveFactory": "0x45966e2156b6dd1429fa8477b89045f6d6a6fa55c22908e41da72d172735cc9d",
+    "createCPU": "0x7fca422aadc130817cdc79b1367f0c4e407386f0a9796b17e4b598280988436e",
+    "approveTransistors": "0xf8bc545be588072b908d0b5a7c4c7a09c2e17e70e36fe31d85bf00e5fb10fdc8",
+    "mintNand1000": "0x18d81d3e5a9b6f542f082ca8ed8b6ddec1b5ad025b049d5c3073851abd862a56"
+  },
+  "nandRemaining": 530
+}
