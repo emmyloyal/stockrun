@@ -24,9 +24,14 @@ export function ruleParseReply(text: string): Reply {
 
 export class RuleExtractor implements Extractor {
   async extract<S extends z.ZodType>(schema: S, _instructions: string, text: string): Promise<z.infer<S> | null> {
-    if (schema === (OrderSchema as z.ZodType)) return ruleParseOrder(text) as z.infer<S>;
-    if (schema === (ReplySchema as z.ZodType)) return ruleParseReply(text) as z.infer<S>;
-    if (schema === (PriceListSchema as z.ZodType)) return ruleParsePriceList(text) as z.infer<S>;
+    // Match on the schema's fields, not object identity: a test runner can load a module twice, and two copies of
+    // the same schema are different objects.
+    if (sameShape(schema, OrderSchema)) return ruleParseOrder(text) as z.infer<S>;
+    if (sameShape(schema, ReplySchema)) return ruleParseReply(text) as z.infer<S>;
+    if (sameShape(schema, PriceListSchema)) return ruleParsePriceList(text) as z.infer<S>;
     return null;
   }
 }
+
+const keys = (s: z.ZodType) => Object.keys((s as unknown as { shape?: Record<string, unknown> }).shape ?? {}).sort().join(',');
+const sameShape = (a: z.ZodType, b: z.ZodType) => keys(a) !== '' && keys(a) === keys(b);

@@ -29,6 +29,14 @@ Only report what the message says. If a quantity is missing, skip that line and 
 
 export interface ParseResult { order: ParsedOrder; problems: string[] }
 
+/** "Cartons" -> "carton", so messages read "5 carton(s)" whatever form the reader returned. */
+export function singular(unit: string): string {
+  const u = unit.trim().toLowerCase();
+  if (!u) return 'unit';
+  if (/(ss|us)$/.test(u)) return u;
+  return u.endsWith('ies') ? u.slice(0, -3) + 'y' : u.endsWith('es') && /(box|dozen)es$/.test(u) ? u.slice(0, -2) : u.replace(/s$/, '');
+}
+
 /** Validates and normalises whatever the extractor returned. Code, not the model, enforces limits. */
 export function normalise(raw: z.infer<typeof OrderSchema>): ParseResult {
   const problems: string[] = [];
@@ -37,7 +45,7 @@ export function normalise(raw: z.infer<typeof OrderSchema>): ParseResult {
     if (!Number.isInteger(l.quantity) || l.quantity < 1) { problems.push(`"${l.item}": quantity missing or invalid`); continue; }
     if (l.quantity > 255) { problems.push(`"${l.item}": ${l.quantity} units is more than one order can hold (255); split it`); continue; }
     const max = l.maxUnitPriceNaira;
-    lines.push({ item: l.item.trim(), quantity: l.quantity, unit: l.unit.trim() || 'unit', category: l.category,
+    lines.push({ item: l.item.trim(), quantity: l.quantity, unit: singular(l.unit), category: l.category,
       maxUnitPriceNaira: max !== null && Number.isFinite(max) && max > 0 ? Math.round(max) : null });
   }
   const r = raw.radiusKm;

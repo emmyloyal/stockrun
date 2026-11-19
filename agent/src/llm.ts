@@ -40,18 +40,23 @@ export function jsonSchemaFor(schema: z.ZodType): Record<string, unknown> {
  * Run one structured call and validate the answer. Returns null when the model refuses, is blocked, stops early or
  * returns anything that does not match the schema: callers treat null as "could not understand" and hold.
  */
-export async function generateStructured<S extends z.ZodType>(generate: Generate, schema: S, p: Omit<GenerateParams, 'config' | 'model'> & { system: string; models?: string[] }): Promise<z.infer<S> | null> {
+export async function generateStructured<S extends z.ZodType>(generate: Generate, schema: S, p: Omit<GenerateParams, 'config' | 'model'> & { system: string; models?: string[]; retryDelayMs?: number }): Promise<z.infer<S> | null> {
   let response: Awaited<ReturnType<Generate>> | null = null;
-  for (const m of p.models ?? models()) {
-    try {
-      response = await generate({
-        model: m,
-        contents: p.contents,
-        config: { systemInstruction: p.system, responseMimeType: 'application/json', responseJsonSchema: jsonSchemaFor(schema), maxOutputTokens: 4000 },
-      });
-      break;
-    } catch (e) {
-      console.warn(`[gemini] ${m} failed: ${(e as Error).message.slice(0, 160)}`);
+  // Errors (busy model, timeout, network blip) move on to the next model; if every model errors, wait and go round
+  // once more. A model that answers badly is not retried: that answer is simply "not understood".
+  outer: for (let round = 0; round < 2; round++) {
+    if (round > 0) await new Promise((r) => setTimeout(r, p.retryDelayMs ?? 2000));
+    for (const m of p.models ?? models()) {
+      try {
+        response = await generate({
+          model: m,
+          contents: p.contents,
+          config: { systemInstruction: p.system, responseMimeType: 'application/json', responseJsonSchema: jsonSchemaFor(schema), maxOutputTokens: 4000 },
+        });
+        break outer;
+      } catch (e) {
+        console.warn(`[gemini] ${m} failed: ${(e as Error).message.slice(0, 160)}`);
+      }
     }
   }
   if (!response) return null;

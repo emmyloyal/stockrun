@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseOrder, normalise } from '../src/tools/parseOrder.ts';
+import { parseOrder, normalise, singular } from '../src/tools/parseOrder.ts';
 import { RuleExtractor, ruleParseReply } from '../src/rules.ts';
 import { negotiate, isDeal, messages, assertSafeMessage, ceilingFor } from '../src/tools/negotiate.ts';
 import { searchSuppliers, loadSuppliers, haversineKm, catalog } from '../src/tools/suppliers.ts';
@@ -36,6 +36,13 @@ describe('parse_order (rule reader)', () => {
     expect(r.order.lines).toEqual([{ item: 'z', quantity: 3, unit: 'unit', category: 'drinks', maxUnitPriceNaira: null }]);
     expect(r.problems).toHaveLength(2);
     expect(r.order.radiusKm).toBe(5);
+  });
+  it('the offline reader recognises schemas by their fields, even from a second copy of the module', async () => {
+    const { ReplySchema } = await import('../src/tools/negotiate.ts?copy=2' as string);
+    expect(await rules.extract(ReplySchema, '', '14,000 per carton')).toMatchObject({ unitPriceNaira: 14000 });
+  });
+  it('stores units in the singular, whatever the reader returned', () => {
+    expect(['Cartons', 'bags', 'crate', 'boxes', 'pieces', 'dozens', ' ', 'glass'].map(singular)).toEqual(['carton', 'bag', 'crate', 'box', 'piece', 'dozen', 'unit', 'glass']);
   });
   it('the catalogue covers every supplier item', () => expect(catalog().length).toBeGreaterThan(10));
 });

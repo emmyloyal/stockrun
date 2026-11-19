@@ -47,9 +47,20 @@ describe('busy models', () => {
       return { text: JSON.stringify(reply), candidates: [{ finishReason: 'STOP' }] };
     }) as unknown as Generate;
     expect(await new GeminiExtractor(busyThenOk).extract(ReplySchema, 'x', 'y')).toEqual(reply);
-    expect(tried).toEqual([process.env.GEMINI_MODEL || DEFAULT_MODEL, FALLBACK_MODEL]);
-    const allBusy = (async () => { throw new Error('503'); }) as unknown as Generate;
+    expect(tried).toEqual([...new Set([process.env.GEMINI_MODEL || DEFAULT_MODEL, FALLBACK_MODEL])].slice(0, 2));
+    let calls = 0;
+    const allBusy = (async () => { calls++; throw new Error('503'); }) as unknown as Generate;
     expect(await new GeminiExtractor(allBusy).extract(ReplySchema, 'x', 'y')).toBeNull();
+    expect(calls).toBe(4); // two models, two rounds
+  }, 10_000);
+  it('goes round once more after a network blip on every model', async () => {
+    let calls = 0;
+    const blip = (async () => {
+      if (++calls <= 2) throw new Error('fetch failed');
+      return { text: JSON.stringify(reply), candidates: [{ finishReason: 'STOP' }] };
+    }) as unknown as Generate;
+    expect(await new GeminiExtractor(blip).extract(ReplySchema, 'x', 'y')).toEqual(reply);
+    expect(calls).toBe(3);
   });
 });
 
