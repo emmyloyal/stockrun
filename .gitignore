@@ -10,3 +10,4 @@ agent/data/jobs.json
 contracts/broadcast/**/dry-run/
 .env.bak
 .env.*.bak
+contracts/broadcast/**/*.recovery.lock

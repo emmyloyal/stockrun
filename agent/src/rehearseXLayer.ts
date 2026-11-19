@@ -34,7 +34,9 @@ const PHOTO = { data: Buffer.from([0xff, 0xd8, 0xff, 0xe0, 9]), mediaType: 'imag
 const port = 19545 + Math.floor(Math.random() * 400);
 const url = `http://127.0.0.1:${port}`;
 const upstream = envValue(process.env, 'XLAYER_RPC') ?? 'https://rpc.xlayer.tech';
-const anvil = spawn(ANVIL, ['--fork-url', upstream, '--port', String(port)], { stdio: process.env.ANVIL_LOG ? ['ignore', (await import('node:fs')).openSync(process.env.ANVIL_LOG, 'w'), 'inherit'] : 'ignore' });
+// --block-time: a forked anvil can answer sendRawTransaction before it has mined, and with automine alone no later block
+// ever comes, so viem would wait forever for a tx it already saw pending. Real X Layer keeps producing blocks.
+const anvil = spawn(ANVIL, ['--fork-url', upstream, '--port', String(port), '--block-time', '1'], { stdio: process.env.ANVIL_LOG ? ['ignore', (await import('node:fs')).openSync(process.env.ANVIL_LOG, 'w'), 'inherit'] : 'ignore' });
 const stop = () => anvil.kill();
 process.on('exit', stop);
 
