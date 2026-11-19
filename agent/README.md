@@ -36,6 +36,9 @@ npm run demo -- "5 cartons of Indomie, 10 bags of rice at 80k, within 5 km"
 ## Data
 `data/suppliers.json` holds **fictional** demo suppliers (`simulated: true`, invented names, placeholder phone numbers, demo prices) located at public Lagos markets. Add real suppliers only with their consent, as `simulated: false`.
 
+## App server (`src/server/`)
+`npm run app` starts the whole local demo on http://localhost:8080: a local chain, the agent, the photo check and the built app from `app/dist`. The API is `src/server/api.ts`. The owner and rider sign their own steps in the browser; see `app/README.md`.
+
 ## Supplier prices (`src/prices/`)
 `PriceBook` stores every price with its supplier, item, source and date. The source is `deal` or `quote` (recorded automatically while haggling) or `price_list` (sent by the supplier).
 - **Price lists by WhatsApp:** `messages.askPriceList` asks a supplier for their prices. `updatePriceList` reads a reply such as "Indomie 13,500 / Rice 82k" and keeps only catalogue items.
@@ -87,7 +90,7 @@ You play the supplier on your own phone. Only the negotiation runs: no vault, no
 ## Not built yet (say so in the demo)
 - **WhatsApp template and hosting:** the `order_request` template for first contact is not registered, and there is no hosted webhook yet. The agent and webhook run locally behind a tunnel.
 - **Owner replies:** handling "YES <id>" as `approveOrder` is not built. The owner must sign that with the owner key; the agent key cannot do it.
-- **Rider app:** the screens that take photos and send the rider's own count. The check service behind them is built (see Photo check).
+- **Hosted app:** the owner and rider app is built (`app/`, served by `npm run app` on a local chain), but it is not deployed anywhere yet.
 - **Signed GPS:** the rider's "at the supplier" and "at the shop" are still self-reported.
 - **Fallbacks and inputs:** voice-call fallback, voice-note transcription, and OpenStreetMap search beyond `suppliers.json`.
 - **Multi-line orders:** they are proposed line by line, one vault order per line. Lines with no deal are reported, not retried.
