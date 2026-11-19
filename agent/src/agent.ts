@@ -10,6 +10,8 @@ import { bookRider } from './tools/riders.ts';
 import { RESTOCK_REASONS, type ProposeResult, type VaultClient } from './tools/vault.ts';
 import { CATEGORIES, type OrderLine, type Rider, type Shop, type SupplierStatus } from './types.ts';
 import type { JobStore } from './check/jobs.ts';
+import type { PriceBook } from './prices/priceBook.ts';
+import { catalogueReference } from './prices/priceBook.ts';
 
 export interface AgentDeps {
   extractor: Extractor;
@@ -23,6 +25,8 @@ export interface AgentDeps {
   replyTimeoutMs?: number;
   /** Records each proposed order's off-chain details for the rider app and the photo check. */
   jobs?: JobStore;
+  /** Supplier prices: records every quote and deal, and gives the reference price for the walk-away point. */
+  prices?: PriceBook;
 }
 
 export type LineOutcome =
@@ -51,7 +55,11 @@ export async function handleOrder(text: string, d: AgentDeps): Promise<AgentRepo
 
     let deal: Deal | null = null; let cand: Candidate | null = null; const tried: string[] = [];
     for (const c of approved.slice(0, d.maxSuppliersPerLine ?? 3)) {
-      const r = await negotiate(c.supplier, line, c.listPriceNaira, d.channel, d.extractor, { timeoutMs: d.replyTimeoutMs });
+      const reference = d.prices?.reference(line.item)?.priceNaira ?? catalogueReference(line.item) ?? c.listPriceNaira;
+      const r = await negotiate(c.supplier, line, reference, d.channel, d.extractor, {
+        timeoutMs: d.replyTimeoutMs,
+        onPrice: (e) => d.prices?.record({ supplierId: c.supplier.id, item: line.item, unitPriceNaira: e.unitPriceNaira, source: e.kind }),
+      });
       if (isDeal(r)) { deal = r; cand = c; break; }
       tried.push(`${c.supplier.name}: ${r.reason.replace('_', ' ')}`);
     }

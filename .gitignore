@@ -4,3 +4,6 @@ contracts/out/
 contracts/cache/
 dist/
 .DS_Store
+# real supplier prices and jobs (pilot data)
+agent/data/prices.json
+agent/data/jobs.json

@@ -36,6 +36,13 @@ export const messages = {
     `Deal: ${l.quantity} ${l.unit}(s) of ${l.item} at ${ngn(price)} each. Our rider will come to check and collect. ` +
     `Payment is made when the rider has checked the goods.`,
   decline: () => `Thank you for your time. We will not take it at that price today.`,
+  askPriceList: (s: Supplier) =>
+    `Hello ${s.name}, please send your current prices, one product per line, e.g. "Indomie carton 13,500". ` +
+    `We use them to send you orders.`,
+  priceListReply: (accepted: number, check: string[], unknown: string[]) =>
+    `Thank you, we saved ${accepted} price${accepted === 1 ? '' : 's'}.` +
+    (check.length ? ` Please check these prices, they look wrong: ${check.join(', ')}.` : '') +
+    (unknown.length ? ` We do not stock these yet: ${unknown.join(', ')}.` : ''),
 };
 
 /** Guardrail: outgoing text must never promise payment before the pickup check. */
@@ -50,19 +57,26 @@ export interface Deal { supplier: Supplier; line: OrderLine; unitPriceNaira: num
 export interface NoDeal { supplier: Supplier; reason: 'no_reply' | 'unavailable' | 'too_expensive' | 'unclear'; transcript: string[] }
 
 /**
- * The agent's ceiling: the owner's max unit price, or (if none) the catalogue list price + 5%.
+ * The agent's ceiling: the owner's max unit price, or (if none) the reference price + 5%. The reference comes from the
+ * price book (median across at least 3 suppliers, else StockRun's catalogue), never from the supplier being haggled with.
  * The agent never agrees above it; RestockGuard still checks the order total against budget and limit.
  */
-export function ceilingFor(line: OrderLine, listPriceNaira: number): number {
-  return line.maxUnitPriceNaira ?? Math.round((listPriceNaira * 1.05) / 100) * 100;
+export function ceilingFor(line: OrderLine, referencePriceNaira: number): number {
+  return line.maxUnitPriceNaira ?? Math.round((referencePriceNaira * 1.05) / 100) * 100;
 }
 
+export type PriceEvent = { kind: 'quote' | 'deal'; unitPriceNaira: number };
+
 export async function negotiate(
-  supplier: Supplier, line: OrderLine, listPriceNaira: number, channel: SupplierChannel, ex: Extractor,
-  opts: { timeoutMs?: number; rounds?: number } = {},
+  supplier: Supplier, line: OrderLine, referencePriceNaira: number, channel: SupplierChannel, ex: Extractor,
+  opts: { timeoutMs?: number; rounds?: number; onPrice?: (e: PriceEvent) => void } = {},
 ): Promise<Deal | NoDeal> {
   const timeoutMs = opts.timeoutMs ?? 15 * 60_000, rounds = opts.rounds ?? 3;
-  const ceiling = ceilingFor(line, listPriceNaira);
+  const ceiling = ceilingFor(line, referencePriceNaira);
+  const deal = (price: number, pickupWindow: string | null): Deal => {
+    opts.onPrice?.({ kind: 'deal', unitPriceNaira: price });
+    return { supplier, line, unitPriceNaira: price, pickupWindow, transcript };
+  };
   const transcript: string[] = [];
   const say = async (text: string) => { assertSafeMessage(text); transcript.push(`StockRun: ${text}`); await channel.send(supplier, text); };
   const hear = async (): Promise<Reply | null | 'timeout'> => {
@@ -85,22 +99,23 @@ export async function negotiate(
     const agreed = r.acceptsOurOffer && offered !== null ? offered : r.unitPriceNaira;
     if (agreed === null) return { supplier, reason: 'unclear', transcript };
     const price = Math.round(agreed);
+    if (r.unitPriceNaira !== null) opts.onPrice?.({ kind: 'quote', unitPriceNaira: Math.round(r.unitPriceNaira) });
 
     // Accept if the supplier agreed to our offer, or their price is at/below what we last offered.
     if ((r.acceptsOurOffer && offered !== null) || (offered !== null && price <= offered)) {
       if (price > ceiling) break; // never happens by construction, kept as a hard stop
       await say(messages.confirm(line, price));
-      return { supplier, line, unitPriceNaira: price, pickupWindow: r.pickupWindow, transcript };
+      return deal(price, r.pickupWindow);
     }
     if (round === rounds - 1) {
-      if (price <= ceiling) { await say(messages.confirm(line, price)); return { supplier, line, unitPriceNaira: price, pickupWindow: r.pickupWindow, transcript }; }
+      if (price <= ceiling) { await say(messages.confirm(line, price)); return deal(price, r.pickupWindow); }
       break;
     }
     // Counter: 5% under their ask on the first round, then meet halfway; never above the ceiling.
     const target = offered === null ? price * 0.95 : (price + offered) / 2;
     const next = Math.min(ceiling, Math.round(target / 100) * 100);
     if (offered !== null && next <= offered) { // no room left
-      if (price <= ceiling) { await say(messages.confirm(line, price)); return { supplier, line, unitPriceNaira: price, pickupWindow: r.pickupWindow, transcript }; }
+      if (price <= ceiling) { await say(messages.confirm(line, price)); return deal(price, r.pickupWindow); }
       break;
     }
     offered = next;

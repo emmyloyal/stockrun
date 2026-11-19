@@ -52,7 +52,7 @@ export async function parseOrder(text: string, ex: Extractor): Promise<ParseResu
 
 // ---------------------------------------------------------------- offline fallback
 // Rule-based reader for the demo without an API key: "20 cartons of Indomie, 10 bags of rice at 80k, within 5 km".
-const ALIASES: [RegExp, string][] = [
+export const ALIASES: [RegExp, string][] = [
   [/indomie|noodle/i, 'Indomie noodles carton (40 x 70g)'],
   [/rice/i, 'Rice 50kg bag'],
   [/spaghetti|pasta/i, 'Spaghetti carton (20 x 500g)'],

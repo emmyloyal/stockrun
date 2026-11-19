@@ -36,6 +36,18 @@ npm run demo -- "5 cartons of Indomie, 10 bags of rice at 80k, within 5 km"
 ## Data
 `data/suppliers.json` holds **fictional** demo suppliers (`simulated: true`, invented names, placeholder phone numbers, demo prices) located at public Lagos markets. Add real suppliers only with their consent, as `simulated: false`.
 
+## Supplier prices (`src/prices/`)
+`PriceBook` stores every price with its supplier, item, source and date. The source is `deal` or `quote` (recorded automatically while haggling) or `price_list` (sent by the supplier).
+- **Price lists by WhatsApp:** `messages.askPriceList` asks a supplier for their prices. `updatePriceList` reads a reply such as "Indomie 13,500 / Rice 82k" and keeps only catalogue items.
+  - A price more than 3× away from StockRun's catalogue price is sent back to the supplier to check (e.g. "135" written for 135,000). It is not saved.
+  - Items not in the catalogue are reported back, not saved.
+- **Walk-away price:** the owner's maximum, or the **reference price + 5%**.
+  - The reference is the median of each supplier's latest price over the last 30 days, once at least 3 suppliers have a price.
+  - Before that, the reference is StockRun's catalogue price, which suppliers cannot edit.
+  - A supplier's own price never sets what the agent will pay for their goods (tested in `test/prices.test.ts`).
+- **Not built yet:** routing incoming WhatsApp messages. A supplier's message that arrives outside a negotiation should go to `updatePriceList`. That needs the live inbound handler, which waits on Meta unlocking sending.
+- **Storage:** real price data stays out of git (`agent/data/prices.json` and `jobs.json` are gitignored).
+
 ## Photo check (`src/check/`)
 The check service holds the **check key**. That key can only call `attestPickup` and `attestDelivery`, and it never moves money.
 1. **Gemini looks.** `GeminiPhotoCounter` returns how many units it can see, whether any are damaged, and any problem with the photo (blurry, too dark, units hidden). Gemini is told the item and the unit, but **never the ordered quantity**, so it cannot anchor on that number. Text inside the photo is treated as something to read, not as instructions.

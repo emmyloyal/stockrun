@@ -4,6 +4,7 @@ import type { z } from 'zod';
 import type { Extractor } from './llm.ts';
 import { OrderSchema, ruleParseOrder, naira } from './tools/parseOrder.ts';
 import { ReplySchema, type Reply } from './tools/negotiate.ts';
+import { PriceListSchema, ruleParsePriceList } from './prices/priceList.ts';
 
 export function ruleParseReply(text: string): Reply {
   const t = text.toLowerCase();
@@ -25,6 +26,7 @@ export class RuleExtractor implements Extractor {
   async extract<S extends z.ZodType>(schema: S, _instructions: string, text: string): Promise<z.infer<S> | null> {
     if (schema === (OrderSchema as z.ZodType)) return ruleParseOrder(text) as z.infer<S>;
     if (schema === (ReplySchema as z.ZodType)) return ruleParseReply(text) as z.infer<S>;
+    if (schema === (PriceListSchema as z.ZodType)) return ruleParsePriceList(text) as z.infer<S>;
     return null;
   }
 }
