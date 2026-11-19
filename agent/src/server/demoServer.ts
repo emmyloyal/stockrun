@@ -42,6 +42,13 @@ const server = createApi({
   demoKeys: DEMO_KEYS,
   log: (l) => console.log(`[app] ${l}`),
 });
+server.on('error', (e: NodeJS.ErrnoException) => {
+  console.error(e.code === 'EADDRINUSE'
+    ? `Port ${port} is already in use (another StockRun demo still running?). Stop it, or set APP_PORT in .env.`
+    : `Server error: ${e.message}`);
+  chain.stop();
+  process.exit(1);
+});
 server.listen(port, () => {
   console.log(`StockRun demo on http://localhost:${port}`);
   console.log(`Chain: local anvil (${chain.url}), vault ${chain.vault}`);
