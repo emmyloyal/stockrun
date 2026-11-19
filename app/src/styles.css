@@ -86,3 +86,6 @@ button.card:hover { border-color: var(--ink); }
 .progress { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
 .progress li { font-size: 0.7rem; color: var(--muted); padding-top: 6px; border-top: 4px solid var(--line); }
 .progress li.done { color: var(--ink); border-top-color: var(--ok); }
+
+.target { padding: 10px 12px; border-radius: 9px; background: var(--bg); border: 1px dashed var(--line); }
+.target strong { font-family: var(--mono); font-size: 1.1rem; }

@@ -19,7 +19,8 @@ export function Outcome({ r }: { r: CheckResult }) {
   const tone = r.status === 'retake' || r.status === 'error' ? 'no'
     : r.outcome === 'paid' || r.outcome === 'rider_paid' ? 'ok'
     : r.outcome === 'held' || r.status === 'waiting_rider' ? 'ask' : 'ask';
-  const title = r.status === 'retake' ? 'Take the photo again'
+  const title = r.status === 'mismatch' ? `Photo shows ${r.aiCount} of ${r.expected}`
+    : r.status === 'retake' ? 'Take the photo again'
     : r.status === 'error' ? 'Not done'
     : r.status === 'waiting_rider' ? `Photo counted ${r.aiCount}. Waiting for the rider's count`
     : r.outcome === 'paid' ? `PickupCheck: supplier paid for all ${r.qty}`

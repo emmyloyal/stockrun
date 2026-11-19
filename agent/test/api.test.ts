@@ -57,7 +57,8 @@ describe.skipIf(!localChainAvailable())('app API', () => {
     // Rider counts 5 and signs it; the photo shows 4: the supplier is paid for 4.
     await sign(accounts.rider, 'riderPickup', [0n, true, 5]);
     counter.queue.push(report(4));
-    const pickup = await api('/api/orders/0/photo', { stage: 'pickup', mediaType: 'image/jpeg', data: JPEG });
+    expect((await api('/api/orders/0/photo', { stage: 'pickup', mediaType: 'image/jpeg', data: JPEG })).json).toMatchObject({ status: 'mismatch', aiCount: 4, expected: 5 });
+    const pickup = await api('/api/orders/0/confirm-count', { stage: 'pickup' });
     expect(pickup.json).toMatchObject({ status: 'settled', outcome: 'paid_part', qty: 4 });
     expect(await chain.pub.readContract({ address: chain.token, abi: tokenAbi, functionName: 'balanceOf', args: [accounts.payout.address] })).toBe(4n * 13_300n * TOKEN_PER_NAIRA);
 

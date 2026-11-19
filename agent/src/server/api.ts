@@ -69,6 +69,14 @@ export function createApi(d: ApiDeps): Server {
       log(`photo ${stage} #${m[1]}: ${r.status}${'message' in r ? ` (${r.message})` : ''}`);
       return r;
     }],
+    ['POST', /^\/api\/orders\/(\d+)\/confirm-count$/, async (m, body) => {
+      if (!d.check) throw new HttpError(503, 'Photo check is off: set GEMINI_API_KEY in .env and restart.');
+      const stage = body?.stage === 'delivery' ? 'delivery' : 'pickup';
+      const r = await d.check.confirmShort(BigInt(m[1]), stage);
+      lastCheck.set(m[1], r);
+      log(`confirmed short ${stage} #${m[1]}: ${r.status}`);
+      return r;
+    }],
     ['POST', /^\/api\/orders\/(\d+)\/settle$/, async (m, body) => {
       if (!d.check) throw new HttpError(503, 'Settlement runs through the check service, which is off.');
       const stage = body?.stage === 'delivery' ? 'delivery' : 'pickup';

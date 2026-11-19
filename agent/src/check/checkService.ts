@@ -47,7 +47,12 @@ export type CheckResult =
   | { status: 'waiting_rider'; aiCount: number; damage: boolean; attestTx: Hash; message: string }
   | { status: 'settled'; outcome: 'paid' | 'paid_part' | 'held' | 'rider_paid' | 'compensated'; qty: number; reason: number;
       aiCount: number; damage: boolean; attestTx: Hash; settleTx: Hash; message: string }
+  | { status: 'mismatch'; aiCount: number; expected: number; damage: boolean; message: string }
   | { status: 'error'; message: string };
+
+type Stage = 'pickup' | 'delivery';
+/** A short photo count waiting for the rider to retake or confirm it. Keyed by `${orderId}:${stage}`. */
+interface Pending { aiCount: number; damage: boolean; expected: number }
 
 export class CheckService {
   readonly vault: Address;
@@ -55,6 +60,7 @@ export class CheckService {
   private checker: WalletClient<Transport, Chain, Account>;
   private counter: PhotoCounter;
   private jobs: JobStore;
+  private pending = new Map<string, Pending>();
   constructor(vault: Address, pub: PublicClient, checker: WalletClient<Transport, Chain, Account>, counter: PhotoCounter, jobs: JobStore) {
     this.vault = vault; this.pub = pub; this.checker = checker; this.counter = counter; this.jobs = jobs;
   }
@@ -83,14 +89,41 @@ export class CheckService {
     const wanted = stage === 'pickup' ? STATUS.Locked : STATUS.PickedUp;
     if (statusNow !== wanted) return { status: 'error', message: `Order ${orderId} is not waiting for a ${stage} check.` };
 
+    const key = `${orderId}:${stage}`;
+    this.pending.delete(key);
     const decision = decideCount(await this.counter.count(photo, { item: job.item, unit: job.unit }), expectedMax);
     if (!decision.attest) return { status: 'retake', message: decision.retake };
 
+    // The buyer's number is the target. A photo showing fewer is not recorded yet: the rider retakes it (goods were
+    // probably hidden) or confirms that only that many are there. Confirming can only lower the count, never raise it.
+    if (decision.aiCount < expectedMax) {
+      this.pending.set(key, { aiCount: decision.aiCount, damage: decision.damage, expected: expectedMax });
+      const unit = `${job.unit}${expectedMax === 1 ? '' : 's'}`;
+      return {
+        status: 'mismatch', aiCount: decision.aiCount, expected: expectedMax, damage: decision.damage,
+        message: `The photo shows ${decision.aiCount} of ${expectedMax} ${unit}. Take another photo with every ${job.unit} visible, or confirm that only ${decision.aiCount} ${decision.aiCount === 1 ? 'is' : 'are'} here.`,
+      };
+    }
+    return this.attestAndSettle(orderId, stage, decision.aiCount, decision.damage, riderCounted);
+  }
+
+  /** The rider confirms a short photo count. Uses the count from the last photo; nothing the caller sends can raise it. */
+  async confirmShort(orderId: bigint, stage: Stage): Promise<CheckResult> {
+    const key = `${orderId}:${stage}`;
+    const p = this.pending.get(key);
+    if (!p) return { status: 'error', message: 'There is no short count waiting to be confirmed. Take the photo again.' };
+    const o = await this.order(orderId);
+    if (o[8] !== (stage === 'pickup' ? STATUS.Locked : STATUS.PickedUp)) return { status: 'error', message: `Order ${orderId} is not waiting for a ${stage} check.` };
+    this.pending.delete(key);
+    return this.attestAndSettle(orderId, stage, p.aiCount, p.damage, o[11]);
+  }
+
+  private async attestAndSettle(orderId: bigint, stage: Stage, aiCount: number, damage: boolean, riderCounted: boolean): Promise<CheckResult> {
     try {
-      const attestTx = await this.write(stage === 'pickup' ? 'attestPickup' : 'attestDelivery', [orderId, decision.aiCount, decision.damage]);
+      const attestTx = await this.write(stage === 'pickup' ? 'attestPickup' : 'attestDelivery', [orderId, aiCount, damage]);
       if (stage === 'pickup' && !riderCounted)
-        return { status: 'waiting_rider', aiCount: decision.aiCount, damage: decision.damage, attestTx, message: 'Photo checked. Waiting for the rider to enter their count.' };
-      return { ...(await this.settle(orderId, stage)), aiCount: decision.aiCount, damage: decision.damage, attestTx };
+        return { status: 'waiting_rider', aiCount, damage, attestTx, message: 'Photo checked. Waiting for the rider to enter their count.' };
+      return { ...(await this.settle(orderId, stage)), aiCount, damage, attestTx };
     } catch (e) {
       return { status: 'error', message: `The vault refused (${revertName(e) ?? 'transaction failed'}). The order holds; nothing was paid.` };
     }

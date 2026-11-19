@@ -75,7 +75,10 @@ describe.skipIf(!localChainAvailable())('photo check on a local chain', () => {
     const before = await balance(accounts.payout.address);
     await riderPickup(id, 5);
     counter.queue.push(report({ count: 4 }));
-    const r = await svc.pickup(id, PHOTO);
+    // 4 of 5: nothing is recorded until the rider retakes or confirms.
+    expect(await svc.pickup(id, PHOTO)).toMatchObject({ status: 'mismatch', aiCount: 4, expected: 5, message: expect.stringMatching(/shows 4 of 5 cartons/) });
+    expect((await svc.order(id))[13]).toBe(false); // aiCounted still false
+    const r = await svc.confirmShort(id, 'pickup');
     expect(r).toMatchObject({ status: 'settled', outcome: 'paid_part', qty: 4, reason: 5, aiCount: 4 });
     expect(await balance(accounts.payout.address) - before).toBe(4n * 13_300n * TOKEN_PER_NAIRA);
     expect(counter.asked.at(-1)).not.toMatch(/5|quantity|ordered/); // the model never sees the order size
@@ -107,7 +110,19 @@ describe.skipIf(!localChainAvailable())('photo check on a local chain', () => {
     await svc.pickup(id, PHOTO);
     await riderArrive(id);
     counter.queue.push(report({ count: 3 }));
-    expect(await svc.delivery(id, PHOTO)).toMatchObject({ status: 'settled', outcome: 'compensated', qty: 2, reason: 4 });
+    expect(await svc.delivery(id, PHOTO)).toMatchObject({ status: 'mismatch', aiCount: 3, expected: 5 });
+    expect(await svc.confirmShort(id, 'delivery')).toMatchObject({ status: 'settled', outcome: 'compensated', qty: 2, reason: 4 });
+  }, 60_000);
+
+  it('a short photo followed by a better photo settles in full; confirming needs a pending short count', async () => {
+    const id = await order('5 cartons of Indomie within 5 km');
+    await riderPickup(id, 5);
+    expect(await svc.confirmShort(id, 'pickup')).toMatchObject({ status: 'error' });
+    counter.queue.push(report({ count: 2 }));
+    expect(await svc.pickup(id, PHOTO)).toMatchObject({ status: 'mismatch', aiCount: 2 });
+    counter.queue.push(report({ count: 5 }));
+    expect(await svc.pickup(id, PHOTO)).toMatchObject({ status: 'settled', outcome: 'paid', qty: 5 });
+    expect(await svc.confirmShort(id, 'pickup')).toMatchObject({ status: 'error' }); // the new photo cleared the short count
   }, 60_000);
 
   it('damaged goods at pickup -> held, nothing paid', async () => {

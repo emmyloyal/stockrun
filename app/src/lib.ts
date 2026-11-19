@@ -6,10 +6,10 @@ import { anvil } from 'viem/chains';
 // ---------------------------------------------------------------- API types (mirror agent/src/server/api.ts)
 export interface Place { name: string; lat: number; lng: number }
 export interface CheckResult {
-  status: 'retake' | 'waiting_rider' | 'settled' | 'error';
+  status: 'retake' | 'waiting_rider' | 'settled' | 'mismatch' | 'error';
   message: string;
   outcome?: 'paid' | 'paid_part' | 'held' | 'rider_paid' | 'compensated';
-  qty?: number; reason?: number; aiCount?: number; damage?: boolean; attestTx?: Hex; settleTx?: Hex;
+  qty?: number; reason?: number; aiCount?: number; expected?: number; damage?: boolean; attestTx?: Hex; settleTx?: Hex;
 }
 export interface Order {
   orderId: string; item: string; unit: string; quantity: number; rider: Address; supplier: Place; shop: Place; createdAt: number;
@@ -34,6 +34,7 @@ export const api = {
   placeOrder: (text: string) => call<{ message: string; problems: string[] }>('/api/orders', { text }),
   photo: (id: string, stage: 'pickup' | 'delivery', photo: { mediaType: string; data: string }) => call<CheckResult>(`/api/orders/${id}/photo`, { stage, ...photo }),
   settle: (id: string, stage: 'pickup' | 'delivery') => call<CheckResult>(`/api/orders/${id}/settle`, { stage }),
+  confirmCount: (id: string, stage: 'pickup' | 'delivery') => call<CheckResult>(`/api/orders/${id}/confirm-count`, { stage }),
 };
 
 // ---------------------------------------------------------------- chain: each person signs their own steps

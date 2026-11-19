@@ -97,6 +97,11 @@ function Stage({ cfg, me, job, stage, place, refresh }: { cfg: Config; me: Signe
     if (stage === 'pickup' && photoDone) setResult(await api.settle(job.orderId, 'pickup'));
   });
 
+  const expected = stage === 'pickup' ? job.ordered : job.pickup.picked;
+  const confirmShort = () => run('Recording the lower count…', async () => {
+    setResult(await api.confirmCount(job.orderId, stage));
+  });
+
   const sendPhoto = (file: File) => run('Checking the photo…', async () => {
     const p = await preparePhoto(file);
     setPreview(p.previewUrl);
@@ -140,7 +145,8 @@ function Stage({ cfg, me, job, stage, place, refresh }: { cfg: Config; me: Signe
 
         <li className={photoDone ? 'done' : ''}>
           <h3>3. Photo of the goods</h3>
-          <p className="muted">Spread the {job.unit}s out so every one can be seen.</p>
+          <p className="target">{stage === 'pickup' ? 'Buyer ordered' : 'Picked up'}: <strong>{expected} {job.unit}{expected === 1 ? '' : 's'}</strong></p>
+          <p className="muted">Spread the {job.unit}s out so all {expected} can be seen in one photo.</p>
           <label className="btn file">
             {photoDone ? 'Take another photo' : 'Take photo'}
             <input id={`photo-${stage}-${job.orderId}`} type="file" accept="image/*" capture="environment" disabled={!!busy || !cfg.photoCheck} onChange={(e) => { const f = e.target.files?.[0]; if (f) sendPhoto(f); e.target.value = ''; }} />
@@ -153,6 +159,20 @@ function Stage({ cfg, me, job, stage, place, refresh }: { cfg: Config; me: Signe
       {busy && <p className="busy">{busy}</p>}
       {error && <p className="alert">{error}</p>}
       {result && <Outcome r={result} />}
+      {result?.status === 'mismatch' && (
+        <div className="stack">
+          <label className="btn file">
+            Take another photo
+            <input id={`rephoto-${stage}-${job.orderId}`} type="file" accept="image/*" capture="environment" disabled={!!busy} onChange={(e) => { const f = e.target.files?.[0]; if (f) sendPhoto(f); e.target.value = ''; }} />
+          </label>
+          <button className="btn ghost" disabled={!!busy} onClick={confirmShort}>
+            Only {result.aiCount} {result.aiCount === 1 ? 'is' : 'are'} here: confirm {result.aiCount}
+          </button>
+          <p className="fine">{stage === 'pickup'
+            ? `Confirming means the supplier is paid for ${result.aiCount}, not ${result.expected}.`
+            : `Confirming means the owner is paid back for the missing ${result.expected! - result.aiCount!} from your bond.`}</p>
+        </div>
+      )}
     </div>
   );
 }
