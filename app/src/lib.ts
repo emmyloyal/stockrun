@@ -19,6 +19,11 @@ export interface Order {
   delivery: { atShop: boolean; arrivedAt: number; aiCounted: boolean; delivered: number; damage: boolean; ownerOk: boolean; ownerIssue: boolean };
   lastCheck: CheckResult | null;
 }
+export interface MapData {
+  shop: Place;
+  suppliers: { id: string; name: string; market: string; lat: number; lng: number; simulated: boolean; status: number; km: number;
+    prices: { item: string; priceNaira: number; source: 'deal' | 'quote' | 'price_list' | 'catalogue'; age: string | null }[] }[];
+}
 export interface Config { chainId: number; vault: Address; photoCheck: boolean; demoKeys: { owner: Hex; rider: Hex } | null }
 
 async function call<T>(path: string, body?: unknown): Promise<T> {
@@ -30,6 +35,7 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
 export const api = {
   config: () => call<Config>('/api/config'),
   orders: () => call<Order[]>('/api/orders'),
+  map: () => call<MapData>('/api/map'),
   riderJobs: (rider: Address) => call<Order[]>(`/api/riders/${rider}/jobs`),
   placeOrder: (text: string) => call<{ message: string; problems: string[] }>('/api/orders', { text }),
   photo: (id: string, stage: 'pickup' | 'delivery', photo: { mediaType: string; data: string }) => call<CheckResult>(`/api/orders/${id}/photo`, { stage, ...photo }),

@@ -9,6 +9,8 @@ import { handleOrder, type AgentDeps } from '../agent.ts';
 import { checkAbi, STATUS, type CheckResult, type CheckService } from '../check/checkService.ts';
 import type { JobStore, Job } from '../check/jobs.ts';
 import type { MediaType } from '../check/photoCount.ts';
+import { haversineKm, loadSuppliers, supplierKey } from '../tools/suppliers.ts';
+import { ageText } from '../prices/priceBook.ts';
 
 export interface ApiDeps {
   pub: PublicClient;
@@ -50,6 +52,24 @@ export function createApi(d: ApiDeps): Server {
 
   const routes: [string, RegExp, (m: RegExpMatchArray, body: any) => Promise<unknown>][] = [
     ['GET', /^\/api\/config$/, async () => ({ chainId: d.chainId, vault: d.vault, photoCheck: !!d.check, demoKeys: d.demoKeys ?? null })],
+    ['GET', /^\/api\/map$/, async () => {
+      const shop = d.agent.shop;
+      const suppliers = await Promise.all(loadSuppliers().map(async (s) => {
+        const status = Number(await d.agent.vault.supplierStatus(supplierKey(s.id)));
+        return {
+          id: s.id, name: s.name, market: s.market, lat: s.lat, lng: s.lng, simulated: s.simulated, status,
+          km: Math.round(haversineKm(shop, s) * 10) / 10,
+          prices: s.stocks.map((st) => {
+            const latest = d.agent.prices?.latest(s.id, st.item);
+            return latest
+              ? { item: st.item, priceNaira: latest.unitPriceNaira, source: latest.source, age: ageText(latest.at) }
+              : { item: st.item, priceNaira: st.listPriceNaira, source: 'catalogue', age: null };
+          }),
+        };
+      }));
+      // Blocked suppliers are never shown or contacted.
+      return { shop, suppliers: suppliers.filter((s) => s.status !== 3) };
+    }],
     ['GET', /^\/api\/orders$/, async () => Promise.all(d.jobs.all().sort((a, b) => b.createdAt - a.createdAt).map(orderView))],
     ['GET', /^\/api\/riders\/(0x[0-9a-fA-F]{40})\/jobs$/, async (m) => Promise.all(d.jobs.forRider(m[1] as Address).sort((a, b) => b.createdAt - a.createdAt).map(orderView))],
     ['POST', /^\/api\/orders$/, async (_m, body) => {

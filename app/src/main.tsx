@@ -10,7 +10,10 @@ type Role = 'owner' | 'rider';
 function App() {
   const [cfg, setCfg] = useState<Config | null>(null);
   const [error, setError] = useState('');
-  const [role, setRole] = useState<Role | null>(() => load<Role | null>('stockrun.role', null));
+  const [role, setRole] = useState<Role | null>(() => {
+    const fromLink = new URLSearchParams(location.search).get('role');   // demo links: /?role=owner or /?role=rider
+    return fromLink === 'owner' || fromLink === 'rider' ? fromLink : load<Role | null>('stockrun.role', null);
+  });
   useEffect(() => { api.config().then(setCfg).catch((e) => setError(`Cannot reach the StockRun server: ${e.message}`)); }, []);
   useEffect(() => { save('stockrun.role', role); }, [role]);
 

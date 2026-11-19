@@ -89,3 +89,25 @@ button.card:hover { border-color: var(--ink); }
 
 .target { padding: 10px 12px; border-radius: 9px; background: var(--bg); border: 1px dashed var(--line); }
 .target strong { font-family: var(--mono); font-size: 1.1rem; }
+
+/* map */
+.map { height: 340px; width: 100%; border-radius: 12px; border: 1px solid var(--line); overflow: hidden; z-index: 0; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+.seg button { border: 0; background: var(--surface); padding: 8px 12px; cursor: pointer; font-size: 0.85rem; }
+.seg button.on { background: var(--ink); color: var(--bg); }
+.legend { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 0.78rem; color: var(--muted); }
+.legend li { display: flex; align-items: center; gap: 6px; }
+.legend i { width: 12px; height: 12px; border-radius: 50%; border: 2px solid; display: inline-block; }
+.legend i.line { width: 18px; height: 0; border-radius: 0; border-width: 2px 0 0; border-style: solid; background: none; }
+.legend i.amber { border-color: #A35F00; } .legend i.green { border-color: #18794A; }
+.supplier-list summary { cursor: pointer; font-weight: 600; padding: 6px 0; }
+.price-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 10px; font-size: 0.85rem; }
+.price-row .fine { grid-column: 1 / -1; }
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.leaflet-popup-content .pop { display: grid; gap: 4px; font-family: var(--body); }
+.pop .tag { font-weight: 600; font-size: 0.8rem; }
+.pop table { border-collapse: collapse; margin-top: 4px; font-size: 0.8rem; }
+.pop td { padding: 2px 6px 2px 0; vertical-align: top; }
+.pop td.num { text-align: right; white-space: nowrap; }
+.pop td.src { color: #586074; font-size: 0.72rem; }
+.leaflet-tooltip.shop-label { font-weight: 600; padding: 2px 6px; }

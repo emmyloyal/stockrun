@@ -11,6 +11,7 @@ import { RuleExtractor } from '../src/rules.ts';
 import { BotChannel } from '../src/sim/bots.ts';
 import { CheckService } from '../src/check/checkService.ts';
 import { JobStore } from '../src/check/jobs.ts';
+import { PriceBook } from '../src/prices/priceBook.ts';
 import type { PhotoCount, PhotoCounter } from '../src/check/photoCount.ts';
 
 const vaultUserAbi = parseAbi(['function riderPickup(uint256 id, bool atSupplier, uint8 riderCount)', 'function riderArrive(uint256 id, bool atShop)', 'function ownerConfirm(uint256 id, bool ok, bool issue)']);
@@ -38,7 +39,7 @@ describe.skipIf(!localChainAvailable())('app API', () => {
     server = createApi({
       pub: chain.pub, vault: chain.vault, chainId: anvil.id, jobs, tokenPerNaira: TOKEN_PER_NAIRA, rpcUrl: chain.url,
       check: new CheckService(chain.vault, chain.pub, checker, counter, jobs),
-      agent: { extractor: new RuleExtractor(), channel: new BotChannel(), vault: chain.vaultClient, riders: chain.riders, shop: DEMO_SHOP, tokenPerNaira: TOKEN_PER_NAIRA, jobs },
+      agent: { extractor: new RuleExtractor(), channel: new BotChannel(), vault: chain.vaultClient, riders: chain.riders, shop: DEMO_SHOP, tokenPerNaira: TOKEN_PER_NAIRA, jobs, prices: new PriceBook() },
     });
     await new Promise<void>((r) => server.listen(0, r));
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -72,6 +73,16 @@ describe.skipIf(!localChainAvailable())('app API', () => {
     const [view] = (await api('/api/orders')).json;
     expect(view).toMatchObject({ status: 'Delivered', pickup: { picked: 4, riderCount: 5, aiCount: 4 }, delivery: { delivered: 4, ownerOk: true }, lastCheck: { outcome: 'rider_paid' } });
   }, 60_000);
+
+  it('serves the map: shop, suppliers with on-chain status, prices from the price book', async () => {
+    const m = (await api('/api/map')).json;
+    expect(m.shop).toMatchObject({ name: 'Demo shop, Ojota' });
+    const adeyemi = m.suppliers.find((s: any) => s.id === 'sim-mile12-adeyemi');
+    expect(adeyemi).toMatchObject({ status: 1, simulated: true, km: 3 });
+    // The order in the first test recorded a deal at ₦13,300 in the price book.
+    expect(adeyemi.prices.find((p: any) => p.item.startsWith('Indomie'))).toMatchObject({ priceNaira: 13_300, source: 'deal', age: 'just now' });
+    expect(m.suppliers.find((s: any) => s.id === 'sim-ketu-chukwu').status).toBe(2);
+  });
 
   it('refuses what it should', async () => {
     // Test-node controls cannot be reached through the browser relay (no time travel to force a timeout payout).

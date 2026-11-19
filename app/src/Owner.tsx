@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, naira, signer, type Order } from './lib';
 import { Outcome, StatusPill, Tx } from './ui';
+import { SupplierMap } from './SupplierMap';
 
 type Signer = ReturnType<typeof signer>;
 
@@ -51,6 +52,8 @@ export function Owner({ me }: { me: Signer }) {
 
       {busy && <p className="busy">{busy}</p>}
       {error && <p className="alert">{error}</p>}
+
+      <SupplierMap orders={orders ?? []} />
 
       <h2>Orders</h2>
       {orders === null ? <p className="muted">Loading…</p> : orders.length === 0 ? (
