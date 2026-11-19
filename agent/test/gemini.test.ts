@@ -1,6 +1,6 @@
 // Gemini wrapper: the request we send and how answers are validated, with a fake client (no network, no key).
 import { describe, it, expect } from 'vitest';
-import { GeminiExtractor, jsonSchemaFor, DEFAULT_MODEL, type Generate, type GenerateParams } from '../src/llm.ts';
+import { GeminiExtractor, jsonSchemaFor, DEFAULT_MODEL, FALLBACK_MODEL, type Generate, type GenerateParams } from '../src/llm.ts';
 import { GeminiPhotoCounter, PhotoCountSchema } from '../src/check/photoCount.ts';
 import { ReplySchema } from '../src/tools/negotiate.ts';
 
@@ -35,6 +35,21 @@ describe('Gemini extractor', () => {
     expect(await ex({ text: '{"available": true' })).toBeNull();
     expect(await ex({ text: JSON.stringify({ ...reply, unitPriceNaira: 'cheap' }) })).toBeNull();
     expect(await ex({})).toBeNull();
+  });
+});
+
+describe('busy models', () => {
+  it('falls back to the second model when the first is busy, and returns null when both fail', async () => {
+    const tried: string[] = [];
+    const busyThenOk = (async (p: GenerateParams) => {
+      tried.push(p.model);
+      if (tried.length === 1) throw new Error('503 UNAVAILABLE: high demand');
+      return { text: JSON.stringify(reply), candidates: [{ finishReason: 'STOP' }] };
+    }) as unknown as Generate;
+    expect(await new GeminiExtractor(busyThenOk).extract(ReplySchema, 'x', 'y')).toEqual(reply);
+    expect(tried).toEqual([process.env.GEMINI_MODEL || DEFAULT_MODEL, FALLBACK_MODEL]);
+    const allBusy = (async () => { throw new Error('503'); }) as unknown as Generate;
+    expect(await new GeminiExtractor(allBusy).extract(ReplySchema, 'x', 'y')).toBeNull();
   });
 });
 

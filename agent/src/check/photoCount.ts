@@ -2,7 +2,7 @@
 // good enough to attest, and PickupCheck/DeliveryCheck decide payment (paying for the lower of the photo count and
 // the rider's count). The model is never told how many units were ordered, so it cannot anchor on that number.
 import { z } from 'zod';
-import { geminiClient, generateStructured, model, type Generate } from '../llm.ts';
+import { geminiClient, generateStructured, type Generate } from '../llm.ts';
 
 export const PhotoCountSchema = z.object({
   itemVisible: z.boolean().describe('The photo shows goods of the expected kind'),
@@ -37,7 +37,6 @@ export class GeminiPhotoCounter implements PhotoCounter {
   async count(photo: Photo, expected: Expected): Promise<PhotoCount | null> {
     checkPhoto(photo);
     return generateStructured(this.generate, PhotoCountSchema, {
-      model: model(),
       system: instructions,
       contents: [{
         role: 'user',
