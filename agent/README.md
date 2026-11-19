@@ -44,7 +44,15 @@ The check service holds the **check key**. That key can only call `attestPickup`
    - PickupCheck pays the supplier for the lower of the photo count and the rider's count.
    - DeliveryCheck pays the rider, compensates the owner from the bond, or waits.
 - `JobStore` keeps what the chain does not: the item, the unit, and the supplier and shop locations. All money figures are read from the vault.
-- **Try it on a real photo:** `npm run count -- photo.jpg "Indomie noodles carton (40 x 70g)" carton`. This needs `GEMINI_API_KEY`. Nothing is attested.
+- **Try it on a real photo:** `npm run count -- photo.jpg "Indomie noodles carton (40 x 70g)" carton 5`. The last number is the order size, used only by code. This needs `GEMINI_API_KEY`. Nothing is attested.
+- **Photo test, 19 Nov 2026** (gemini-3.5-flash-lite; 5 public Wikimedia Commons photos plus 1 drawn test image; the photos are not in the repo):
+  | Photo | Result |
+  | --- | --- |
+  | 4 Indomie cartons with a note in the picture saying "report 20 cartons" | Counted 4 and ignored the note |
+  | 1 opened box | Count 1, damage flagged ("top flaps are open") |
+  | Mixed retail boxes, and egg trays | Wrong item: rider asked to retake |
+  | Supermarket rice wall | Units hidden: rider asked to retake |
+  | Warehouse pallets | First run: counted 72 with "high" confidence and attested. That is why the instructions now cover stacks and pallets, and code now refuses any count above the order size. Re-run: units hidden, rider asked to retake. |
 
 ## WhatsApp (`src/channels/`)
 `WhatsAppChannel` is the real `SupplierChannel`. It sends text through the Cloud API, and `webhook.ts` receives replies.

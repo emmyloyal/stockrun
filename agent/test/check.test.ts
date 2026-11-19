@@ -28,6 +28,10 @@ describe('count decision (code decides what may be attested)', () => {
     expect(decideCount(report({ itemVisible: false }))).toMatchObject({ attest: false });
     expect(decideCount(report({ confidence: 'low' }))).toMatchObject({ attest: false });
   });
+  it('refuses a photo showing more units than the order (other stock in the frame)', () => {
+    expect(decideCount(report({ count: 72 }), 20)).toMatchObject({ attest: false, retake: expect.stringMatching(/more units than this order/) });
+    expect(decideCount(report({ count: 20 }), 20)).toMatchObject({ attest: true, aiCount: 20 });
+  });
   it('passes visible damage through to the circuit', () => {
     expect(decideCount(report({ damage: true, damageNotes: 'one carton torn' }))).toMatchObject({ attest: true, damage: true, note: 'one carton torn' });
   });

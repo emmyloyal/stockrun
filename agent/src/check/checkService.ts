@@ -79,10 +79,11 @@ export class CheckService {
     if (!job) return { status: 'error', message: `Order ${orderId} is not a known job.` };
     const o = await this.order(orderId);
     const statusNow = o[8], riderCounted = o[11];
+    const expectedMax = stage === 'pickup' ? o[3] : o[16]; // ordered, or picked at pickup
     const wanted = stage === 'pickup' ? STATUS.Locked : STATUS.PickedUp;
     if (statusNow !== wanted) return { status: 'error', message: `Order ${orderId} is not waiting for a ${stage} check.` };
 
-    const decision = decideCount(await this.counter.count(photo, { item: job.item, unit: job.unit }));
+    const decision = decideCount(await this.counter.count(photo, { item: job.item, unit: job.unit }), expectedMax);
     if (!decision.attest) return { status: 'retake', message: decision.retake };
 
     try {
