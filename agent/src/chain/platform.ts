@@ -90,6 +90,32 @@ export function localPlatform(chain: LocalChain): Platform {
 
 /** USDT0 on X Layer (from the tapeout.net config; decimals and symbol are checked on chain at start-up). */
 export const XLAYER_USDT0: Address = '0x779Ded0c9e1022225f8E0630b35a9b54bE713736';
+/**
+ * X Layer with our own fee rule. X Layer's base fee sits at 0.02 gwei and blocks are ~1% full, so the RPC suggests a
+ * 1 wei tip. Every transaction pays tip 0.001 gwei (5% of base fee, far above what blocks need) and at most
+ * 1.25 x base fee + tip. This runs as viem's last preparation step, after any `eth_fillTransaction`, so no node's fee
+ * suggestion can override it (a forked anvil fills a 1 gwei tip, 50x the real price). If the base fee is ever above
+ * XLAYER_MAX_BASE_FEE_WEI (25x normal) we refuse to send rather than pay it; the order holds and can be retried.
+ */
+export const XLAYER_TIP_WEI = 1_000_000n;
+export const XLAYER_MAX_BASE_FEE_WEI = 500_000_000n; // 0.5 gwei
+export const xlayerFees = (baseFee: bigint) => {
+  if (baseFee > XLAYER_MAX_BASE_FEE_WEI) throw new Error(`X Layer base fee ${baseFee} wei is above our ${XLAYER_MAX_BASE_FEE_WEI} wei ceiling; not sending`);
+  return { maxPriorityFeePerGas: XLAYER_TIP_WEI, maxFeePerGas: (baseFee * 125n) / 100n + XLAYER_TIP_WEI };
+};
+export const xLayerChain: Chain = {
+  ...xLayer,
+  fees: { baseFeeMultiplier: 1.25, maxPriorityFeePerGas: XLAYER_TIP_WEI },
+  prepareTransactionRequest: [
+    async (request, { client }) => {
+      const block = await client.request({ method: 'eth_getBlockByNumber', params: ['latest', false] }) as { baseFeePerGas?: Hex } | null;
+      if (!block?.baseFeePerGas) throw new Error('X Layer block has no base fee; not sending');
+      const { gasPrice: _legacy, ...rest } = request as typeof request & { gasPrice?: bigint };
+      return { ...rest, type: 'eip1559', ...xlayerFees(BigInt(block.baseFeePerGas)) } as typeof request;
+    },
+    { runAt: ['afterFillParameters'] },
+  ],
+};
 const TAPEOUT_FACTORY: Address = '0x1f09DAeFA827f02CBb40967cc91b259763760761';
 
 const processorAbi = parseAbi([
@@ -130,8 +156,8 @@ export const readDeployment = (): XLayerDeployment =>
  */
 export async function xlayerPlatform(env: NodeJS.ProcessEnv = process.env): Promise<Platform> {
   const rpcUrl = envValue(env, 'XLAYER_RPC') ?? 'https://rpc.xlayer.tech';
-  const transport = http(rpcUrl, { timeout: 20_000, retryCount: 2 });
-  const pub = createPublicClient({ chain: xLayer, transport }) as PublicClient;
+  const transport = http(rpcUrl, { timeout: Number(envValue(env, 'RPC_TIMEOUT_MS') ?? 20_000), retryCount: 2 });
+  const pub = createPublicClient({ chain: xLayerChain, transport }) as PublicClient;
   const id = await pub.getChainId();
   if (id !== 196) throw new Error(`XLAYER_RPC points at chain ${id}, not X Layer (196)`);
 
@@ -141,7 +167,7 @@ export async function xlayerPlatform(env: NodeJS.ProcessEnv = process.env): Prom
     checker: privateKeyToAccount(envKey(env, 'CHECK_SERVICE_PRIVATE_KEY')),
   };
   if (new Set(Object.values(accounts).map((a) => a.address)).size !== 3) throw new Error('deployer, agent and check-service keys must all be different');
-  const wallet = (a: Account) => createWalletClient({ account: a, chain: xLayer, transport });
+  const wallet = (a: Account) => createWalletClient({ account: a, chain: xLayerChain, transport });
 
   const payout = envValue(env, 'SUPPLIER_PAYOUT_ADDRESS');
   if (!payout || !isAddress(payout)) throw new Error('SUPPLIER_PAYOUT_ADDRESS is not a valid address');
@@ -163,7 +189,7 @@ export async function xlayerPlatform(env: NodeJS.ProcessEnv = process.env): Prom
   if (decimals !== 6) throw new Error(`USDT0 has ${decimals} decimals, expected 6`);
 
   return {
-    name: 'xlayer', chain: xLayer, rpcUrl, pub,
+    name: 'xlayer', chain: xLayerChain, rpcUrl, pub,
     deployer: wallet(accounts.deployer), agent: wallet(accounts.agent), checker: wallet(accounts.checker),
     token: XLAYER_USDT0, tokenSymbol: symbol, circuits: d.processor,
     circuitIds: { restock: BigInt(d.circuitIds.restock), pickup: BigInt(d.circuitIds.pickup), delivery: BigInt(d.circuitIds.delivery) },
