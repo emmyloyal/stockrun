@@ -9,6 +9,7 @@ cd ../agent && npm run app                 # http://localhost:8080
 ```
 - **Everything is local.** The vault runs on a local anvil chain and the suppliers are simulated bots.
 - **Photo check** needs `GEMINI_API_KEY` in `.env`.
+- **Demo links:** `http://localhost:8080/?role=owner` and `/?role=rider` open a mode directly.
 - **To work on the app:** keep `npm run app` running and use `npm run dev` in `app/`. Vite forwards `/api` and `/rpc` to port 8080.
 
 ## Who signs what
@@ -27,6 +28,13 @@ cd ../agent && npm run app                 # http://localhost:8080
 - **In the local demo**, the owner and rider sign with anvil's public test keys.
 
 ## Owner mode
+- **Map** (Leaflet + OpenStreetMap tiles, no API key):
+  - the shop and the search radius (5, 10 or 15 km);
+  - suppliers coloured by their status in the vault: preferred, approved, or not approved (suggest only). Blocked suppliers are never shown;
+  - a line from supplier to shop for every order in progress;
+  - tapping a supplier shows each item's price, where it came from (agreed, quoted, price list, or StockRun list price) and how old it is.
+
+  A plain list of the same suppliers sits under the map.
 - Order box: free text, read by the agent.
 - Order list: status, price, a progress bar (escrow → pickup → delivery → rider paid) and the circuit's decision in plain words, with transaction hashes.
 - Buttons: approve an order that needs the owner's OK; confirm delivery or report a problem.
@@ -41,7 +49,9 @@ cd ../agent && npm run app                 # http://localhost:8080
 - Photos are shrunk to at most 1,600 px JPEG on the phone before upload.
 
 ## Not built yet
-- **Map:** Leaflet + OpenStreetMap, showing suppliers, the radius and the rider's route.
+- **Live rider position on the map:** the map shows the supplier-to-shop line, but not where the rider is.
+- **Road distances:** distances are straight-line.
+- **Own map tiles:** the demo uses openstreetmap.org tiles, whose usage policy covers light use only. A pilot with real traffic needs its own tile provider.
 - **Real wallets:** sign-in and deployment to DeWEB. Today the demo keys are built in.
 - **Signed GPS:** location is checked in the rider's browser and the rider signs the result. The check service does not verify it yet.
 - **GPS and camera on a phone over plain `http://`:** browsers block them. Testing on a phone needs HTTPS, for example the cloudflared tunnel.
