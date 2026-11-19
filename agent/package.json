@@ -11,7 +11,8 @@
     "app": "node src/server/demoServer.ts",
     "rehearse:xlayer": "node src/rehearseXLayer.ts",
     "serve": "node src/server/main.ts",
-    "serve:xlayer": "node src/server/main.ts --network=xlayer"
+    "serve:xlayer": "node src/server/main.ts --network=xlayer",
+    "carrier:try": "node src/logistics/tryCarrier.ts"
   },
   "dependencies": {
     "@google/genai": "2.32.0",
