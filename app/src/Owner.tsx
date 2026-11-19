@@ -5,7 +5,8 @@ import { SupplierMap } from './SupplierMap';
 
 type Signer = ReturnType<typeof signer>;
 
-export function Owner({ me }: { me: Signer }) {
+/** `orderBlock`: when set, ordering is off and this says why (real accounts: nothing deposited yet). */
+export function Owner({ me, orderBlock = '', approveSuppliers = false }: { me: Signer; orderBlock?: string; approveSuppliers?: boolean }) {
   const [orders, setOrders] = useState<Order[] | null>(null);
   const [text, setText] = useState('5 cartons of Indomie, 10 bags of rice at 80k, within 5 km');
   const [reply, setReply] = useState('');
@@ -46,14 +47,15 @@ export function Owner({ me }: { me: Signer }) {
           <span>What do you need?</span>
           <textarea id="order-text" rows={3} value={text} onChange={(e) => setText(e.target.value)} />
         </label>
-        <button className="btn primary" disabled={!!busy || !text.trim()} onClick={place}>Send order</button>
+        <button className="btn primary" disabled={!!busy || !text.trim() || !!orderBlock} onClick={place}>Send order</button>
+        {orderBlock && <p className="warn">{orderBlock}</p>}
         {reply && <pre className="reply">{reply}</pre>}
       </div>
 
       {busy && <p className="busy">{busy}</p>}
       {error && <p className="alert">{error}</p>}
 
-      <SupplierMap orders={orders ?? []} />
+      <SupplierMap orders={orders ?? []} approve={approveSuppliers ? async (s, payout) => { await me.send('queueSupplier', [s.key, 1, payout]); } : undefined} />
 
       <h2>Orders</h2>
       {orders === null ? <p className="muted">Loading…</p> : orders.length === 0 ? (

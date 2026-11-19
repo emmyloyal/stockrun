@@ -1,8 +1,8 @@
 // Shops (one per owner, each with its own vault) and rider profiles, plus the per-shop services the server runs:
 // the agent proposing to that shop's vault, the photo check attesting to it, and that shop's jobs.
 import type { DatabaseSync } from 'node:sqlite';
-import { getAddress, type Address } from 'viem';
-import { deployVault, type Platform } from '../chain/platform.ts';
+import { getAddress, type Address, type Hex } from 'viem';
+import { deployVault, sendGasTopUp, type Platform } from '../chain/platform.ts';
 import { VaultClient } from '../tools/vault.ts';
 import { CheckService } from '../check/checkService.ts';
 import { JobStore } from '../check/jobs.ts';
@@ -28,6 +28,8 @@ export function migrateShops(db: DatabaseSync) {
       limit_naira INTEGER NOT NULL, created_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS riders (
       user_id INTEGER PRIMARY KEY REFERENCES users(id), name TEXT NOT NULL, lat REAL NOT NULL, lng REAL NOT NULL);
+    CREATE TABLE IF NOT EXISTS gas_topups (
+      user_id INTEGER PRIMARY KEY REFERENCES users(id), tx TEXT, created_at INTEGER NOT NULL);
   `);
 }
 
@@ -77,10 +79,30 @@ export class Shops {
     const vault = await deployVault(this.p, user.address, s.weeklyBudgetNaira, s.limitNaira);
     this.db.prepare('INSERT INTO shops (owner_id, name, lat, lng, vault, weekly_budget_naira, limit_naira, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
       .run(user.id, s.name, s.lat, s.lng, vault.toLowerCase(), s.weeklyBudgetNaira, s.limitNaira, Date.now());
+    await this.ensureGas(user).catch(() => null);   // the owner can retry with POST /api/me/gas
     return this.forOwner(user.id)!;
   }
 
-  setRider(user: User, input: { name?: unknown; lat?: unknown; lng?: unknown }): RiderProfile {
+  /**
+   * Send this person's phone key its one-off gas allowance, so it can sign deposits, bonds and confirmations.
+   * Once per account (recorded before sending, so concurrent requests cannot both send); a failed send is cleared so
+   * it can be retried. Returns the transaction, or null if nothing was sent now.
+   */
+  async ensureGas(user: User): Promise<{ tx: Hex | null; already: boolean }> {
+    if (!user.address) throw new AuthError(409, 'Set up the key on your phone first.');
+    const claimed = this.db.prepare('INSERT OR IGNORE INTO gas_topups (user_id, created_at) VALUES (?, ?)').run(user.id, Date.now()).changes === 1;
+    if (!claimed) return { tx: null, already: true };
+    try {
+      const tx = await sendGasTopUp(this.p, user.address);
+      this.db.prepare('UPDATE gas_topups SET tx = ? WHERE user_id = ?').run(tx ?? 'not needed', user.id);
+      return { tx, already: false };
+    } catch (e) {
+      this.db.prepare('DELETE FROM gas_topups WHERE user_id = ?').run(user.id);
+      throw e;
+    }
+  }
+
+  async setRider(user: User, input: { name?: unknown; lat?: unknown; lng?: unknown }): Promise<RiderProfile> {
     if (user.role !== 'rider') throw new AuthError(403, 'Only rider accounts have a rider profile.');
     if (!user.address) throw new AuthError(409, 'Set up the key on your phone first.');
     const name = typeof input.name === 'string' ? input.name.trim() : '';
@@ -88,6 +110,7 @@ export class Shops {
     if (name.length < 2 || name.length > 60) throw new AuthError(400, 'Enter your name (2 to 60 characters).');
     if (!IN_LAGOS(lat, lng)) throw new AuthError(400, 'Set where you usually start from, in Lagos.');
     this.db.prepare('INSERT INTO riders (user_id, name, lat, lng) VALUES (?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET name = excluded.name, lat = excluded.lat, lng = excluded.lng').run(user.id, name, lat, lng);
+    await this.ensureGas(user).catch(() => null);
     return { userId: user.id, name, lat, lng, address: user.address };
   }
 

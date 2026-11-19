@@ -27,6 +27,10 @@ export interface Platform {
   unit: bigint;              // token amount per circuit money unit (₦5,000)
   money: Money;              // naira <-> token
   supplierPayout: Address;   // where supplier payments go before the naira transfer (pilot: StockRun's off-ramp account)
+  /** Gas the deployer sends a new owner or rider once, so their phone key can sign its own vault steps. */
+  gasTopUpWei: bigint;
+  /** Block explorer base for transaction links, or null on a local chain. */
+  explorerTx: string | null;
   /** Local chain only: give a new account test money and gas. Absent on mainnet. */
   faucet?: (to: Address) => Promise<void>;
   /** Local chain only: move chain time forward (supplier approvals wait 24 h). Absent on mainnet. */
@@ -55,6 +59,19 @@ export async function deployVault(p: Platform, owner: Address, weeklyBudgetNaira
   return r.contractAddress;
 }
 
+/**
+ * Top `to` up to the platform's gas allowance from the deployer. Sends only the shortfall, and nothing if the key
+ * already holds the allowance. Returns the transaction hash, or null if nothing was sent.
+ */
+export async function sendGasTopUp(p: Platform, to: Address): Promise<Hex | null> {
+  const have = await p.pub.getBalance({ address: to });
+  if (have >= p.gasTopUpWei) return null;
+  const hash = await p.deployer.sendTransaction({ to, value: p.gasTopUpWei - have });
+  const r = await p.pub.waitForTransactionReceipt({ hash });
+  if (r.status !== 'success') throw new Error('gas top-up failed');
+  return hash;
+}
+
 // Anvil's well-known PUBLIC test keys (index 5-7), separate from the ones the single-shop demo uses.
 const LOCAL_KEYS = {
   deployer: '0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba',
@@ -75,6 +92,7 @@ export function localPlatform(chain: LocalChain): Platform {
     token: chain.token, tokenSymbol: 'TEST', circuits: chain.circuits, circuitIds: { restock: 1n, pickup: 2n, delivery: 3n },
     unit: money.toToken(5000), money,
     supplierPayout: privateKeyToAccount('0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a').address,
+    gasTopUpWei: parseEther('0.01'), explorerTx: null,
     faucet: async (to) => {
       // ₦2,000,000 of test token and 1 test ETH for gas. Test money only: local chain.
       const h = await deployer.writeContract({ address: chain.token, abi: tokenAbi, functionName: 'mint', args: [to, money.toToken(2_000_000)] });
@@ -98,6 +116,8 @@ export const XLAYER_USDT0: Address = '0x779Ded0c9e1022225f8E0630b35a9b54bE713736
  * XLAYER_MAX_BASE_FEE_WEI (25x normal) we refuse to send rather than pay it; the order holds and can be retried.
  */
 export const XLAYER_TIP_WEI = 1_000_000n;
+/** One-off OKB for a new owner or rider: 6-8x what shop set-up plus a first order uses (fork rehearsal). */
+export const XLAYER_GAS_TOPUP_WEI = 50_000_000_000_000n; // 0.00005 OKB
 export const XLAYER_MAX_BASE_FEE_WEI = 500_000_000n; // 0.5 gwei
 export const xlayerFees = (baseFee: bigint) => {
   if (baseFee > XLAYER_MAX_BASE_FEE_WEI) throw new Error(`X Layer base fee ${baseFee} wei is above our ${XLAYER_MAX_BASE_FEE_WEI} wei ceiling; not sending`);
@@ -194,5 +214,6 @@ export async function xlayerPlatform(env: NodeJS.ProcessEnv = process.env): Prom
     token: XLAYER_USDT0, tokenSymbol: symbol, circuits: d.processor,
     circuitIds: { restock: BigInt(d.circuitIds.restock), pickup: BigInt(d.circuitIds.pickup), delivery: BigInt(d.circuitIds.delivery) },
     unit: money.toToken(5000), money, supplierPayout: getAddress(payout),
+    gasTopUpWei: XLAYER_GAS_TOPUP_WEI, explorerTx: 'https://www.okx.com/web3/explorer/xlayer/tx/',
   };
 }

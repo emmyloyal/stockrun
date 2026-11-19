@@ -1,5 +1,5 @@
 // API, chain and device helpers for the app.
-import { createPublicClient, createWalletClient, http, parseAbi, BaseError, ContractFunctionRevertedError, type Address, type Hex } from 'viem';
+import { createPublicClient, createWalletClient, http, parseAbi, BaseError, ContractFunctionRevertedError, type Address, type Chain, type Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { anvil } from 'viem/chains';
 
@@ -21,13 +21,32 @@ export interface Order {
 }
 export interface MapData {
   shop: Place;
-  suppliers: { id: string; name: string; market: string; lat: number; lng: number; simulated: boolean; status: number; km: number;
+  /** Multi-shop server only: StockRun's payout account that supplier approvals point at. */
+  supplierPayout?: Address;
+  suppliers: { id: string; key?: Hex; name: string; market: string; lat: number; lng: number; simulated: boolean; status: number; km: number;
+    pending?: { status: number; effectiveAt: number } | null;
     prices: { item: string; priceNaira: number; source: 'deal' | 'quote' | 'price_list' | 'catalogue'; age: string | null }[] }[];
 }
 export interface Config { chainId: number; vault: Address; photoCheck: boolean; demoKeys: { owner: Hex; rider: Hex } | null }
 
+// ---------------------------------------------------------------- multi-shop server (mirror agent/src/server/app.ts)
+export interface ServerConfig {
+  chainId: number; network: 'local' | 'xlayer'; token: Address; tokenSymbol: string; explorerTx: string | null;
+  photoCheck: boolean; testMoney: boolean; devTime: boolean;
+}
+export type AnyConfig = Config | ServerConfig;
+export const isServer = (c: AnyConfig): c is ServerConfig => 'network' in c;
+export interface User { id: number; phone: string; role: 'owner' | 'rider'; address: Address | null; createdAt: number }
+export interface Shop { id: number; name: string; lat: number; lng: number; vault: Address; weeklyBudgetNaira: number; limitNaira: number }
+export interface Me { user: User | null; shop?: Shop | null; hasBackup?: boolean }
+export interface Backup { ciphertext: string; salt: string; iv: string; kdf: string }
+export interface ShopMoney {
+  vault: Address; vaultNaira: number; lockedNaira: number; riderBondsNaira: number; availableNaira: number; walletNaira: number;
+  weeklyBudgetNaira: number; spentThisWeekNaira: number; limitNaira: number;
+}
+
 async function call<T>(path: string, body?: unknown): Promise<T> {
-  const r = await fetch(path, body === undefined ? undefined : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const r = await fetch(path, body === undefined ? { credentials: 'same-origin' } : { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const json = await r.json().catch(() => ({ error: `Server error ${r.status}` }));
   if (!r.ok) throw new Error(json.error ?? `Server error ${r.status}`);
   return json as T;
@@ -42,24 +61,92 @@ export const api = {
   settle: (id: string, stage: 'pickup' | 'delivery') => call<CheckResult>(`/api/orders/${id}/settle`, { stage }),
   confirmCount: (id: string, stage: 'pickup' | 'delivery') => call<CheckResult>(`/api/orders/${id}/confirm-count`, { stage }),
 };
+export const server = {
+  config: () => call<ServerConfig>('/api/config'),
+  me: () => call<Me>('/api/me'),
+  requestCode: (phone: string) => call<{ sent: true }>('/api/auth/code', { phone }),
+  verify: (phone: string, code: string, role: 'owner' | 'rider') => call<{ user: User }>('/api/auth/verify', { phone, code, role }),
+  logout: () => call<{ ok: true }>('/api/auth/logout', {}),
+  linkMessage: (address: Address) => call<{ message: string }>(`/api/me/link-message?address=${address}`),
+  linkKey: (address: Address, signature: Hex) => call<{ user: User }>('/api/me/key', { address, signature }),
+  backup: () => call<{ backup: Backup | null }>('/api/me/backup'),
+  saveBackup: (b: Backup) => call<{ ok: true }>('/api/me/backup', b),
+  gas: () => call<{ tx: Hex | null; already: boolean }>('/api/me/gas', {}),
+  testMoney: () => call<{ ok: true }>('/api/me/test-money', {}),
+  createShop: (s: { name: string; lat: number; lng: number; weeklyBudgetNaira: number; limitNaira: number }) => call<{ shop: Shop }>('/api/shop', s),
+  money: () => call<ShopMoney>('/api/shop/money'),
+  toToken: (naira: number) => call<{ naira: number; amount: string; symbol: string }>(`/api/money/to-token?naira=${naira}`),
+};
 
 // ---------------------------------------------------------------- chain: each person signs their own steps
 const vaultAbi = parseAbi([
+  'function deposit(uint256 amount)',
+  'function queueSupplier(bytes32 id, uint8 status, address payout)',
   'function riderPickup(uint256 id, bool atSupplier, uint8 riderCount)',
   'function riderArrive(uint256 id, bool atShop)',
   'function ownerConfirm(uint256 id, bool ok, bool issue)',
   'function approveOrder(uint256 id)',
   'error NotAuthorized()', 'error BadStatus()', 'error CircuitFailed()', 'error Rejected(uint8 reason)', 'error OrderTooLarge()',
 ]);
-const transport = () => http(new URL('/rpc', location.origin).href);
-const chainFor = (id: number) => ({ ...anvil, id });
+const erc20Abi = parseAbi([
+  'function approve(address spender, uint256 amount) returns (bool)',
+  'function allowance(address owner, address spender) view returns (uint256)',
+]);
+const transport = () => http(new URL('/rpc', location.origin).href, { timeout: 60_000 });
 
-export function signer(key: Hex, cfg: Config) {
+// X Layer fee rule, the same as the server's (agent/src/chain/platform.ts): tip 0.001 gwei, at most 1.25 x base fee + tip,
+// set as viem's last step so no node suggestion overrides it, and nothing is sent if the base fee is above 0.5 gwei.
+const TIP = 1_000_000n, MAX_BASE = 500_000_000n;
+const xLayer: Chain = {
+  id: 196, name: 'X Layer', nativeCurrency: { name: 'OKB', symbol: 'OKB', decimals: 18 },
+  rpcUrls: { default: { http: ['https://rpc.xlayer.tech'] } },
+  prepareTransactionRequest: [
+    async (request, { client }) => {
+      const block = await client.request({ method: 'eth_getBlockByNumber', params: ['latest', false] }) as { baseFeePerGas?: Hex } | null;
+      if (!block?.baseFeePerGas) throw new Error('X Layer block has no base fee; not sending.');
+      const base = BigInt(block.baseFeePerGas);
+      if (base > MAX_BASE) throw new Error('X Layer gas is unusually expensive right now. Nothing was sent; try again later.');
+      const { gasPrice: _legacy, ...rest } = request as typeof request & { gasPrice?: bigint };
+      return { ...rest, type: 'eip1559', maxPriorityFeePerGas: TIP, maxFeePerGas: (base * 125n) / 100n + TIP } as typeof request;
+    },
+    { runAt: ['afterFillParameters'] },
+  ],
+};
+const chainFor = (id: number): Chain => (id === 196 ? xLayer : { ...anvil, id });
+
+// Transaction links: set once from the server's config (null on a local chain).
+let explorerTx: string | null = null;
+export const setExplorer = (base: string | null) => { explorerTx = base; };
+export const txUrl = (hash: string) => (explorerTx ? `${explorerTx}${hash}` : null);
+
+/** The phone's key, signing steps on one vault: the demo Config, or { chainId, vault } of the signed-in owner's shop. */
+export function signer(key: Hex, cfg: { chainId: number; vault: Address }) {
   const account = privateKeyToAccount(key);
   const chain = chainFor(cfg.chainId);
   const wallet = createWalletClient({ account, chain, transport: transport() });
   const pub = createPublicClient({ chain, transport: transport() });
-  const send = async (functionName: 'riderPickup' | 'riderArrive' | 'ownerConfirm' | 'approveOrder', args: readonly unknown[]): Promise<Hex> => {
+  const confirmed = async (hash: Hex) => {
+    const receipt = await pub.waitForTransactionReceipt({ hash });
+    if (receipt.status !== 'success') throw new Error('The transaction failed.');
+    return hash;
+  };
+  /**
+   * Move `amount` (token base units) from this phone's wallet into the shop's vault. The vault is approved for the
+   * token once, for any amount, so later deposits are one transaction instead of two. The approval only lets the
+   * owner's own vault pull tokens, and the vault only pulls when this key calls deposit.
+   */
+  const deposit = async (token: Address, amount: bigint): Promise<{ approveTx: Hex | null; depositTx: Hex }> => {
+    try {
+      let approveTx: Hex | null = null;
+      if ((await pub.readContract({ address: token, abi: erc20Abi, functionName: 'allowance', args: [account.address, cfg.vault] })) < amount) {
+        approveTx = await confirmed(await wallet.writeContract({ address: token, abi: erc20Abi, functionName: 'approve', args: [cfg.vault, 2n ** 255n] }));
+      }
+      const { request } = await pub.simulateContract({ address: cfg.vault, abi: vaultAbi, functionName: 'deposit', args: [amount], account });
+      return { approveTx, depositTx: await confirmed(await wallet.writeContract(request)) };
+    } catch (e) { throw new Error(explain(e)); }
+  };
+  const gasBalance = () => pub.getBalance({ address: account.address });
+  const send = async (functionName: 'riderPickup' | 'riderArrive' | 'ownerConfirm' | 'approveOrder' | 'queueSupplier', args: readonly unknown[]): Promise<Hex> => {
     try {
       const { request } = await pub.simulateContract({ address: cfg.vault, abi: vaultAbi, functionName, args: args as never, account });
       const hash = await wallet.writeContract(request);
@@ -68,7 +155,7 @@ export function signer(key: Hex, cfg: Config) {
       return hash;
     } catch (e) { throw new Error(explain(e)); }
   };
-  return { address: account.address, send };
+  return { address: account.address, send, deposit, gasBalance };
 }
 
 function explain(e: unknown): string {
@@ -80,6 +167,9 @@ function explain(e: unknown): string {
     Rejected: 'RestockGuard rejected the order.',
     CircuitFailed: 'The circuit check failed, so the order holds. Nothing was paid.',
   };
+  const text = e instanceof Error ? e.message : String(e);
+  if (/insufficient funds|exceeds the balance of the account/i.test(text)) return 'This phone has no gas (OKB) left to sign with. Tap "Get gas" or ask StockRun.';
+  if (/transfer amount exceeds balance|ERC20InsufficientBalance/i.test(text)) return 'Your phone wallet does not hold that much USDT0.';
   return name ? words[name] ?? name : e instanceof Error ? e.message.split('\n')[0] : String(e);
 }
 

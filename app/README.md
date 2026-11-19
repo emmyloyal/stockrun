@@ -1,6 +1,15 @@
 # App
 
-Phone-first web app with two modes, owner and rider. It is built with React and Vite, and talks to the agent's API (`agent/src/server/api.ts`).
+Phone-first web app with two modes, owner and rider. It is built with React and Vite. It works with either of the agent's servers and picks the mode from `/api/config`:
+- **Single-shop demo** (`npm run app`, `agent/src/server/api.ts`): demo keys, no sign-in. Described below.
+- **Real accounts** (`npm run serve` or `serve:xlayer`, `agent/src/server/app.ts`): `src/Account.tsx`. The owner signs in by SMS, makes the phone's key with a PIN backup (`src/keys.ts`), sets up the shop, deposits, approves suppliers, then orders. See "App servers" in `agent/README.md`. Rider screens for real accounts are not built yet.
+
+## Try real accounts locally
+```
+cd app && npm install && npm run build
+cd ../agent && npm run serve                # http://localhost:8080, local chain; SMS codes appear in this console
+```
+Sign in as a shop owner, tap "Get test money", deposit, approve a supplier, then skip the 24 h wait with the test-chain control (`POST /api/dev/advance-day`). Orders need a bonded rider, which can only be added through the API until the rider screens are built.
 
 ## Run the local demo
 ```

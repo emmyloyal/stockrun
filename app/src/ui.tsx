@@ -1,4 +1,4 @@
-import { short, type CheckResult, type Order } from './lib';
+import { short, txUrl, type CheckResult, type Order } from './lib';
 
 const STATUS: Record<Order['status'], [string, string]> = {
   None: ['Unknown', 'muted'],
@@ -40,7 +40,10 @@ export function Outcome({ r }: { r: CheckResult }) {
   );
 }
 
-/** Transaction hash. The demo runs on a local chain, so there is no explorer link to give. */
+/** Transaction hash: a link to the explorer on X Layer; plain text on a local chain, which has no explorer. */
 export function Tx({ hash }: { hash: string }) {
-  return <code className="tx" title={`${hash} (local demo chain)`}>{short(hash)}</code>;
+  const url = txUrl(hash);
+  return url
+    ? <a className="tx" href={url} target="_blank" rel="noreferrer" title={hash}>{short(hash)}</a>
+    : <code className="tx" title={`${hash} (local test chain)`}>{short(hash)}</code>;
 }

@@ -13,7 +13,12 @@ const STATUS: Record<number, { label: string; color: string; dash?: string }> = 
 const SOURCE: Record<string, string> = { deal: 'agreed', quote: 'quoted', price_list: 'price list', catalogue: 'StockRun list price' };
 const RADII = [5, 10, 15];
 
-export function SupplierMap({ orders }: { orders: Order[] }) {
+type MapSupplier = MapData['suppliers'][number];
+
+/** `approve`: real accounts only. The owner's key queues the supplier (paid through StockRun's payout account); it
+ *  becomes usable after the vault's 24 h wait, and the server finishes it then. */
+export function SupplierMap({ orders, approve }: { orders: Order[]; approve?: (s: MapSupplier, payout: `0x${string}`) => Promise<void> }) {
+  const [busy, setBusy] = useState('');
   const el = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
   const layer = useRef<L.LayerGroup | null>(null);
@@ -77,19 +82,37 @@ export function SupplierMap({ orders }: { orders: Order[] }) {
         <li><i className="line green" />Order: on the way</li>
       </ul>
       <p className="fine">Distances are straight-line. Live rider position is not shared yet.</p>
-      <details className="supplier-list">
+      <details className="supplier-list" open={!!approve}>
         <summary>{visible.length} supplier{visible.length === 1 ? '' : 's'} within {radius} km (list)</summary>
         <ul className="cards">
           {visible.map((s) => (
             <li key={s.id} className="card">
               <span className="row between"><strong>{s.name}</strong><span className="pill" style={{ color: (STATUS[s.status] ?? STATUS[0]).color }}>{(STATUS[s.status] ?? STATUS[0]).label}</span></span>
               <span className="muted">{s.market} · {s.km} km{s.simulated ? ' · simulated' : ''}</span>
+              {approve && data?.supplierPayout && s.key && <ApproveRow s={s} busy={busy === s.id} onApprove={async () => {
+                setBusy(s.id); setError('');
+                try { await approve(s, data.supplierPayout!); setData(await api.map()); } catch (e) { setError((e as Error).message); } finally { setBusy(''); }
+              }} />}
               {s.prices.map((p) => <span key={p.item} className="price-row"><span>{p.item}</span><span className="num">{naira(p.priceNaira)}</span><span className="fine">{SOURCE[p.source] ?? p.source}{p.age ? `, ${p.age}` : ''}</span></span>)}
             </li>
           ))}
         </ul>
       </details>
     </section>
+  );
+}
+
+function ApproveRow({ s, busy, onApprove }: { s: MapSupplier; busy: boolean; onApprove: () => void }) {
+  if (s.pending && s.pending.status >= 1) {
+    const when = new Date(s.pending.effectiveAt * 1000);
+    return <span className="fine">Approved by you. The vault makes you wait 24 h: usable from {when.toLocaleString('en-NG', { weekday: 'short', hour: 'numeric', minute: '2-digit' })}.</span>;
+  }
+  if (s.status !== 0) return null;
+  return (
+    <span className="row wrap">
+      <button className="btn ghost" disabled={busy} onClick={onApprove}>{busy ? 'Signing…' : 'Approve this supplier'}</button>
+      <span className="fine">The agent only buys from suppliers you approve.</span>
+    </span>
   );
 }
 

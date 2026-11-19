@@ -30,6 +30,8 @@ export interface AppOptions {
 const vaultReadAbi = parseAbi([
   'function locked() view returns (uint256)', 'function weeklyBudget() view returns (uint256)', 'function spentThisWeek() view returns (uint256)',
   'function limit() view returns (uint256)', 'function totalBonds() view returns (uint256)', 'function bond(address) view returns (uint256)',
+  'function pendingSupplierStatus(bytes32) view returns (uint8)', 'function supplierEffectiveAt(bytes32) view returns (uint256)',
+  'function applySupplier(bytes32)',
 ]);
 const STATUS_NAME = Object.fromEntries(Object.entries(STATUS).map(([k, v]) => [v, k])) as Record<number, string>;
 const MAX_BODY = 8 * 1024 * 1024;
@@ -78,6 +80,24 @@ export function createApp(o: AppOptions): Server {
       lastCheck: lastCheck.get(`${rt.shop.id}:${job.orderId}`) ?? null,
     };
   }
+  /**
+   * Finish supplier approvals the owner queued once their 24 h wait is over. applySupplier only carries out what the
+   * owner's key already decided (status and payout address), and anyone may call it, so the deployer pays this gas
+   * instead of asking the owner to sign a second time. Best effort: a failure leaves the approval pending.
+   */
+  async function applyDueSuppliers(rt: ShopRuntime) {
+    const now = (await p.pub.getBlock()).timestamp;
+    for (const s of loadSuppliers()) {
+      const key = supplierKey(s.id);
+      const at = await p.pub.readContract({ address: rt.shop.vault, abi: vaultReadAbi, functionName: 'supplierEffectiveAt', args: [key] });
+      if (at === 0n || at > now) continue;
+      try {
+        const hash = await p.deployer.writeContract({ address: rt.shop.vault, abi: vaultReadAbi, functionName: 'applySupplier', args: [key] });
+        await p.pub.waitForTransactionReceipt({ hash });
+        log(`shop ${rt.shop.id}: supplier ${s.id} approval applied (${hash})`);
+      } catch (e) { log(`shop ${rt.shop.id}: could not apply ${s.id}: ${(e as Error).message.split('\n')[0]}`); }
+    }
+  }
   const stageOf = (b: any) => (b?.stage === 'delivery' ? 'delivery' : b?.stage === 'pickup' ? 'pickup' : null);
 
   const routes: [string, RegExp, Handler][] = [
@@ -104,7 +124,8 @@ export function createApp(o: AppOptions): Server {
 
     // ---------------------------------------------------------------- the signed-in person
     ['GET', /^\/api\/config$/, async () => ({
-      chainId: p.chain.id, network: p.name, token: p.token, photoCheck: shops.photoCheckOn, testMoney: !!p.faucet, devTime: !!p.advanceTime,
+      chainId: p.chain.id, network: p.name, token: p.token, tokenSymbol: p.tokenSymbol, explorerTx: p.explorerTx,
+      photoCheck: shops.photoCheckOn, testMoney: !!p.faucet, devTime: !!p.advanceTime,
     })],
     ['GET', /^\/api\/me$/, async (c) => {
       if (!c.user) return { user: null };
@@ -127,6 +148,14 @@ export function createApp(o: AppOptions): Server {
     }],
     ['GET', /^\/api\/me\/backup$/, async (c) => ({ backup: accounts.backup(need(c)) })],
     ['POST', /^\/api\/me\/backup$/, async (c) => { accounts.saveBackup(need(c), c.body ?? {}); return { ok: true }; }],
+    ['POST', /^\/api\/me\/gas$/, async (c) => shops.ensureGas(need(c))],
+    /** Token amount (base units, as a string) for a naira amount, at the server's rate. The phone signs that amount. */
+    ['GET', /^\/api\/money\/to-token$/, async (c) => {
+      need(c);
+      const n = Number(c.url.searchParams.get('naira'));
+      if (!Number.isInteger(n) || n < 1 || n > 100_000_000) throw new AuthError(400, 'naira must be a whole number from 1 to 100,000,000');
+      return { naira: n, amount: p.money.toToken(n).toString(), symbol: p.tokenSymbol };
+    }],
     ['POST', /^\/api\/me\/test-money$/, async (c) => {
       const u = need(c);
       if (!p.faucet) throw new AuthError(404, 'Test money only exists on the test network.');
@@ -161,6 +190,7 @@ export function createApp(o: AppOptions): Server {
       const rt = ownerShop(c);
       const text = typeof c.body?.text === 'string' ? c.body.text.trim() : '';
       if (!text || text.length > 2000) throw new AuthError(400, 'Send the order as text (up to 2,000 characters).');
+      await applyDueSuppliers(rt).catch(() => {});
       const report = await handleOrder(text, rt.agent);
       return { message: report.message, problems: report.problems };
     }],
@@ -177,9 +207,17 @@ export function createApp(o: AppOptions): Server {
     }],
     ['GET', /^\/api\/map$/, async (c) => {
       const rt = ownerShop(c), shop = rt.agent.shop;
+      await applyDueSuppliers(rt).catch(() => {});
+      const read = (functionName: 'pendingSupplierStatus' | 'supplierEffectiveAt', key: Hex) =>
+        p.pub.readContract({ address: rt.shop.vault, abi: vaultReadAbi, functionName, args: [key] });
       const suppliers = await Promise.all(loadSuppliers().map(async (s) => ({
         id: s.id, key: supplierKey(s.id), name: s.name, market: s.market, lat: s.lat, lng: s.lng, simulated: s.simulated,
         status: Number(await rt.vault.supplierStatus(supplierKey(s.id))),
+        // A queued approval: the status it will take and when (unix seconds, chain time); null when nothing is queued.
+        pending: await (async () => {
+          const at = await read('supplierEffectiveAt', supplierKey(s.id));
+          return at === 0n ? null : { status: Number(await read('pendingSupplierStatus', supplierKey(s.id))), effectiveAt: Number(at) };
+        })(),
         km: Math.round(haversineKm(shop, s) * 10) / 10,
         prices: s.stocks.map((st) => {
           const latest = rt.agent.prices?.latest(s.id, st.item);
@@ -191,7 +229,7 @@ export function createApp(o: AppOptions): Server {
     }],
 
     // ---------------------------------------------------------------- rider
-    ['POST', /^\/api\/rider\/profile$/, async (c) => ({ rider: shops.setRider(need(c, 'rider'), c.body ?? {}) })],
+    ['POST', /^\/api\/rider\/profile$/, async (c) => ({ rider: await shops.setRider(need(c, 'rider'), c.body ?? {}) })],
     ['GET', /^\/api\/rider\/jobs$/, async (c) => {
       const u = need(c, 'rider');
       if (!u.address) return [];

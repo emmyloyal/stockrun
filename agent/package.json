@@ -9,7 +9,9 @@
     "live": "node src/live.ts",
     "count": "node src/count.ts",
     "app": "node src/server/demoServer.ts",
-    "rehearse:xlayer": "node src/rehearseXLayer.ts"
+    "rehearse:xlayer": "node src/rehearseXLayer.ts",
+    "serve": "node src/server/main.ts",
+    "serve:xlayer": "node src/server/main.ts --network=xlayer"
   },
   "dependencies": {
     "@google/genai": "2.32.0",

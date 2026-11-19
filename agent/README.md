@@ -36,8 +36,26 @@ npm run demo -- "5 cartons of Indomie, 10 bags of rice at 80k, within 5 km"
 ## Data
 `data/suppliers.json` holds **fictional** demo suppliers (`simulated: true`, invented names, placeholder phone numbers, demo prices) located at public Lagos markets. Add real suppliers only with their consent, as `simulated: false`.
 
-## App server (`src/server/`)
-`npm run app` starts the whole local demo on http://localhost:8080: a local chain, the agent, the photo check and the built app from `app/dist`. The API is `src/server/api.ts`. The owner and rider sign their own steps in the browser; see `app/README.md`.
+## App servers (`src/server/`)
+There are two servers. Both serve the built app from `app/dist`.
+
+| Command | What it is | Chain |
+| --- | --- | --- |
+| `npm run app` | Single-shop demo (`api.ts`): one vault, demo keys, no sign-in | Local anvil |
+| `npm run serve` | Real-account server (`app.ts`, started by `main.ts`): phone sign-in, one vault per shop owner | Local anvil, test money, SMS codes printed on the console |
+| `npm run serve:xlayer` | The same server on **X Layer mainnet**: real USDT0, circuits #1-#3, real gas | X Layer (chain 196) |
+
+The buyer's path on the real-account server:
+1. **Sign in** with a phone number and SMS code, as a shop owner.
+2. **Make the phone's key.** It is created in the browser and backed up to the server encrypted with a 6-digit PIN the server never sees (PBKDF2-SHA256, 600,000 rounds, AES-GCM). A new phone restores it with the PIN.
+3. **Set up the shop:** name, a pin on the map, weekly budget and auto-approve limit. The server deploys the owner's vault (about 0.00006 OKB) and sends the phone key a one-off 0.00005 OKB of gas (once per account, recorded in the database).
+4. **Deposit** the amount the agent may spend. The phone signs it. The first deposit also approves the vault for the token; later deposits are one transaction.
+5. **Approve suppliers** in the list under the map. The vault makes the owner wait 24 h. The server then finishes the approval with the deployer key, so the owner signs only once.
+6. **Order** in plain words. Ordering stays off until something is deposited.
+
+`serve:xlayer` needs in `../.env`: `DEPLOYER_PRIVATE_KEY`, `AGENT_PRIVATE_KEY`, `CHECK_SERVICE_PRIVATE_KEY`, `SUPPLIER_PAYOUT_ADDRESS`, `NGN_PER_USD`, `SERVER_SECRET` (32+ random characters), and an SMS sender: `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` + `TWILIO_SMS_FROM`, or `SMS=console` to print codes on the server console. Shops are kept in `data/stockrun.db` (`DB_FILE` to move it). Set `SECURE_COOKIES=1` behind HTTPS.
+
+**Gas on X Layer.** Every transaction, on the server and in the browser, pays a 0.001 gwei tip and at most 1.25 × base fee + tip. The fee is set as viem's last step, so no node's suggestion can raise it. Nothing is sent if the base fee is above 0.5 gwei. `npm run rehearse:xlayer` runs shop set-up and one full order on a local fork of mainnet and reports each wallet's gas at mainnet prices.
 
 ## Supplier prices (`src/prices/`)
 `PriceBook` stores every price with its supplier, item, source and date. The source is `deal` or `quote` (recorded automatically while haggling) or `price_list` (sent by the supplier).
@@ -90,7 +108,10 @@ You play the supplier on your own phone. Only the negotiation runs: no vault, no
 ## Not built yet (say so in the demo)
 - **WhatsApp template and hosting:** the `order_request` template for first contact is not registered, and there is no hosted webhook yet. The agent and webhook run locally behind a tunnel.
 - **Owner replies:** handling "YES <id>" as `approveOrder` is not built. The owner must sign that with the owner key; the agent key cannot do it.
-- **Hosted app:** the owner and rider app is built (`app/`, served by `npm run app` on a local chain), but it is not deployed anywhere yet.
+- **Hosted app:** the app is built (`app/`, served by `npm run app` and `npm run serve`), but it is not deployed anywhere yet.
+- **Rider screens for real accounts:** a rider can sign in and make a key, then sees "not built yet". Rider profile, bond and jobs exist in the server API only. Until they are built, no rider can be booked on the real-account server, so orders stop at "no bonded rider is free".
+- **Getting USDT0 onto a buyer's phone:** not built. The deposit screen shows the phone's address to send USDT0 to.
+- **Real suppliers:** every supplier in `data/suppliers.json` is a simulated bot, also on `serve:xlayer`.
 - **Signed GPS:** the rider's "at the supplier" and "at the shop" are still self-reported.
 - **Fallbacks and inputs:** voice-call fallback, voice-note transcription, and OpenStreetMap search beyond `suppliers.json`.
 - **Multi-line orders:** they are proposed line by line, one vault order per line. Lines with no deal are reported, not retried.

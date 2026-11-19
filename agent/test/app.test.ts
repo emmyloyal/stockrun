@@ -46,14 +46,14 @@ describe.skipIf(!localChainAvailable())('multi-shop app server', () => {
       const r = await createPublicClient({ chain: anvil, transport: transport() }).waitForTransactionReceipt({ hash });
       expect(r.status).toBe('success');
     };
-    const signIn = async (role: 'owner' | 'rider') => {
+    const signIn = async (role: 'owner' | 'rider', testMoney = true) => {
       const log = console.log; console.log = () => {};
       try { expect((await call('/api/auth/code', { phone })).status).toBe(200); } finally { console.log = log; }
       const code = sms.sent.filter((m) => m.phone.endsWith(phone.replace(/\D/g, '').slice(-10))).at(-1)!.text.match(/(\d{6})/)![1];
       expect((await call('/api/auth/verify', { phone, code, role })).status).toBe(200);
       const { message } = (await call(`/api/me/link-message?address=${key.address}`)).json;
       expect((await call('/api/me/key', { address: key.address, signature: await key.signMessage({ message }) })).status).toBe(200);
-      expect((await call('/api/me/test-money', {})).status).toBe(200);
+      if (testMoney) expect((await call('/api/me/test-money', {})).status).toBe(200);
     };
     return { key, call, sign, signIn, cookie: () => cookie };
   }
@@ -128,5 +128,20 @@ describe.skipIf(!localChainAvailable())('multi-shop app server', () => {
     expect((await rpc(anon.cookie(), 'evm_increaseTime')).status).toBe(403);
     expect((await anon.call('/api/orders')).status).toBe(403);                        // riders have no shop orders
     expect((await anon.call('/api/auth/verify', { phone: '0807 555 5555', code: '000000' })).status).toBe(400);
+  }, 60_000);
+
+  it('a new buyer gets gas once, at shop set-up, and can price a deposit in naira', async () => {
+    const chioma = person('0809 666 6666');
+    await chioma.signIn('owner', false);                                            // a brand-new phone key: no gas, no money
+    expect(await p.pub.getBalance({ address: chioma.key.address })).toBe(0n);
+    expect((await chioma.call('/api/shop', { name: "Chioma's Shop", ...OJOTA, weeklyBudgetNaira: 300_000, limitNaira: 100_000 })).status).toBe(200);
+    expect(await p.pub.getBalance({ address: chioma.key.address })).toBe(p.gasTopUpWei);
+    expect((await chioma.call('/api/me/gas', {})).json).toEqual({ tx: null, already: true });   // never twice
+    expect(await p.pub.getBalance({ address: chioma.key.address })).toBe(p.gasTopUpWei);
+
+    expect((await chioma.call('/api/money/to-token?naira=150000')).json).toEqual({ naira: 150_000, amount: p.money.toToken(150_000).toString(), symbol: 'TEST' });
+    expect((await chioma.call('/api/money/to-token?naira=1.5')).status).toBe(400);
+    expect((await person('0809 777 7777').call('/api/money/to-token?naira=100')).status).toBe(401);
+    expect((await chioma.call('/api/config')).json).toMatchObject({ network: 'local', explorerTx: null, tokenSymbol: 'TEST' });
   }, 60_000);
 });
