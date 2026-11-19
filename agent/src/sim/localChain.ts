@@ -38,7 +38,7 @@ export const DEMO_SUPPLIERS = [['sim-mile12-adeyemi', 1], ['sim-ketu-chukwu', 2]
 export const tokenAbi = parseAbi(['function mint(address,uint256)', 'function approve(address,uint256) returns (bool)', 'function balanceOf(address) view returns (uint256)']);
 export const vaultAdminAbi = parseAbi(['function deposit(uint256)', 'function queueSupplier(bytes32,uint8,address)', 'function applySupplier(bytes32)', 'function postBond(uint256)', 'function locked() view returns (uint256)']);
 
-export interface LocalChain { url: string; pub: PublicClient; token: Address; vault: Address; vaultClient: VaultClient; riders: Rider[]; stop: () => void }
+export interface LocalChain { url: string; pub: PublicClient; token: Address; circuits: Address; vault: Address; vaultClient: VaultClient; riders: Rider[]; stop: () => void }
 
 export async function startLocalChain(port = 18545 + Math.floor(Math.random() * 1000)): Promise<LocalChain> {
   if (!localChainAvailable()) throw new Error('anvil or contract artifacts missing: install Foundry and run `forge build` in contracts/');
@@ -76,7 +76,7 @@ export async function startLocalChain(port = 18545 + Math.floor(Math.random() * 
   await send(r.writeContract({ address: vault, abi: vaultAdminAbi, functionName: 'postBond', args: [300n * UNIT] }));
 
   return {
-    url, pub, token, vault,
+    url, pub, token, circuits, vault,
     vaultClient: new VaultClient(vault, pub, w(agent)),
     riders: [{ id: 'r1', name: 'Tunde (demo rider)', address: rider.address, lat: 6.6, lng: 3.39 }],
     stop: () => { proc.kill(); },

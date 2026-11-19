@@ -92,7 +92,7 @@ describe('the phone key', () => {
 
     const sig = await phoneKey.signMessage({ message: linkMessage(user.id, phoneKey.address) });
     const linked = await acc.linkAddress(user, phoneKey.address, sig);
-    expect(linked.address).toBe(phoneKey.address.toLowerCase());
+    expect(linked.address).toBe(phoneKey.address);
     const sig2 = await other.signMessage({ message: linkMessage(user.id, other.address) });
     await expect(acc.linkAddress(linked, other.address, sig2)).rejects.toThrow(/already has a key/);
 

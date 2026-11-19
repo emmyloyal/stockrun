@@ -12,7 +12,7 @@ import type { DatabaseSync as DB } from 'node:sqlite';
 // Loaded through require: the test bundler does not know the newer `node:sqlite` built-in. Types still come from Node.
 const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
 type DatabaseSync = DB;
-import { verifyMessage, type Address, type Hex } from 'viem';
+import { getAddress, verifyMessage, type Address, type Hex } from 'viem';
 
 export type Role = 'owner' | 'rider';
 export interface User { id: number; phone: string; role: Role; address: Address | null; createdAt: number }
@@ -62,7 +62,7 @@ export function openDb(file = ':memory:'): DatabaseSync {
 }
 
 interface UserRow { id: number; phone: string; role: Role; address: string | null; created_at: number }
-const toUser = (r: UserRow): User => ({ id: r.id, phone: r.phone, role: r.role, address: (r.address as Address) ?? null, createdAt: r.created_at });
+const toUser = (r: UserRow): User => ({ id: r.id, phone: r.phone, role: r.role, address: r.address ? getAddress(r.address) : null, createdAt: r.created_at });
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 
 export class Accounts {
@@ -132,7 +132,7 @@ export class Accounts {
     if (!ok) throw new AuthError(400, 'The signature does not match this key.');
     try { this.db.prepare('UPDATE users SET address = ? WHERE id = ?').run(address.toLowerCase(), user.id); }
     catch { throw new AuthError(409, 'This key is already linked to another account.'); }
-    return { ...user, address: address.toLowerCase() as Address };
+    return { ...user, address: getAddress(address) };
   }
 
   /** Store the phone's PIN-encrypted key backup (the server cannot decrypt it). */
