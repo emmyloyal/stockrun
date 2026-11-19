@@ -9,6 +9,7 @@ import { negotiate, isDeal, type SupplierChannel, type Deal } from './tools/nego
 import { bookRider } from './tools/riders.ts';
 import { RESTOCK_REASONS, type ProposeResult, type VaultClient } from './tools/vault.ts';
 import { CATEGORIES, type OrderLine, type Rider, type Shop, type SupplierStatus } from './types.ts';
+import type { JobStore } from './check/jobs.ts';
 
 export interface AgentDeps {
   extractor: Extractor;
@@ -20,6 +21,8 @@ export interface AgentDeps {
   tokenPerNaira: bigint;
   maxSuppliersPerLine?: number;
   replyTimeoutMs?: number;
+  /** Records each proposed order's off-chain details for the rider app and the photo check. */
+  jobs?: JobStore;
 }
 
 export type LineOutcome =
@@ -63,6 +66,11 @@ export async function handleOrder(text: string, d: AgentDeps): Promise<AgentRepo
       supplierKey: supplierKey(cand.supplier.id), ordered: line.quantity, unitPrice,
       cat: CATEGORIES[line.category], dist: cand.dist, rider: booked.rider.address,
       riderFee: BigInt(booked.feeNaira) * d.tokenPerNaira,
+    });
+    if ((result.status === 'locked' || result.status === 'ask_owner') && d.jobs) d.jobs.add({
+      orderId: String(result.orderId), item: line.item, unit: line.unit, quantity: line.quantity, rider: booked.rider.address,
+      supplier: { name: `${cand.supplier.name}, ${cand.supplier.market}`, lat: cand.supplier.lat, lng: cand.supplier.lng },
+      shop: { name: d.shop.name, lat: d.shop.lat, lng: d.shop.lng }, createdAt: Date.now(),
     });
     outcomes.push({ line, kind: 'proposed', deal, rider: booked.rider, riderFeeNaira: booked.feeNaira, result });
   }

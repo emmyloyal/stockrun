@@ -1,0 +1,20 @@
+// Try the photo count on a real picture (no chain, nothing attested):
+//   npm run count -- path/to/photo.jpg "Indomie noodles carton (40 x 70g)" carton
+// Needs ANTHROPIC_API_KEY (in ../.env or the environment).
+import { existsSync, readFileSync } from 'node:fs';
+import { extname } from 'node:path';
+import { ClaudePhotoCounter, decideCount, type MediaType } from './check/photoCount.ts';
+
+const envFile = new URL('../../.env', import.meta.url);
+if (existsSync(envFile)) process.loadEnvFile(envFile);
+const [file, item = 'Indomie noodles carton (40 x 70g)', unit = 'carton'] = process.argv.slice(2);
+if (!file) { console.log('Usage: npm run count -- <photo.jpg|png|webp> ["item"] [unit]'); process.exit(1); }
+if (!process.env.ANTHROPIC_API_KEY) { console.log('Set ANTHROPIC_API_KEY in .env first.'); process.exit(1); }
+
+const types: Record<string, MediaType> = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp' };
+const mediaType = types[extname(file).toLowerCase()];
+if (!mediaType) { console.log('Use a .jpg, .png or .webp photo.'); process.exit(1); }
+
+const report = await new ClaudePhotoCounter().count({ data: readFileSync(file), mediaType }, { item, unit });
+console.log('Claude saw:', report);
+console.log('Decision:', decideCount(report));

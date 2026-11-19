@@ -6,7 +6,8 @@
     "test": "vitest run",
     "typecheck": "tsc -p .",
     "demo": "node src/demo.ts",
-    "live": "node src/live.ts"
+    "live": "node src/live.ts",
+    "count": "node src/count.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.10.0",

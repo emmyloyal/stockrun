@@ -36,6 +36,16 @@ npm run demo -- "5 cartons of Indomie, 10 bags of rice at 80k, within 5 km"
 ## Data
 `data/suppliers.json` holds **fictional** demo suppliers (`simulated: true`, invented names, placeholder phone numbers, demo prices) located at public Lagos markets. Add real suppliers only with their consent, as `simulated: false`.
 
+## Photo check (`src/check/`)
+The check service holds the **check key**. That key can only call `attestPickup` and `attestDelivery`, and it never moves money.
+1. **Claude looks.** `ClaudePhotoCounter` returns how many units it can see, whether any are damaged, and any problem with the photo (blurry, too dark, units hidden). Claude is told the item and the unit, but **never the ordered quantity**, so it cannot anchor on that number. Text inside the photo is treated as something to read, not as instructions.
+2. **Code decides.** `decideCount` only attests a clear count. Anything doubtful asks the rider for a new photo, and the order holds meanwhile.
+3. **The circuit pays.** After attesting, the service calls `settlePickup` or `settleDelivery`.
+   - PickupCheck pays the supplier for the lower of the photo count and the rider's count.
+   - DeliveryCheck pays the rider, compensates the owner from the bond, or waits.
+- `JobStore` keeps what the chain does not: the item, the unit, and the supplier and shop locations. All money figures are read from the vault.
+- **Try it on a real photo:** `npm run count -- photo.jpg "Indomie noodles carton (40 x 70g)" carton`. This needs `ANTHROPIC_API_KEY`. Nothing is attested.
+
 ## WhatsApp (`src/channels/`)
 `WhatsAppChannel` is the real `SupplierChannel`. It sends text through the Cloud API, and `webhook.ts` receives replies.
 - **Signed webhooks only:** the webhook rejects any request whose `X-Hub-Signature-256` does not match `WHATSAPP_APP_SECRET`, so nobody can inject fake supplier replies.
@@ -57,6 +67,7 @@ You play the supplier on your own phone. Only the negotiation runs: no vault, no
 ## Not built yet (say so in the demo)
 - **WhatsApp template and hosting:** the `order_request` template for first contact is not registered, and there is no hosted webhook yet. The agent and webhook run locally behind a tunnel.
 - **Owner replies:** handling "YES <id>" as `approveOrder` is not built. The owner must sign that with the owner key; the agent key cannot do it.
-- **Photo check service:** the separate key that calls `attestPickup` / `attestDelivery`.
+- **Rider app:** the screens that take photos and send the rider's own count. The check service behind them is built (see Photo check).
+- **Signed GPS:** the rider's "at the supplier" and "at the shop" are still self-reported.
 - **Fallbacks and inputs:** voice-call fallback, voice-note transcription, and OpenStreetMap search beyond `suppliers.json`.
 - **Multi-line orders:** they are proposed line by line, one vault order per line. Lines with no deal are reported, not retried.
