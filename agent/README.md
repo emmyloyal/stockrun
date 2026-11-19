@@ -4,24 +4,24 @@ AI service that turns a shop owner's order into proposed, circuit-checked purcha
 only call `proposeOrder` on the vault. It can never move money, choose where money goes, approve its own orders or submit
 pickup/delivery evidence (all enforced by the vault and tested in `contracts/test/VaultScenarios.sol`).
 
-**Claude reads; code decides.** Claude (`claude-opus-5-5`, structured outputs, server-side refusal fallbacks) only reads text: the owner's order and supplier replies. Prices, counter-offers, the walk-away point, rider choice and every number sent to the vault are computed in code, and RestockGuard has the final word on-chain.
+**The AI reads; code decides.** Google Gemini (`gemini-3.8-flash` by default; set `GEMINI_MODEL` to change it) reads text and photos: the owner's order, supplier replies and the rider's photos. It answers in a JSON schema, and code validates every answer again. A blocked, cut-off or malformed answer counts as "not understood", and the order holds. Prices, counter-offers, the walk-away point, rider choice and every number sent to the vault are computed in code, and RestockGuard has the final word on-chain.
 
 ## Run
 ```
 npm install
-npm test            # 21 unit tests + 5 end-to-end tests on a local anvil chain (needs Foundry + `forge build` in contracts/)
+npm test            # unit tests + end-to-end tests on a local anvil chain (needs Foundry + `forge build` in contracts/)
 npm run typecheck
 npm run demo -- "5 cartons of Indomie, 10 bags of rice at 80k, within 5 km"
 ```
-- **Reader:** the demo uses Claude when `ANTHROPIC_API_KEY` (or an `ant auth login` profile) is set. Otherwise it uses the rule-based reader.
+- **Reader:** the demo uses Gemini when `GEMINI_API_KEY` is set in `../.env`. Otherwise it uses the rule-based reader.
 - **Simulated parts:** the demo runs on a local anvil chain with MockCircuits and bot suppliers. Nothing touches a real network.
 
 ## Pipeline (`src/agent.ts`)
 | Step | File | What it does |
 | --- | --- | --- |
-| parse_order | `src/tools/parseOrder.ts` | Claude maps free text (English/Pidgin) onto the product catalogue. Code validates the result: quantity 1–255, prices, radius. |
+| parse_order | `src/tools/parseOrder.ts` | Gemini maps free text (English/Pidgin) onto the product catalogue. Code validates the result: quantity 1–255, prices, radius. |
 | search_suppliers | `src/tools/suppliers.ts` | Suppliers within the radius that stock the item, ranked preferred > approved > unknown, then by distance and price. Blocked suppliers are dropped. Unknown suppliers are only *suggested* to the owner. |
-| negotiate | `src/tools/negotiate.ts` | Fixed-wording messages, so no message can ever promise payment before the pickup check (guard + tests). Claude reads each reply. Code counters: first 5% under the ask, then halfway, and never above the ceiling (the owner's max, or list price + 5%). |
+| negotiate | `src/tools/negotiate.ts` | Fixed-wording messages, so no message can ever promise payment before the pickup check (guard + tests). Gemini reads each reply. Code counters: first 5% under the ask, then halfway, and never above the ceiling (the owner's max, or list price + 5%). |
 | book_rider | `src/tools/riders.ts` | Nearest rider whose vault bond covers the goods. Fee: ₦1,500 + ₦250/km. |
 | propose_order | `src/tools/vault.ts` | Simulates first, so a REJECT costs no gas. Then it sends the transaction and reads `OrderProposed`. Results: locked / ask owner / rejected (with reason) / too large / circuit failed. |
 | report | `ownerMessage` in `src/agent.ts` | WhatsApp summary for the owner. Every on-chain claim carries the tx hash. |
@@ -38,13 +38,13 @@ npm run demo -- "5 cartons of Indomie, 10 bags of rice at 80k, within 5 km"
 
 ## Photo check (`src/check/`)
 The check service holds the **check key**. That key can only call `attestPickup` and `attestDelivery`, and it never moves money.
-1. **Claude looks.** `ClaudePhotoCounter` returns how many units it can see, whether any are damaged, and any problem with the photo (blurry, too dark, units hidden). Claude is told the item and the unit, but **never the ordered quantity**, so it cannot anchor on that number. Text inside the photo is treated as something to read, not as instructions.
+1. **Gemini looks.** `GeminiPhotoCounter` returns how many units it can see, whether any are damaged, and any problem with the photo (blurry, too dark, units hidden). Gemini is told the item and the unit, but **never the ordered quantity**, so it cannot anchor on that number. Text inside the photo is treated as something to read, not as instructions.
 2. **Code decides.** `decideCount` only attests a clear count. Anything doubtful asks the rider for a new photo, and the order holds meanwhile.
 3. **The circuit pays.** After attesting, the service calls `settlePickup` or `settleDelivery`.
    - PickupCheck pays the supplier for the lower of the photo count and the rider's count.
    - DeliveryCheck pays the rider, compensates the owner from the bond, or waits.
 - `JobStore` keeps what the chain does not: the item, the unit, and the supplier and shop locations. All money figures are read from the vault.
-- **Try it on a real photo:** `npm run count -- photo.jpg "Indomie noodles carton (40 x 70g)" carton`. This needs `ANTHROPIC_API_KEY`. Nothing is attested.
+- **Try it on a real photo:** `npm run count -- photo.jpg "Indomie noodles carton (40 x 70g)" carton`. This needs `GEMINI_API_KEY`. Nothing is attested.
 
 ## WhatsApp (`src/channels/`)
 `WhatsAppChannel` is the real `SupplierChannel`. It sends text through the Cloud API, and `webhook.ts` receives replies.

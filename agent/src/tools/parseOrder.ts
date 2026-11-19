@@ -1,4 +1,4 @@
-// parse_order: owner's text -> order lines. Claude reads the text; code validates everything after.
+// parse_order: owner's text -> order lines. The AI reads the text; code validates everything after.
 import { z } from 'zod';
 import type { Extractor } from '../llm.ts';
 import { CATEGORIES, type Category, type OrderLine, type ParsedOrder } from '../types.ts';

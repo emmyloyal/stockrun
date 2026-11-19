@@ -1,4 +1,4 @@
-// message_supplier + negotiation. Claude (or the rule reader) only READS supplier replies.
+// message_supplier + negotiation. The AI reader (Gemini, or the rule reader) only READS supplier replies.
 // Prices, counter-offers and the walk-away point are decided here, in code, within the owner's limit.
 import { z } from 'zod';
 import type { Extractor } from '../llm.ts';

@@ -9,7 +9,7 @@ export function loadSuppliers(): Supplier[] {
   return cache;
 }
 
-/** Every distinct product across suppliers (the catalogue Claude maps orders onto). */
+/** Every distinct product across suppliers (the catalogue the AI maps orders onto). */
 export function catalog(): { item: string; category: Category }[] {
   const seen = new Map<string, Category>();
   for (const s of loadSuppliers()) for (const st of s.stocks) seen.set(st.item, st.category);

@@ -1,5 +1,5 @@
 // Offline Extractor: reads orders and supplier replies with rules, so the demo and tests run without
-// an API key. Claude (src/llm.ts) handles free-form Pidgin/Yoruba text far better; this is the floor.
+// an API key. Gemini (src/llm.ts) handles free-form Pidgin/Yoruba text far better; this is the floor.
 import type { z } from 'zod';
 import type { Extractor } from './llm.ts';
 import { OrderSchema, ruleParseOrder, naira } from './tools/parseOrder.ts';

@@ -5,7 +5,7 @@
 // Only negotiation runs here. No vault, no chain, no money: nothing is bought.
 import { WhatsAppChannel } from './channels/whatsapp.ts';
 import { createWebhookServer } from './channels/webhook.ts';
-import { defaultExtractor } from './llm.ts';
+import { defaultExtractor, model } from './llm.ts';
 import { RuleExtractor } from './rules.ts';
 import { negotiate, isDeal } from './tools/negotiate.ts';
 import type { OrderLine, Supplier } from './types.ts';
@@ -32,7 +32,7 @@ const LIST_PRICE = 13_500; // catalogue price for the demo; the agent's ceiling 
 
 const extractor = defaultExtractor(new RuleExtractor());
 console.log(`Webhook listening on http://localhost:${port}/webhook`);
-console.log(`Reader: ${extractor instanceof RuleExtractor ? 'rule-based (no Anthropic key found)' : 'Claude'}`);
+console.log(`Reader: ${extractor instanceof RuleExtractor ? 'rule-based (no GEMINI_API_KEY found)' : `Gemini (${model()})`}`);
 console.log(`\n1. Send "hi" from your phone to the test number (this opens WhatsApp's 24-hour window).`);
 console.log(`2. The agent will ask you for a price. Reply like a supplier: "13,800 per carton", "ok", "no stock"...\n`);
 

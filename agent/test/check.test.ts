@@ -1,5 +1,5 @@
 // Photo check: unit tests for the count decision, and the full pickup -> delivery path on a local chain with a
-// scripted photo counter (Claude's vision call is replaced; everything on-chain is real: vault + MockCircuits).
+// scripted photo counter (Gemini's vision call is replaced; everything on-chain is real: vault + MockCircuits).
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createWalletClient, http, parseAbi, type Address, type PublicClient } from 'viem';
 import { anvil } from 'viem/chains';
