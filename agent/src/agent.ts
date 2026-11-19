@@ -12,6 +12,7 @@ import { CATEGORIES, type OrderLine, type Rider, type Shop, type SupplierStatus 
 import type { JobStore } from './check/jobs.ts';
 import type { PriceBook } from './prices/priceBook.ts';
 import { catalogueReference } from './prices/priceBook.ts';
+import type { Money } from './chain/money.ts';
 
 export interface AgentDeps {
   extractor: Extractor;
@@ -19,8 +20,8 @@ export interface AgentDeps {
   vault: VaultClient;
   riders: Rider[];
   shop: Shop;
-  /** Token units per naira (demo token: 6 decimals, 1 token = ₦1 -> 1_000_000n). */
-  tokenPerNaira: bigint;
+  /** Naira <-> vault token conversion (see chain/money.ts). */
+  money: Money;
   maxSuppliersPerLine?: number;
   replyTimeoutMs?: number;
   /** Records each proposed order's off-chain details for the rider app and the photo check. */
@@ -65,7 +66,7 @@ export async function handleOrder(text: string, d: AgentDeps): Promise<AgentRepo
     }
     if (!deal || !cand) { outcomes.push({ line, kind: 'no_deal', tried }); continue; }
 
-    const unitPrice = BigInt(deal.unitPriceNaira) * d.tokenPerNaira;
+    const unitPrice = d.money.toToken(deal.unitPriceNaira);
     const goodsValue = unitPrice * BigInt(line.quantity);
     const booked = await bookRider(d.riders, cand.supplier, d.shop, goodsValue, (a: Address) => d.vault.bond(a));
     if (!booked) { outcomes.push({ line, kind: 'no_rider', deal }); continue; }
@@ -73,7 +74,7 @@ export async function handleOrder(text: string, d: AgentDeps): Promise<AgentRepo
     const result = await d.vault.propose({
       supplierKey: supplierKey(cand.supplier.id), ordered: line.quantity, unitPrice,
       cat: CATEGORIES[line.category], dist: cand.dist, rider: booked.rider.address,
-      riderFee: BigInt(booked.feeNaira) * d.tokenPerNaira,
+      riderFee: d.money.toToken(booked.feeNaira),
     });
     if ((result.status === 'locked' || result.status === 'ask_owner') && d.jobs) d.jobs.add({
       orderId: String(result.orderId), item: line.item, unit: line.unit, quantity: line.quantity, rider: booked.rider.address,

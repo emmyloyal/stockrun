@@ -13,6 +13,7 @@ import { CheckService } from '../src/check/checkService.ts';
 import { JobStore } from '../src/check/jobs.ts';
 import { PriceBook } from '../src/prices/priceBook.ts';
 import type { PhotoCount, PhotoCounter } from '../src/check/photoCount.ts';
+import { fixedRate } from '../src/chain/money.ts';
 
 const vaultUserAbi = parseAbi(['function riderPickup(uint256 id, bool atSupplier, uint8 riderCount)', 'function riderArrive(uint256 id, bool atShop)', 'function ownerConfirm(uint256 id, bool ok, bool issue)']);
 const report = (count: number): PhotoCount => ({ itemVisible: true, count, confidence: 'high', damage: false, damageNotes: '', photoProblem: 'none' });
@@ -37,9 +38,9 @@ describe.skipIf(!localChainAvailable())('app API', () => {
     const jobs = new JobStore();
     const checker = createWalletClient({ account: accounts.checker, chain: anvil, transport: http(chain.url) });
     server = createApi({
-      pub: chain.pub, vault: chain.vault, chainId: anvil.id, jobs, tokenPerNaira: TOKEN_PER_NAIRA, rpcUrl: chain.url,
+      pub: chain.pub, vault: chain.vault, chainId: anvil.id, jobs, money: fixedRate(TOKEN_PER_NAIRA), rpcUrl: chain.url,
       check: new CheckService(chain.vault, chain.pub, checker, counter, jobs),
-      agent: { extractor: new RuleExtractor(), channel: new BotChannel(), vault: chain.vaultClient, riders: chain.riders, shop: DEMO_SHOP, tokenPerNaira: TOKEN_PER_NAIRA, jobs, prices: new PriceBook() },
+      agent: { extractor: new RuleExtractor(), channel: new BotChannel(), vault: chain.vaultClient, riders: chain.riders, shop: DEMO_SHOP, money: fixedRate(TOKEN_PER_NAIRA), jobs, prices: new PriceBook() },
     });
     await new Promise<void>((r) => server.listen(0, r));
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;

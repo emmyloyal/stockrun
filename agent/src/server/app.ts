@@ -45,7 +45,7 @@ export function createApp(o: AppOptions): Server {
   const log = o.log ?? (() => {});
   const lastCheck = new Map<string, CheckResult>();         // `${shopId}:${orderId}`
   const codeRequests = new Map<string, number[]>();         // per-IP limit on SMS sends
-  const naira = (x: bigint) => Number(x / p.tokenPerNaira);
+  const naira = (x: bigint) => p.money.toNaira(x);
 
   const need = (c: Ctx, role?: Role): User => {
     if (!c.user) throw new AuthError(401, 'Sign in first.');

@@ -8,3 +8,5 @@ dist/
 agent/data/prices.json
 agent/data/jobs.json
 contracts/broadcast/**/dry-run/
+.env.bak
+.env.*.bak

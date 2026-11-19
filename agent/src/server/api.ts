@@ -11,6 +11,7 @@ import type { JobStore, Job } from '../check/jobs.ts';
 import type { MediaType } from '../check/photoCount.ts';
 import { haversineKm, loadSuppliers, supplierKey } from '../tools/suppliers.ts';
 import { ageText } from '../prices/priceBook.ts';
+import type { Money } from '../chain/money.ts';
 
 export interface ApiDeps {
   pub: PublicClient;
@@ -19,7 +20,7 @@ export interface ApiDeps {
   agent: AgentDeps;
   check: CheckService | null;          // null when no photo model is configured
   jobs: JobStore;
-  tokenPerNaira: bigint;
+  money: Money;
   rpcUrl: string;                      // chain RPC that /rpc forwards to
   staticDir?: string;                  // built app (app/dist)
   /** Demo only: anvil's public test keys, so the local demo can sign as owner and rider in the browser. */
@@ -39,7 +40,7 @@ export function createApi(d: ApiDeps): Server {
 
   async function orderView(job: Job) {
     const o = await d.pub.readContract({ address: d.vault, abi: checkAbi, functionName: 'orders', args: [BigInt(job.orderId)] });
-    const naira = (x: bigint) => Number(x / d.tokenPerNaira);
+    const naira = (x: bigint) => d.money.toNaira(x);
     return {
       ...job,
       status: STATUS_NAME[o[8]] ?? 'Unknown',

@@ -91,14 +91,14 @@ describe.skipIf(!localChainAvailable())('multi-shop app server', () => {
     await ada.call('/api/dev/advance-day', {});
     await ada.sign(shop.vault, 'applySupplier', [supplierKey('sim-mile12-adeyemi')]);
     await ada.sign(p.token, 'approve', [shop.vault, 2n ** 255n]);
-    await ada.sign(shop.vault, 'deposit', [400_000n * p.tokenPerNaira]);
+    await ada.sign(shop.vault, 'deposit', [p.money.toToken(400_000)]);
     expect((await ada.call('/api/shop/money')).json).toMatchObject({ vaultNaira: 400_000, availableNaira: 400_000, weeklyBudgetNaira: 500_000, limitNaira: 100_000 });
 
     // Riders: profile + bond in Ada's vault.
     await tunde.call('/api/rider/profile', { name: 'Tunde', lat: 6.6, lng: 3.39 });
     await musa.call('/api/rider/profile', { name: 'Musa', lat: 6.45, lng: 3.39 });
     await tunde.sign(p.token, 'approve', [shop.vault, 2n ** 255n]);
-    await tunde.sign(shop.vault, 'postBond', [200_000n * p.tokenPerNaira]);
+    await tunde.sign(shop.vault, 'postBond', [p.money.toToken(200_000)]);
 
     // Order: the agent proposes to Ada's vault; RestockGuard approves; Tunde (bonded) is booked.
     const placed = (await ada.call('/api/orders', { text: '5 cartons of Indomie within 5 km' })).json;
@@ -113,7 +113,7 @@ describe.skipIf(!localChainAvailable())('multi-shop app server', () => {
     expect((await musa.call(`/api/jobs/${shop.id}/0/photo`, { stage: 'pickup', mediaType: 'image/jpeg', data: JPEG })).status).toBe(404);
     counter.queue.push(seen(5));
     expect((await tunde.call(`/api/jobs/${shop.id}/0/photo`, { stage: 'pickup', mediaType: 'image/jpeg', data: JPEG })).json).toMatchObject({ status: 'settled', outcome: 'paid', qty: 5 });
-    expect(await p.pub.readContract({ address: p.token, abi: tokenAbi, functionName: 'balanceOf', args: [p.supplierPayout] })).toBe(5n * 13_300n * p.tokenPerNaira);
+    expect(await p.pub.readContract({ address: p.token, abi: tokenAbi, functionName: 'balanceOf', args: [p.supplierPayout] })).toBe(5n * p.money.toToken(13_300));
   }, 120_000);
 
   it('refuses the unauthenticated, the wrong role, non-JSON writes and test-node controls', async () => {

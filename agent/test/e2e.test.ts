@@ -7,6 +7,7 @@ import { handleOrder, type AgentDeps } from '../src/agent.ts';
 import { RuleExtractor } from '../src/rules.ts';
 import { BotChannel } from '../src/sim/bots.ts';
 import { startLocalChain, localChainAvailable, accounts, tokenAbi, vaultAdminAbi, DEMO_SHOP, TOKEN_PER_NAIRA, type LocalChain } from '../src/sim/localChain.ts';
+import { fixedRate } from '../src/chain/money.ts';
 
 const { payout } = accounts;
 
@@ -22,7 +23,7 @@ describe.skipIf(!localChainAvailable())('agent end to end on a local chain', () 
       vault: chain.vaultClient,
       riders: chain.riders,
       shop: DEMO_SHOP,
-      tokenPerNaira: TOKEN_PER_NAIRA,
+      money: fixedRate(TOKEN_PER_NAIRA),
     };
   }, 60_000);
 

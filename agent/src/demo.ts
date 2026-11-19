@@ -9,6 +9,7 @@ import { RuleExtractor } from './rules.ts';
 import { BotChannel } from './sim/bots.ts';
 import { PriceBook } from './prices/priceBook.ts';
 import { startLocalChain, DEMO_SHOP, TOKEN_PER_NAIRA } from './sim/localChain.ts';
+import { fixedRate } from './chain/money.ts';
 
 const envFile = new URL('../../.env', import.meta.url);
 if (existsSync(envFile)) process.loadEnvFile(envFile);
@@ -20,7 +21,7 @@ try {
   console.log(`Reader: ${extractor instanceof RuleExtractor ? 'rule-based (no GEMINI_API_KEY found)' : `Gemini (${model()})`}`);
   console.log(`Vault (local anvil): ${chain.vault}\n\nOwner: ${text}\n`);
   const report = await handleOrder(text, {
-    extractor, channel, prices: new PriceBook(), vault: chain.vaultClient, riders: chain.riders, shop: DEMO_SHOP, tokenPerNaira: TOKEN_PER_NAIRA,
+    extractor, channel, prices: new PriceBook(), vault: chain.vaultClient, riders: chain.riders, shop: DEMO_SHOP, money: fixedRate(TOKEN_PER_NAIRA),
   });
   for (const o of report.outcomes) if (o.kind === 'proposed') console.log(`--- WhatsApp with ${o.deal.supplier.name} (simulated)\n${o.deal.transcript.join('\n')}\n`);
   console.log(`--- StockRun -> owner\n${report.message}`);

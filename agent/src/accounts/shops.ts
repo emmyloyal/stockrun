@@ -114,7 +114,7 @@ export class Shops {
     const self = this;
     const agent: AgentDeps = {
       extractor: this.services.extractor, channel: this.services.channel, vault, shop: { name: shop.name, lat: shop.lat, lng: shop.lng },
-      tokenPerNaira: this.p.tokenPerNaira, jobs, prices: this.services.prices,
+      money: this.p.money, jobs, prices: this.services.prices,
       get riders() { return self.riderPool(); },
     };
     const rt = { shop, vault, jobs, check, agent };

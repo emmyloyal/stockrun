@@ -10,6 +10,7 @@ import { startLocalChain, localChainAvailable, accounts, tokenAbi, DEMO_SHOP, TO
 import { decideCount, type PhotoCount, type PhotoCounter, type Photo } from '../src/check/photoCount.ts';
 import { CheckService } from '../src/check/checkService.ts';
 import { JobStore } from '../src/check/jobs.ts';
+import { fixedRate } from '../src/chain/money.ts';
 
 const report = (over: Partial<PhotoCount> = {}): PhotoCount =>
   ({ itemVisible: true, count: 5, confidence: 'high', damage: false, damageNotes: '', photoProblem: 'none', ...over });
@@ -52,7 +53,7 @@ describe.skipIf(!localChainAvailable())('photo check on a local chain', () => {
   const send = async (p: Promise<`0x${string}`>) => pub.waitForTransactionReceipt({ hash: await p });
   const balance = (a: Address) => pub.readContract({ address: chain.token, abi: tokenAbi, functionName: 'balanceOf', args: [a] });
   const order = async (text: string) => {
-    const r = await handleOrder(text, { extractor: new RuleExtractor(), channel: new BotChannel(), vault: chain.vaultClient, riders: chain.riders, shop: DEMO_SHOP, tokenPerNaira: TOKEN_PER_NAIRA, jobs });
+    const r = await handleOrder(text, { extractor: new RuleExtractor(), channel: new BotChannel(), vault: chain.vaultClient, riders: chain.riders, shop: DEMO_SHOP, money: fixedRate(TOKEN_PER_NAIRA), jobs });
     const o = r.outcomes[0];
     if (o.kind !== 'proposed' || o.result.status !== 'locked') throw new Error('order did not lock');
     return o.result.orderId;
