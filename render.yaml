@@ -7,7 +7,7 @@ services:
     runtime: node
     plan: starter            # a paid plan: the free plan sleeps and has no disk, so shops would be forgotten
     region: frankfurt
-    buildCommand: cd app && npm ci && npm run build && cd ../agent && npm ci
+    buildCommand: cd app && npm ci && npm run build && cd ../agent && npm ci --omit=dev   # the server needs no test tools
     startCommand: cd agent && node src/server/main.ts --network=xlayer
     healthCheckPath: /api/config
     disk:

@@ -31,4 +31,5 @@ See `CLAUDE.md` for the layout and the design rules, and `docs/PLAN.md` for the 
 | Processor (X Layer) | [`0x34efCc0a3191A48Feec787252E6d817b063A4017`](https://www.oklink.com/xlayer/address/0x34efCc0a3191A48Feec787252E6d817b063A4017), taped out 2026-11-19 (see `deployments/xlayer.json`) |
 | Circuit IDs | RestockGuard #1 (119 NAND) · PickupCheck #2 (210 NAND) · DeliveryCheck #3 (141 NAND) |
 | Vault | _TBD_ |
-| App (DeWEB) | _TBD_ |
+| Server + app | https://stockrun.onrender.com (X Layer mainnet; Render, deployed 2026-11-20) |
+| App (DeWEB) | `1.2.433.tape` at https://1-2-433.tapekit.org/ (publish script ready, rehearsed on a fork; not published yet) |
