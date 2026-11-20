@@ -1,0 +1,53 @@
+# Render blueprint for the StockRun server on X LAYER MAINNET (real money). Render -> New -> Blueprint -> this repo.
+# The app is also served here (same origin); the DeWEB copy at https://1-2-433.tapekit.org calls this server.
+# Secrets (sync: false) are typed into the Render dashboard, never committed. See agent/README.md "App servers".
+services:
+  - type: web
+    name: stockrun
+    runtime: node
+    plan: starter            # a paid plan: the free plan sleeps and has no disk, so shops would be forgotten
+    region: frankfurt
+    buildCommand: cd app && npm ci && npm run build && cd ../agent && npm ci
+    startCommand: cd agent && node src/server/main.ts --network=xlayer
+    healthCheckPath: /api/config
+    disk:
+      name: stockrun-data
+      mountPath: /var/data   # the shop database and order details survive restarts and deploys
+      sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: 26.13.0
+      - key: DB_FILE
+        value: /var/data/stockrun.db
+      - key: SECURE_COOKIES
+        value: "1"
+      - key: ALLOWED_ORIGINS
+        value: https://1-2-433.tapekit.org
+      - key: SERVER_SECRET
+        generateValue: true
+      - key: NGN_PER_USD
+        sync: false
+      - key: SUPPLIER_PAYOUT_ADDRESS
+        sync: false
+      - key: DEPLOYER_PRIVATE_KEY
+        sync: false
+      - key: AGENT_PRIVATE_KEY
+        sync: false
+      - key: CHECK_SERVICE_PRIVATE_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: SMS                 # "console" prints sign-in codes in the Render log (pilot only); or set the TWILIO_* keys
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_SMS_FROM
+        sync: false
+      - key: SENDRELAY_API_KEY   # live key (sk_live_) only; leave empty for self-pickup only
+        sync: false
+      - key: SENDRELAY_DESK_PRIVATE_KEY
+        sync: false
+      - key: SENDRELAY_WEBHOOK_SECRET
+        sync: false

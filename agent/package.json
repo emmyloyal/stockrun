@@ -13,7 +13,8 @@
     "serve": "node src/server/main.ts",
     "serve:xlayer": "node src/server/main.ts --network=xlayer",
     "carrier:try": "node src/logistics/tryCarrier.ts",
-    "deweb:publish": "node src/deweb/publish.ts"
+    "deweb:publish": "node src/deweb/publish.ts",
+    "artifacts": "node -e \"const o=require('../contracts/out/StockRunVault.sol/StockRunVault.json');const c=require('../deployments/artifacts/StockRunVault.json');c.abi=o.abi;c.bytecode={object:o.bytecode.object};require('fs').writeFileSync('../deployments/artifacts/StockRunVault.json',JSON.stringify(c,null,1)+'\\n')\""
   },
   "dependencies": {
     "@google/genai": "2.32.0",
@@ -24,5 +25,8 @@
     "@types/node": "^22.20.5",
     "typescript": "^5.9.3",
     "vitest": "^2.1.9"
+  },
+  "engines": {
+    "node": ">=24"
   }
 }

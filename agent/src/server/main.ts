@@ -26,7 +26,7 @@ if (existsSync(envFile)) process.loadEnvFile(envFile);
 const env = process.env;
 const network = process.argv.find((a) => a.startsWith('--network='))?.slice(10) ?? envValue(env, 'NETWORK') ?? 'local';
 if (network !== 'local' && network !== 'xlayer') throw new Error('NETWORK must be local or xlayer');
-const port = Number(envValue(env, 'APP_PORT') ?? 8080);
+const port = Number(envValue(env, 'PORT') ?? envValue(env, 'APP_PORT') ?? 8080);   // PORT: set by hosts such as Render
 
 let stopChain = () => {};
 let p: Platform;

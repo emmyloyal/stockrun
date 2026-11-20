@@ -1,6 +1,6 @@
 // Everything chain-specific the multi-shop server needs, in one place, so the same server runs on the local test chain
 // and on X Layer mainnet against the taped-out circuits.
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import {
   createPublicClient, createTestClient, createWalletClient, getAddress, http, isAddress, parseAbi, parseEther,
   type Abi, type Account, type Address, type Chain, type Hex, type PublicClient, type Transport, type WalletClient,
@@ -42,7 +42,12 @@ export interface Platform {
 }
 
 const OUT = new URL('../../../contracts/out/', import.meta.url);
-export const artifact = (name: string) => JSON.parse(readFileSync(new URL(`${name}.sol/${name}.json`, OUT), 'utf8')) as { abi: Abi; bytecode: { object: Hex } };
+const COMMITTED = new URL('../../../deployments/artifacts/', import.meta.url);
+/** A compiled contract: from `forge build` when present, else the committed copy (servers without Foundry, e.g. Render). */
+export const artifact = (name: string) => {
+  const built = new URL(`${name}.sol/${name}.json`, OUT), copy = new URL(`${name}.json`, COMMITTED);
+  return JSON.parse(readFileSync(existsSync(built) ? built : copy, 'utf8')) as { abi: Abi; bytecode: { object: Hex } };
+};
 
 export const tokenAbi = parseAbi([
   'function approve(address,uint256) returns (bool)', 'function balanceOf(address) view returns (uint256)', 'function mint(address,uint256)',
