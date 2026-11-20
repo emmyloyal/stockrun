@@ -135,3 +135,24 @@ button.card:hover { border-color: var(--ink); }
 .balance { font-family: var(--mono); font-weight: 700; font-size: 1.05rem; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; }
 .trail ul { margin: 6px 0 0; padding-left: 18px; }
 .trail code { font-size: 0.7rem; word-break: break-all; }
+
+/* Deposit: bottom sheet with a big amount and a keypad */
+.sheet-backdrop { position: fixed; inset: 0; z-index: 50; background: rgb(20 27 46 / 0.45); display: flex; align-items: flex-end; justify-content: center; animation: fade 0.18s ease-out; }
+.sheet { width: 100%; max-width: 560px; max-height: 92vh; overflow-y: auto; background: var(--surface); border-radius: 28px 28px 0 0; padding: 22px 20px calc(20px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 14px; animation: rise 0.22s ease-out; }
+.sheet-head { display: flex; align-items: center; gap: 10px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.sheet-head h2 { flex: 1; }
+.sheet-x { width: 40px; height: 40px; border-radius: 50%; border: 0; background: var(--bg); font-size: 1.1rem; cursor: pointer; flex: none; }
+.pad-amount { text-align: center; font-family: var(--display); font-weight: 900; font-stretch: 85%; font-size: clamp(3rem, 16vw, 4.6rem); line-height: 1; padding: 28px 0 4px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.pad-amount small { font-size: 0.55em; }
+.center { text-align: center; }
+.warn-text { color: var(--no); }
+.keypad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+.keypad button { min-height: 60px; border: 0; background: none; border-radius: 14px; font-size: 1.6rem; font-weight: 600; cursor: pointer; font-variant-numeric: tabular-nums; }
+.keypad button:active { background: var(--bg); }
+.sheet-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.btn.pill { border-radius: 999px; min-height: 54px; font-size: 1.05rem; }
+.sheet-actions .btn.ghost { background: var(--bg); border-color: var(--bg); }
+.sheet-actions .btn.primary { background: var(--danfo); border-color: var(--danfo); color: var(--on-danfo); }
+@keyframes rise { from { transform: translateY(40px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+.btn.danger { background: var(--no-bg); color: var(--no); border-color: var(--no); }

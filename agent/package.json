@@ -12,6 +12,7 @@
     "rehearse:xlayer": "node src/rehearseXLayer.ts",
     "serve": "node src/server/main.ts",
     "serve:xlayer": "node src/server/main.ts --network=xlayer",
+    "gmail:auth": "node src/accounts/gmailAuth.ts",
     "carrier:try": "node src/logistics/tryCarrier.ts",
     "deweb:publish": "node src/deweb/publish.ts",
     "artifacts": "node -e \"const o=require('../contracts/out/StockRunVault.sol/StockRunVault.json');const c=require('../deployments/artifacts/StockRunVault.json');c.abi=o.abi;c.bytecode={object:o.bytecode.object};require('fs').writeFileSync('../deployments/artifacts/StockRunVault.json',JSON.stringify(c,null,1)+'\\n')\""

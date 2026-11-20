@@ -6,8 +6,9 @@ export interface Config {
   chainId: number; network: 'local' | 'xlayer'; token: Address; tokenSymbol: string; explorerTx: string | null;
   naira: { paystack: boolean; test: boolean; testCredit: boolean };
   logistics: { id: string; name: string; api: boolean }[];
+  emailSignIn: boolean;
 }
-export interface User { id: number; phone: string | null; wallet: Address | null; username: string | null; displayName: string | null; hasAvatar: boolean; createdAt: number }
+export interface User { id: number; phone: string | null; email: string | null; wallet: Address | null; username: string | null; displayName: string | null; hasAvatar: boolean; createdAt: number }
 export interface NairaBalance { availableNaira: number; heldNaira: number }
 export interface Me { user: User | null; naira?: NairaBalance }
 export interface Place { lat: number; lng: number; address: string }
@@ -77,6 +78,8 @@ export const server = {
   me: () => call<Me>('/api/me'),
   requestCode: (phone: string) => call<{ sent: true }>('/api/auth/code', { phone }),
   verify: (phone: string, code: string) => signedIn(call('/api/auth/verify', { phone, code })),
+  emailCode: (email: string) => call<{ sent: true }>('/api/auth/email-code', { email }),
+  emailVerify: (email: string, code: string) => signedIn(call('/api/auth/email-verify', { email, code })),
   walletMessage: (address: Address) => call<{ message: string }>(`/api/auth/wallet-message?address=${address}`),
   walletSignIn: (message: string, signature: Hex) => signedIn(call('/api/auth/wallet', { message, signature })),
   logout: async () => { try { return await call<{ ok: true }>('/api/auth/logout', {}); } finally { setSessionToken(null); } },
@@ -153,3 +156,16 @@ export const naira = (n: number) => `₦${n.toLocaleString('en-NG', { maximumFra
 export const short = (h: string) => `${h.slice(0, 6)}…${h.slice(-4)}`;
 export function load<T>(key: string, fallback: T): T { try { const v = localStorage.getItem(key); return v ? (JSON.parse(v) as T) : fallback; } catch { return fallback; } }
 export function save(key: string, value: unknown) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private mode */ } }
+
+/**
+ * Web OTP (Chrome on Android): wait for the sign-in SMS and read its code, after the person taps "Allow".
+ * Works only when the text ends with "@<this site's domain> #<code>". Resolves null where unsupported or cancelled;
+ * iPhones instead offer the code above the keyboard (autocomplete="one-time-code").
+ */
+export async function readSmsCode(signal: AbortSignal): Promise<string | null> {
+  if (!('OTPCredential' in window) || !navigator.credentials) return null;
+  try {
+    const c = await navigator.credentials.get({ otp: { transport: ['sms'] }, signal } as CredentialRequestOptions) as (Credential & { code?: string }) | null;
+    return c?.code && /^\d{6}$/.test(c.code) ? c.code : null;
+  } catch { return null; }
+}

@@ -1,4 +1,5 @@
-// Accounts: anyone signs in with a phone number (one-time SMS code) or a wallet (signs a one-time message).
+// Accounts: anyone signs in with a phone number (one-time SMS code), an email address (one-time emailed code) or a
+// wallet (signs a one-time message).
 // Each person has a profile: a unique username, a display name and a picture.
 //
 // Phone accounts spend naira held in StockRun's ledger; they need no key. Wallet accounts spend coins from their own
@@ -6,7 +7,7 @@
 // so one person is one account.
 //
 // Codes are 6 digits, stored as an HMAC (never in plain text), valid for 10 minutes, 5 guesses each, and limited to
-// 1 per minute and 5 per hour per phone. Wallet messages carry a random nonce, are valid for 10 minutes and work once.
+// 1 per minute and 5 per hour per phone or email. Wallet messages carry a random nonce, are valid for 10 minutes and work once.
 // Sign-in lasts a year on the device: the session is a pass signed with SERVER_SECRET naming the phone or wallet,
 // so it survives a server restart even when the database was wiped (the account is then recreated from the pass).
 // Signing out deletes the pass from the browser and records it as revoked on the server.
@@ -21,6 +22,7 @@ import { getAddress, isAddress, verifyMessage, type Address, type Hex } from 'vi
 export interface User {
   id: number;
   phone: string | null;
+  email: string | null;
   wallet: Address | null;
   username: string | null;
   displayName: string | null;
@@ -28,6 +30,7 @@ export interface User {
   createdAt: number;
 }
 export interface SmsSender { send(phone: string, text: string): Promise<void> }
+export interface EmailSender { send(to: string, subject: string, text: string): Promise<void> }
 
 export const CODE_TTL_MS = 10 * 60_000;
 export const MAX_GUESSES = 5;
@@ -52,6 +55,13 @@ export function normalisePhone(input: string): string {
   throw new AuthError(400, 'Enter a phone number like 0803 123 4567.');
 }
 
+/** Email addresses: trimmed, lower-case, one @, a dot in the domain, at most 254 characters. */
+export function normaliseEmail(input: string): string {
+  const e = String(input).trim().toLowerCase();
+  if (e.length > 254 || !/^[a-z0-9._%+'-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/.test(e)) throw new AuthError(400, 'Enter an email address like ada@gmail.com.');
+  return e;
+}
+
 /** The message a wallet signs to sign in. Plain words, so the person sees exactly what they sign. */
 export const walletMessage = (address: Address, nonce: string, issuedAt: number) =>
   `Sign in to StockRun\n\nWallet: ${address}\nNonce: ${nonce}\nIssued: ${new Date(issuedAt).toISOString()}\n\n` +
@@ -61,10 +71,7 @@ export function openDb(file = ':memory:'): DatabaseSync {
   const db = new DatabaseSync(file);
   db.exec(`
     PRAGMA journal_mode = WAL;
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY, phone TEXT UNIQUE, wallet TEXT UNIQUE, username TEXT UNIQUE COLLATE NOCASE,
-      display_name TEXT, avatar BLOB, avatar_type TEXT, created_at INTEGER NOT NULL,
-      CHECK (phone IS NOT NULL OR wallet IS NOT NULL));
+    CREATE TABLE IF NOT EXISTS users (${USERS_TABLE});
     CREATE TABLE IF NOT EXISTS codes (
       id INTEGER PRIMARY KEY, phone TEXT NOT NULL, code_mac TEXT NOT NULL, expires_at INTEGER NOT NULL,
       guesses INTEGER NOT NULL DEFAULT 0, used INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL);
@@ -73,13 +80,28 @@ export function openDb(file = ':memory:'): DatabaseSync {
       nonce TEXT PRIMARY KEY, address TEXT NOT NULL, issued_at INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE IF NOT EXISTS revoked_sessions (sid TEXT PRIMARY KEY, expires_at INTEGER NOT NULL);
   `);
+  // Databases made before email sign-in: rebuild the users table with the email column (SQLite cannot change a CHECK).
+  const cols = db.prepare('PRAGMA table_info(users)').all() as unknown as { name: string }[];
+  if (!cols.some((c) => c.name === 'email')) {
+    db.exec(`BEGIN;
+      ALTER TABLE users RENAME TO users_old;
+      CREATE TABLE users (${USERS_TABLE});
+      INSERT INTO users (id, phone, wallet, username, display_name, avatar, avatar_type, created_at)
+        SELECT id, phone, wallet, username, display_name, avatar, avatar_type, created_at FROM users_old;
+      DROP TABLE users_old;
+      COMMIT;`);
+  }
   return db;
 }
+const USERS_TABLE = `
+      id INTEGER PRIMARY KEY, phone TEXT UNIQUE, email TEXT UNIQUE, wallet TEXT UNIQUE, username TEXT UNIQUE COLLATE NOCASE,
+      display_name TEXT, avatar BLOB, avatar_type TEXT, created_at INTEGER NOT NULL,
+      CHECK (phone IS NOT NULL OR email IS NOT NULL OR wallet IS NOT NULL)`;
 
-interface UserRow { id: number; phone: string | null; wallet: string | null; username: string | null; display_name: string | null; has_avatar: number; created_at: number }
-const USER_COLS = 'id, phone, wallet, username, display_name, (avatar IS NOT NULL) AS has_avatar, created_at';
+interface UserRow { id: number; phone: string | null; email: string | null; wallet: string | null; username: string | null; display_name: string | null; has_avatar: number; created_at: number }
+const USER_COLS = 'id, phone, email, wallet, username, display_name, (avatar IS NOT NULL) AS has_avatar, created_at';
 const toUser = (r: UserRow): User => ({
-  id: r.id, phone: r.phone, wallet: r.wallet ? getAddress(r.wallet) : null, username: r.username,
+  id: r.id, phone: r.phone, email: r.email, wallet: r.wallet ? getAddress(r.wallet) : null, username: r.username,
   displayName: r.display_name, hasAvatar: !!r.has_avatar, createdAt: r.created_at,
 });
 
@@ -88,20 +110,28 @@ export class Accounts {
   private sms: SmsSender;
   private secret: Buffer;
   private now: () => number;
-  constructor(db: DatabaseSync, sms: SmsSender, secret: string, now: () => number = Date.now) {
+  private otpHost: string | null;
+  private mail: EmailSender | null;
+  /** `otpHost`: the site's domain (e.g. stockrun.onrender.com). When set, each code SMS ends with the Web OTP line
+   *  `@<domain> #<code>`, so Chrome on Android offers to fill the code in by itself (iPhones fill it from any SMS). */
+  /** `mail`: sends emailed sign-in codes; null switches email sign-in off. */
+  constructor(db: DatabaseSync, sms: SmsSender, secret: string, now: () => number = Date.now, otpHost: string | null = null, mail: EmailSender | null = null) {
     if (secret.length < 32) throw new Error('SERVER_SECRET must be at least 32 characters');
     this.db = db; this.sms = sms; this.secret = Buffer.from(secret); this.now = now;
+    this.otpHost = otpHost && /^[a-z0-9.-]+$/i.test(otpHost) ? otpHost.toLowerCase() : null;
+    this.mail = mail;
   }
+  get emailSignIn(): boolean { return !!this.mail; }
 
   private mac(phone: string, code: string) { return createHmac('sha256', this.secret).update(`${phone}:${code}`).digest('hex'); }
   private byId(id: number): User { return toUser(this.db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(id) as unknown as UserRow); }
-  private find(col: 'phone' | 'wallet', v: string): User | null {
+  private find(col: 'phone' | 'email' | 'wallet', v: string): User | null {
     const r = this.db.prepare(`SELECT ${USER_COLS} FROM users WHERE ${col} = ?`).get(v) as unknown as UserRow | undefined;
     return r ? toUser(r) : null;
   }
   /** A signed pass: `v1.<payload>.<signature>`. The payload names who (phone or wallet), not a database id. */
   private startSession(user: User) {
-    const who = user.phone ? `p:${user.phone}` : `w:${user.wallet!.toLowerCase()}`;
+    const who = user.phone ? `p:${user.phone}` : user.email ? `e:${user.email}` : `w:${user.wallet!.toLowerCase()}`;
     const t = this.now();
     const payload = Buffer.from(JSON.stringify({ who, sid: randomBytes(12).toString('base64url'), iat: t, exp: t + SESSION_TTL_MS })).toString('base64url');
     return { user, token: `v1.${payload}.${this.sign(payload)}` };
@@ -122,34 +152,41 @@ export class Accounts {
   // ---------------------------------------------------------------- phone
   /** Send a sign-in code. Says nothing about whether the number has an account. */
   async requestCode(phoneInput: string): Promise<{ phone: string }> {
-    const phone = normalisePhone(phoneInput), t = this.now();
-    const recent = this.db.prepare('SELECT created_at FROM codes WHERE phone = ? AND created_at > ? ORDER BY created_at DESC').all(phone, t - 3600_000) as unknown as { created_at: number }[];
-    if (recent.length && t - recent[0].created_at < RESEND_GAP_MS) throw new AuthError(429, 'A code was just sent. Wait a minute before asking for another.');
-    if (recent.length >= HOURLY_LIMIT) throw new AuthError(429, 'Too many codes for this number. Try again in an hour.');
-    const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
-    this.db.prepare('UPDATE codes SET used = 1 WHERE phone = ? AND used = 0').run(phone);   // only the newest code works
-    this.db.prepare('INSERT INTO codes (phone, code_mac, expires_at, created_at) VALUES (?, ?, ?, ?)').run(phone, this.mac(phone, code), t + CODE_TTL_MS, t);
-    await this.sms.send(phone, `Your StockRun code is ${code}. It expires in 10 minutes. Never share it with anyone, including StockRun staff.`);
+    const phone = normalisePhone(phoneInput), code = this.issueCode(phone, 'number');
+    const text = `Your StockRun code is ${code}. It expires in 10 minutes. Never share it with anyone, including StockRun staff.`;
+    await this.sms.send(phone, this.otpHost ? `${text}\n\n@${this.otpHost} #${code}` : text);
     return { phone };
   }
 
-  /** Check a code (one guess). Returns the normalised phone on success. */
-  private checkCode(phoneInput: string, code: string): string {
-    const phone = normalisePhone(phoneInput), t = this.now();
+  /** A new 6-digit code for a phone or email (codes.phone holds either), within the resend limits. */
+  private issueCode(target: string, what: string): string {
+    const t = this.now();
+    const recent = this.db.prepare('SELECT created_at FROM codes WHERE phone = ? AND created_at > ? ORDER BY created_at DESC').all(target, t - 3600_000) as unknown as { created_at: number }[];
+    if (recent.length && t - recent[0].created_at < RESEND_GAP_MS) throw new AuthError(429, 'A code was just sent. Wait a minute before asking for another.');
+    if (recent.length >= HOURLY_LIMIT) throw new AuthError(429, `Too many codes for this ${what}. Try again in an hour.`);
+    const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+    this.db.prepare('UPDATE codes SET used = 1 WHERE phone = ? AND used = 0').run(target);   // only the newest code works
+    this.db.prepare('INSERT INTO codes (phone, code_mac, expires_at, created_at) VALUES (?, ?, ?, ?)').run(target, this.mac(target, code), t + CODE_TTL_MS, t);
+    return code;
+  }
+
+  /** Check a code (one guess) for a normalised phone or email. Returns it on success. */
+  private checkCode(phone: string, code: string): string {
+    const t = this.now();
     const row = this.db.prepare('SELECT id, code_mac, expires_at, guesses FROM codes WHERE phone = ? AND used = 0 ORDER BY created_at DESC LIMIT 1').get(phone) as unknown as
       { id: number; code_mac: string; expires_at: number; guesses: number } | undefined;
     if (!row || row.expires_at < t) throw new AuthError(400, 'That code has expired. Ask for a new one.');
     if (row.guesses >= MAX_GUESSES) throw new AuthError(429, 'Too many wrong codes. Ask for a new one.');
     this.db.prepare('UPDATE codes SET guesses = guesses + 1 WHERE id = ?').run(row.id);
     const given = Buffer.from(this.mac(phone, String(code).trim()), 'hex'), want = Buffer.from(row.code_mac, 'hex');
-    if (!timingSafeEqual(given, want)) throw new AuthError(400, 'Wrong code. Check the SMS and try again.');
+    if (!timingSafeEqual(given, want)) throw new AuthError(400, 'Wrong code. Check the message and try again.');
     this.db.prepare('UPDATE codes SET used = 1 WHERE id = ?').run(row.id);
     return phone;
   }
 
   /** Sign in with a code; the account is created on first sign-in. */
   verifyCode(phoneInput: string, code: string): { user: User; token: string } {
-    const phone = this.checkCode(phoneInput, code);
+    const phone = this.checkCode(normalisePhone(phoneInput), code);
     let u = this.find('phone', phone);
     if (!u) {
       const id = Number(this.db.prepare('INSERT INTO users (phone, created_at) VALUES (?, ?)').run(phone, this.now()).lastInsertRowid);
@@ -161,10 +198,32 @@ export class Accounts {
   /** A signed-in wallet account adds a phone number (proved with a code). */
   addPhone(user: User, phoneInput: string, code: string): User {
     if (user.phone) throw new AuthError(409, 'This account already has a phone number.');
-    const phone = this.checkCode(phoneInput, code);
+    const phone = this.checkCode(normalisePhone(phoneInput), code);
     if (this.find('phone', phone)) throw new AuthError(409, 'That number already has its own StockRun account.');
     this.db.prepare('UPDATE users SET phone = ? WHERE id = ?').run(phone, user.id);
     return this.byId(user.id);
+  }
+
+  // ---------------------------------------------------------------- email
+  /** Email a sign-in code. Says nothing about whether the address has an account. */
+  async requestEmailCode(emailInput: string): Promise<{ email: string }> {
+    if (!this.mail) throw new AuthError(503, 'Email sign-in is not switched on yet on this server.');
+    const email = normaliseEmail(emailInput), code = this.issueCode(email, 'email address');
+    await this.mail.send(email, `${code} is your StockRun code`,
+      `Your StockRun sign-in code is ${code}.\n\nIt expires in 10 minutes. Never share it with anyone, including StockRun staff.\n\n` +
+      `If you did not ask for this code, you can ignore this email.`);
+    return { email };
+  }
+
+  /** Sign in with an emailed code; the account is created on first sign-in. */
+  verifyEmailCode(emailInput: string, code: string): { user: User; token: string } {
+    const email = this.checkCode(normaliseEmail(emailInput), code);
+    let u = this.find('email', email);
+    if (!u) {
+      const id = Number(this.db.prepare('INSERT INTO users (email, created_at) VALUES (?, ?)').run(email, this.now()).lastInsertRowid);
+      u = this.byId(id);
+    }
+    return this.startSession(u);
   }
 
   // ---------------------------------------------------------------- wallet
@@ -219,8 +278,8 @@ export class Accounts {
     const pass = token ? this.readPass(token) : null;
     if (!pass || this.db.prepare('SELECT 1 FROM revoked_sessions WHERE sid = ?').get(pass.sid)) return null;
     const [kind, v] = [pass.who.slice(0, 2), pass.who.slice(2)];
-    if (kind !== 'p:' && kind !== 'w:') return null;
-    const col = kind === 'p:' ? 'phone' : 'wallet';
+    if (kind !== 'p:' && kind !== 'e:' && kind !== 'w:') return null;
+    const col = kind === 'p:' ? 'phone' : kind === 'e:' ? 'email' : 'wallet';
     const found = this.find(col, v);
     if (found) return found;
     const id = Number(this.db.prepare(`INSERT INTO users (${col}, created_at) VALUES (?, ?)`).run(v, this.now()).lastInsertRowid);
@@ -266,7 +325,7 @@ export class Accounts {
     return r ? { data: Buffer.from(r.avatar), type: r.avatar_type } : null;
   }
 
-  /** Public view of a user (for showing a profile): never the phone number or session data. */
+  /** Public view of a user (for showing a profile): never the phone number, email or session data. */
   publicProfile(userId: number): { id: number; username: string | null; displayName: string | null; hasAvatar: boolean } | null {
     const r = this.db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(userId) as unknown as UserRow | undefined;
     if (!r) return null;

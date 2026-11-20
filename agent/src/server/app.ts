@@ -100,6 +100,14 @@ export function createApp(o: AppOptions): Server {
       return { sent: true };
     }],
     ['POST', /^\/api\/auth\/verify$/, async (c, res) => signedIn(res, accounts.verifyCode(String(c.body?.phone ?? ''), String(c.body?.code ?? '')))],
+    ['POST', /^\/api\/auth\/email-code$/, async (c) => {
+      const t = Date.now(), hits = (codeRequests.get(c.ip) ?? []).filter((x) => x > t - 3600_000);
+      if (hits.length >= 20) throw new AuthError(429, 'Too many sign-in attempts from this network. Try again later.');
+      codeRequests.set(c.ip, [...hits, t]);
+      await accounts.requestEmailCode(String(c.body?.email ?? ''));
+      return { sent: true };
+    }],
+    ['POST', /^\/api\/auth\/email-verify$/, async (c, res) => signedIn(res, accounts.verifyEmailCode(String(c.body?.email ?? ''), String(c.body?.code ?? '')))],
     ['GET', /^\/api\/auth\/wallet-message$/, async (c) => accounts.walletChallenge(c.url.searchParams.get('address') ?? '')],
     ['POST', /^\/api\/auth\/wallet$/, async (c, res) => signedIn(res, await accounts.verifyWallet(String(c.body?.message ?? ''), String(c.body?.signature ?? '0x') as Hex))],
     ['POST', /^\/api\/auth\/logout$/, async (c, res) => {
@@ -113,6 +121,7 @@ export function createApp(o: AppOptions): Server {
       chainId: p.chain.id, network: p.name, token: p.token, tokenSymbol: p.tokenSymbol, explorerTx: p.explorerTx,
       naira: { paystack: !!paystack, test: paystack?.test ?? true, testCredit: !!o.demoNaira || (!paystack && !!p.faucet) },
       logistics: p.carriers.map((x) => ({ id: x.id, name: x.name, api: !!x.connector })),
+      emailSignIn: accounts.emailSignIn,
     })],
     ['GET', /^\/api\/me$/, async (c) => (c.user ? { user: c.user, naira: money(c.user.id) } : { user: null })],
     ['POST', /^\/api\/me\/profile$/, async (c) => ({ user: accounts.setProfile(need(c), c.body ?? {}) })],

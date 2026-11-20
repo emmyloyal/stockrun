@@ -1,11 +1,11 @@
 // StockRun for everyone: sign in with a phone number or a wallet, keep a profile, deposit naira, and ask the agent
 // for what you want with a budget and a delivery pin. The agent finds sellers on the map, negotiates on WhatsApp and
 // pays the seller only once the logistics company (or you, collecting) has the goods.
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import {
-  avatarUrl, currentPosition, hasWallet, load, naira, preparePhoto, save, server, short, signWithWallet,
+  avatarUrl, currentPosition, hasWallet, load, naira, preparePhoto, readSmsCode, save, server, short, signWithWallet,
   type Coins, type Config, type Me, type Movement, type Order, type Place, type RequestRecord, type Seller, type User,
 } from './lib';
 import { CircuitTrail, Outcome, StatusPill } from './ui';
@@ -28,9 +28,9 @@ export function AccountApp({ cfg }: { cfg: Config }) {
 
   if (error) return <p className="alert">{error}</p>;
   if (!me) return <p className="muted">Loading…</p>;
-  if (!me.user) return <SignIn onDone={reload} />;
+  if (!me.user) return <SignIn cfg={cfg} onDone={reload} />;
   const u = me.user;
-  const name = u.username ? `@${u.username}` : u.phone ?? (u.wallet ? short(u.wallet) : 'You');
+  const name = u.username ? `@${u.username}` : u.phone ?? u.email ?? (u.wallet ? short(u.wallet) : 'You');
 
   return (
     <section className="stack">
@@ -56,14 +56,40 @@ export function AccountApp({ cfg }: { cfg: Config }) {
 }
 
 // ---------------------------------------------------------------- sign in: phone or wallet
-function SignIn({ onDone }: { onDone: () => void }) {
-  const [way, setWay] = useState<'phone' | 'wallet'>('phone');
+function SignIn({ cfg, onDone }: { cfg: Config; onDone: () => void }) {
+  const [way, setWay] = useState<'phone' | 'email' | 'wallet'>(cfg.emailSignIn ? 'email' : 'phone');
   const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const go = (label: string, f: () => Promise<void>) => run(setBusy, setError, label, f);
+  const signIn = (c: string) => go('Signing in…', async () => {
+    if (way === 'email') await server.emailVerify(email, c); else await server.verify(phone, c);
+    save('stockrun.signin', way); onDone();
+  });
+  const pick = (w: typeof way) => { setWay(w); setSent(false); setCode(''); setError(''); };
+  const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
+  const codeBox = (<>
+    <label className="field"><span>6-digit code</span>
+      <input inputMode="numeric" autoComplete="one-time-code" autoFocus maxLength={6} value={code} onChange={(e) => {
+        const c = e.target.value.replace(/\D/g, '');
+        setCode(c);
+        if (c.length === 6 && !busy) signIn(c);   // pasted or filled in by the phone: sign in straight away
+      }} />
+    </label>
+    <p className="fine">{way === 'email' ? `We've emailed a code to ${email.trim()}. Not there? Check Spam or Promotions.` : "We've texted you a code. Your phone may fill it in for you."}</p>
+    <button className="btn primary" disabled={!!busy || code.length !== 6} onClick={() => signIn(code)}>Sign in</button>
+    <button className="link" disabled={!!busy} onClick={() => { setSent(false); setCode(''); }}>{way === 'email' ? 'Use a different email' : 'Use a different number'}</button>
+  </>);
+  // Once a texted code is sent, let the phone read it from the SMS and sign in by itself (Android Chrome: Web OTP).
+  useEffect(() => {
+    if (!sent || way !== 'phone') return;
+    const stop = new AbortController();
+    readSmsCode(stop.signal).then((c) => { if (c && !stop.signal.aborted) { setCode(c); signIn(c); } });
+    return () => stop.abort();
+  }, [sent, way]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <section className="stack">
@@ -73,29 +99,31 @@ function SignIn({ onDone }: { onDone: () => void }) {
         <p className="muted">It finds sellers near you, haggles on WhatsApp, and pays them only after the goods are picked up.</p>
       </header>
       <nav className="tabs" role="tablist">
-        <button role="tab" aria-selected={way === 'phone'} className={way === 'phone' ? 'on' : ''} onClick={() => setWay('phone')}>Phone number</button>
-        <button role="tab" aria-selected={way === 'wallet'} className={way === 'wallet' ? 'on' : ''} onClick={() => setWay('wallet')}>Wallet</button>
+        {cfg.emailSignIn && <button role="tab" aria-selected={way === 'email'} className={way === 'email' ? 'on' : ''} onClick={() => pick('email')}>Email</button>}
+        <button role="tab" aria-selected={way === 'phone'} className={way === 'phone' ? 'on' : ''} onClick={() => pick('phone')}>Phone number</button>
+        <button role="tab" aria-selected={way === 'wallet'} className={way === 'wallet' ? 'on' : ''} onClick={() => pick('wallet')}>Wallet</button>
       </nav>
       <div className="panel stack">
-        {way === 'phone' ? (<>
+        {way === 'email' ? (<>
+          <label className="field"><span>Email address</span>
+            <input type="email" inputMode="email" autoComplete="email" placeholder="ada@gmail.com" value={email} onChange={(e) => setEmail(e.target.value)} disabled={sent} />
+          </label>
+          {!sent
+            ? <button className="btn primary" disabled={!!busy || !emailOk} onClick={() => go('Sending…', async () => { await server.emailCode(email.trim()); setSent(true); })}>Email me a code</button>
+            : codeBox}
+        </>) : way === 'phone' ? (<>
           <label className="field"><span>Phone number</span>
             <input inputMode="tel" autoComplete="tel" placeholder="0803 123 4567" value={phone} onChange={(e) => setPhone(e.target.value)} disabled={sent} />
           </label>
-          {!sent ? (
-            <button className="btn primary" disabled={!!busy || phone.replace(/\D/g, '').length < 10} onClick={() => go('Sending…', async () => { await server.requestCode(phone); setSent(true); })}>Send me a code</button>
-          ) : (<>
-            <label className="field"><span>6-digit code</span>
-              <input inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} />
-            </label>
-            <button className="btn primary" disabled={!!busy || code.length !== 6} onClick={() => go('Signing in…', async () => { await server.verify(phone, code); onDone(); })}>Sign in</button>
-            <button className="link" disabled={!!busy} onClick={() => { setSent(false); setCode(''); }}>Use a different number</button>
-          </>)}
+          {!sent
+            ? <button className="btn primary" disabled={!!busy || phone.replace(/\D/g, '').length < 10} onClick={() => go('Sending…', async () => { await server.requestCode(phone); setSent(true); })}>Send me a code</button>
+            : codeBox}
         </>) : (<>
           <p>Sign in with OKX Wallet or MetaMask. You sign a short message: it costs nothing and moves no money.</p>
           {!hasWallet() && <p className="warn">No wallet found in this browser. Open StockRun inside the OKX Wallet or MetaMask app, or install their extension.</p>}
           <button className="btn primary" disabled={!!busy || !hasWallet()} onClick={() => go('Waiting for your wallet…', async () => {
             const s = await signWithWallet(async (a) => (await server.walletMessage(a)).message);
-            await server.walletSignIn(s.message, s.signature); onDone();
+            await server.walletSignIn(s.message, s.signature); save('stockrun.signin', 'wallet'); onDone();
           })}>Connect wallet</button>
         </>)}
         {busy && <p className="busy">{busy}</p>}
@@ -281,13 +309,18 @@ function Logistics({ o }: { o: Order }) {
 
 // ---------------------------------------------------------------- money: naira (Paystack) and coins (wallet)
 function Money({ cfg, me, onChange }: { cfg: Config; me: Me; onChange: () => void }) {
-  const [amount, setAmount] = useState('');
   const [email, setEmail] = useState(() => load<string>('stockrun.email', ''));
   const [moves, setMoves] = useState<Movement[]>([]);
   const [coins, setCoins] = useState<Coins | null>(null);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
+  const [sheet, setSheet] = useState<null | 'amount' | 'pay'>(null);
+  const [amount, setAmount] = useState(0);
+  // Naira for people who signed in with a phone number or email, dollars for people who signed in with a wallet.
+  const how = load<'phone' | 'email' | 'wallet' | ''>('stockrun.signin', '');
+  const currency: Currency = how === 'wallet' || (!how && !me.user?.phone && !me.user?.email && me.user?.wallet) ? 'usd' : 'ngn';
+  const close = useCallback(() => { setSheet(null); setError(''); }, []);
   const refresh = useCallback(() => { server.history().then(setMoves).catch(() => {}); if (me.user?.wallet) server.coins().then(setCoins).catch(() => {}); }, [me.user?.wallet]);
   useEffect(() => { refresh(); }, [refresh]);
   // Back from Paystack: confirm the payment (the server checks it with Paystack before crediting).
@@ -301,7 +334,9 @@ function Money({ cfg, me, onChange }: { cfg: Config; me: Me; onChange: () => voi
       onChange(); refresh();
     });
   }, []);  // eslint-disable-line react-hooks/exhaustive-deps
-  const n = Number(amount.replace(/\D/g, '')) || 0;
+  const walletDollars = Number(coins?.token?.amount ?? 0);
+  const nairaOn = cfg.naira.paystack || cfg.naira.testCredit;
+  const max = currency === 'usd' ? (Number.isFinite(walletDollars) ? walletDollars : 0) : cfg.naira.paystack ? 0 : 500_000;
 
   return (
     <div className="stack">
@@ -312,25 +347,10 @@ function Money({ cfg, me, onChange }: { cfg: Config; me: Me; onChange: () => voi
           <div><dt>Locked in orders</dt><dd>{naira(me.naira?.heldNaira ?? 0)}</dd></div>
         </dl>
         <p className="fine">Naira you deposit is held by StockRun and is not on-chain. Every payment from it is still decided by a TapeOut circuit on X Layer.</p>
-        <label className="field"><span>Deposit (₦)</span><input className="money" inputMode="numeric" placeholder="50,000" value={n ? n.toLocaleString('en-NG') : ''} onChange={(e) => setAmount(e.target.value)} /></label>
-        {cfg.naira.testCredit && (
-          <div className="stack note">
-            <p><strong>Try it free:</strong> demo naira is play money for testing. It is not real money and buys nothing real.</p>
-            <button className="btn primary" disabled={!!busy || n < 100 || n > 500_000} onClick={() => run(setBusy, setError, 'Adding demo naira…', async () => { await server.testNaira(n); onChange(); refresh(); setNote(`${naira(n)} demo naira added (not real money).`); })}>Add {n ? naira(n) : ''} demo naira</button>
-            <p className="fine">Up to ₦500,000 at a time and ₦2,000,000 a day.</p>
-          </div>
-        )}
-        {cfg.naira.paystack ? (<>
-          <label className="field"><span>Email (Paystack sends your receipt)</span><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" /></label>
-          <button className="btn primary" disabled={!!busy || n < 100 || !email.includes('@')} onClick={() => run(setBusy, setError, 'Opening Paystack…', async () => {
-            save('stockrun.email', email);
-            const r = await server.deposit(n, email);
-            location.href = r.checkoutUrl;
-          })}>Pay {n ? naira(n) : ''} with Paystack</button>
-          {cfg.naira.test && <p className="fine">Paystack is in test mode: use their test card, no real money moves.</p>}
-        </>) : !cfg.naira.testCredit && <p className="warn">Naira deposits are not switched on yet on this server.</p>}
-        {busy && <p className="busy">{busy}</p>}
-        {error && <p className="alert">{error}</p>}
+        <button className="btn primary" disabled={!!busy} onClick={() => { setNote(''); setError(''); setSheet('amount'); }}>Deposit</button>
+        {currency === 'ngn' && !nairaOn && <p className="warn">Naira deposits are not switched on yet on this server.</p>}
+        {busy && !sheet && <p className="busy">{busy}</p>}
+        {error && !sheet && <p className="alert">{error}</p>}
         {note && <p className="ok">{note}</p>}
         {moves.length > 0 && (
           <details className="supplier-list"><summary>History</summary>
@@ -351,7 +371,119 @@ function Money({ cfg, me, onChange }: { cfg: Config; me: Me; onChange: () => voi
           <p className="warn">Paying for orders with coins from your wallet is the next step being built. For now, orders are paid from your naira balance.</p>
         </>) : <p className="muted">Reading your wallet…</p>) : <p className="muted">Connect a wallet in <strong>Me</strong> to see your coins.</p>}
       </div>
+
+      {sheet === 'amount' && (
+        <AmountSheet title="Add money" currency={currency} max={max} onClose={close}
+          onContinue={(a) => { setAmount(a); setSheet('pay'); }} />
+      )}
+      {sheet === 'pay' && (
+        <Sheet title={`Add ${money(currency, amount)}`} onClose={close} onBack={() => setSheet('amount')}>
+          {currency === 'usd' ? (
+            <div className="stack">
+              <p>Moving {coins?.token?.symbol ?? 'coins'} from your wallet into StockRun is the next step being built, so this deposit can't be made yet.</p>
+              <p className="fine">Nothing has been taken from your wallet.</p>
+              <button className="btn ghost" onClick={close}>Close</button>
+            </div>
+          ) : (
+            <div className="stack">
+              {cfg.naira.testCredit && (
+                <div className="stack note">
+                  <p><strong>Try it free:</strong> demo naira is play money for testing. It is not real money and buys nothing real.</p>
+                  <button className="btn primary" disabled={!!busy || amount < 100 || amount > 500_000} onClick={() => run(setBusy, setError, 'Adding demo naira…', async () => { await server.testNaira(amount); onChange(); refresh(); setNote(`${naira(amount)} demo naira added (not real money).`); close(); })}>Add {naira(amount)} demo naira</button>
+                  <p className="fine">Up to ₦500,000 at a time and ₦2,000,000 a day.</p>
+                </div>
+              )}
+              {cfg.naira.paystack && (<>
+                <label className="field"><span>Email (Paystack sends your receipt)</span><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" /></label>
+                <button className="btn primary" disabled={!!busy || amount < 100 || !email.includes('@')} onClick={() => run(setBusy, setError, 'Opening Paystack…', async () => {
+                  save('stockrun.email', email);
+                  const r = await server.deposit(amount, email);
+                  location.href = r.checkoutUrl;
+                })}>Pay {naira(amount)} with Paystack</button>
+                {cfg.naira.test && <p className="fine">Paystack is in test mode: use their test card, no real money moves.</p>}
+              </>)}
+              {!nairaOn && <p className="warn">Naira deposits are not switched on yet on this server.</p>}
+              {busy && <p className="busy">{busy}</p>}
+              {error && <p className="alert">{error}</p>}
+            </div>
+          )}
+        </Sheet>
+      )}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------- deposit sheet: big amount and a keypad
+type Currency = 'ngn' | 'usd';
+const money = (c: Currency, n: number) => c === 'ngn' ? naira(n) : `$${n.toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
+
+function Sheet({ title, onClose, onBack, children }: { title: string; onClose: () => void; onBack?: () => void; children: ReactNode }) {
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', k);
+    document.body.style.overflow = 'hidden';
+    return () => { window.removeEventListener('keydown', k); document.body.style.overflow = ''; };
+  }, [onClose]);
+  return (
+    <div className="sheet-backdrop" onClick={onClose}>
+      <div className="sheet" role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
+        <div className="sheet-head">
+          {onBack && <button className="sheet-x" aria-label="Back" onClick={onBack}>‹</button>}
+          <h2>{title}</h2>
+          <button className="sheet-x" aria-label="Close" onClick={onClose}>✕</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/** max 0 = no limit known here (the server still checks). */
+function AmountSheet({ title, currency, max, onClose, onContinue }: { title: string; currency: Currency; max: number; onClose: () => void; onContinue: (n: number) => void }) {
+  const [text, setText] = useState('');
+  const n = Number(text) || 0;
+  const min = currency === 'ngn' ? 100 : 1;
+  const press = (k: string) => setText((t) => {
+    if (k === '<') return t.slice(0, -1);
+    if (k === '.') return currency === 'usd' && !t.includes('.') ? (t || '0') + '.' : t;
+    if (k === '00' && (t === '' || t === '0')) return t;
+    const next = (t === '0' ? '' : t) + k;
+    if (currency === 'usd' && /\.\d{3}$/.test(next)) return t;   // cents only
+    if (next.replace('.', '').length > 10) return t;
+    return next;
+  });
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => {
+      if (/^\d$/.test(e.key)) press(e.key);
+      else if (e.key === 'Backspace') press('<');
+      else if (e.key === '.') press('.');
+    };
+    window.addEventListener('keydown', k);
+    return () => window.removeEventListener('keydown', k);
+  });
+  const [whole, cents] = text.split('.');
+  const sym = currency === 'ngn' ? '₦' : '$';
+  const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', currency === 'usd' ? '.' : '00', '0', '<'];
+  const tooBig = max > 0 && n > max;
+
+  return (
+    <Sheet title={title} onClose={onClose}>
+      <div className="pad-amount" aria-live="polite">
+        {sym}{Number(whole || 0).toLocaleString(currency === 'ngn' ? 'en-NG' : 'en-US')}{cents !== undefined && <small>.{cents}</small>}
+      </div>
+      <p className={`fine center${tooBig ? ' warn-text' : ''}`}>
+        {tooBig ? `The most you can add here is ${money(currency, max)}.` : currency === 'ngn' ? 'Naira, held by StockRun for you (not on-chain).' : 'Dollars, from the coins in your wallet.'}
+      </p>
+      <div className="keypad">
+        {keys.map((k) => (
+          <button key={k} type="button" aria-label={k === '<' ? 'Delete' : k} onClick={() => press(k)}>{k === '<' ? '‹' : k}</button>
+        ))}
+      </div>
+      <div className="sheet-actions">
+        <button className="btn ghost pill" disabled={max <= 0} onClick={() => setText(String(max))}>Use max</button>
+        <button className="btn primary pill" disabled={n < min || tooBig} onClick={() => onContinue(n)}>Continue</button>
+      </div>
+    </Sheet>
   );
 }
 
@@ -381,11 +513,11 @@ function Profile({ user, onChange }: { user: User; onChange: () => void }) {
         <label className="field"><span>Username</span><input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="ada_lagos" maxLength={20} /></label>
         <label className="field"><span>Name</span><input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Ada Obi" maxLength={40} /></label>
         <button className="btn primary" disabled={!!busy} onClick={() => go('Saving…', async () => { await server.profile({ username: username.trim() || undefined, displayName }); onChange(); setSaved('Saved.'); })}>Save</button>
-        <p className="fine">Your username, name and picture are public. Your phone number and wallet are never shown to others.</p>
+        <p className="fine">Your username, name and picture are public. Your phone number, email and wallet are never shown to others.</p>
       </div>
       <div className="panel stack">
         <h2>Sign-in methods</h2>
-        <p>Phone: {user.phone ?? 'not added'} · Wallet: {user.wallet ? short(user.wallet) : 'not connected'}</p>
+        <p>Phone: {user.phone ?? 'not added'}{user.email ? ` · Email: ${user.email}` : ''} · Wallet: {user.wallet ? short(user.wallet) : 'not connected'}</p>
         {!user.wallet && <button className="btn ghost" disabled={!!busy || !hasWallet()} onClick={() => go('Waiting for your wallet…', async () => {
           const s = await signWithWallet(async (a) => (await server.walletMessage(a)).message);
           await server.addWallet(s.message, s.signature); onChange(); setSaved('Wallet connected.');
@@ -397,7 +529,15 @@ function Profile({ user, onChange }: { user: User; onChange: () => void }) {
             <button className="btn ghost" disabled={!!busy || code.length !== 6} onClick={() => go('Adding…', async () => { await server.addPhone(phone, code); onChange(); setSaved('Phone added.'); })}>Add phone</button>
           </>)}
         </>)}
-        <button className="link" onClick={() => server.logout().then(() => location.reload())}>Sign out</button>
+      </div>
+      <div className="panel stack">
+        <h2>Log out</h2>
+        <p className="fine">Logs you out on this phone. Your balance, orders and profile stay safe; log back in with your phone number or wallet.</p>
+        <button className="btn danger" disabled={!!busy} onClick={() => go('Logging out…', async () => {
+          await server.logout();
+          save('stockrun.signin', '');
+          location.reload();
+        })}>Log out</button>
       </div>
       {busy && <p className="busy">{busy}</p>}
       {error && <p className="alert">{error}</p>}

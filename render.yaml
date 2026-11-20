@@ -37,7 +37,23 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
-      - key: SMS                 # "console" prints sign-in codes in the Render log (pilot only); or set the TWILIO_* keys
+      - key: SMS                 # "console" prints sign-in codes in the Render log (pilot only); or set TERMII_* (or TWILIO_*)
+        sync: false
+      - key: GMAIL_CLIENT_ID     # email sign-in codes through the Gmail API (SMTP ports are blocked on the free plan)
+        sync: false
+      - key: GMAIL_CLIENT_SECRET
+        sync: false
+      - key: GMAIL_REFRESH_TOKEN
+        sync: false
+      - key: GMAIL_FROM
+        sync: false
+      - key: TERMII_API_KEY
+        sync: false
+      - key: TERMII_SENDER_ID
+        sync: false
+      - key: TERMII_CHANNEL
+        sync: false
+      - key: TERMII_BASE_URL
         sync: false
       - key: TWILIO_ACCOUNT_SID
         sync: false

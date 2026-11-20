@@ -38,6 +38,14 @@ describe('sign-in with an SMS code', () => {
     expect(acc.session(token)).toBeNull();
   });
 
+  it('ends the text with the Web OTP line when the site domain is known, so phones fill the code in', async () => {
+    const sms = new ConsoleSms();
+    const acc = new Accounts(openDb(), sms, SECRET, Date.now, 'StockRun.onrender.com');
+    await quiet(() => acc.requestCode('0803 123 4567'));
+    const code = sms.sent[0].text.match(/(\d{6})/)![1];
+    expect(sms.sent[0].text.split('\n').at(-1)).toBe(`@stockrun.onrender.com #${code}`);
+  });
+
   it('rejects wrong, reused, expired and brute-forced codes', async () => {
     const { acc, lastCode, tick } = setup();
     await quiet(() => acc.requestCode('08031234567'));
