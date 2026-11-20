@@ -18,6 +18,12 @@ export interface Order {
   pickup: { atSupplier: boolean; riderCounted: boolean; riderCount: number; aiCounted: boolean; aiCount: number; damage: boolean; picked: number };
   delivery: { atShop: boolean; arrivedAt: number; aiCounted: boolean; delivered: number; damage: boolean; ownerOk: boolean; ownerIssue: boolean };
   lastCheck: CheckResult | null;
+  /** Set when a logistics company delivers (real-account server). */
+  logistics?: {
+    carrier: string; carrierName: string; test: boolean; bookingId?: string;
+    state?: 'booked' | 'searching' | 'assigned' | 'picked_up' | 'at_dropoff' | 'delivered' | 'failed' | 'cancelled';
+    handoverCode?: string | null; trackingUrl?: string | null; riderName?: string | null; ownerCount?: number; error?: string; pickupSigned?: boolean;
+  };
 }
 export interface MapData {
   shop: Place;
@@ -60,6 +66,8 @@ export const api = {
   photo: (id: string, stage: 'pickup' | 'delivery', photo: { mediaType: string; data: string }) => call<CheckResult>(`/api/orders/${id}/photo`, { stage, ...photo }),
   settle: (id: string, stage: 'pickup' | 'delivery') => call<CheckResult>(`/api/orders/${id}/settle`, { stage }),
   confirmCount: (id: string, stage: 'pickup' | 'delivery') => call<CheckResult>(`/api/orders/${id}/confirm-count`, { stage }),
+  /** Owner's count at the door for a logistics delivery. */
+  received: (id: string, count: number) => call<{ attestTx: Hex }>(`/api/orders/${id}/received`, { count }),
 };
 export const server = {
   config: () => call<ServerConfig>('/api/config'),

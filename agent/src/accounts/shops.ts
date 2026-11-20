@@ -1,6 +1,10 @@
 // Shops (one per owner, each with its own vault) and rider profiles, plus the per-shop services the server runs:
 // the agent proposing to that shop's vault, the photo check attesting to it, and that shop's jobs.
 import type { DatabaseSync } from 'node:sqlite';
+import { randomBytes } from 'node:crypto';
+import { join } from 'node:path';
+import { Dispatcher, type DispatchShop } from '../logistics/dispatch.ts';
+import type { DeliveryJob } from '../logistics/carrier.ts';
 import { getAddress, type Address, type Hex } from 'viem';
 import { deployVault, sendGasTopUp, type Platform } from '../chain/platform.ts';
 import { VaultClient } from '../tools/vault.ts';
@@ -49,19 +53,30 @@ export function validateShop(i: Partial<ShopInput>): ShopInput {
   return { name, lat, lng, weeklyBudgetNaira: budget, limitNaira: limit };
 }
 
-export interface ShopServices { extractor: Extractor; channel: SupplierChannel; counter: PhotoCounter | null; prices: PriceBook }
+export interface ShopServices {
+  extractor: Extractor; channel: SupplierChannel; counter: PhotoCounter | null; prices: PriceBook;
+  /** Where each shop's order details are saved (null: memory only, for tests and the local chain). */
+  dataDir?: string | null;
+  log?: (line: string) => void;
+}
 /** `check` is null when no photo model is configured; `settler` always works (settling needs no photo). */
-export interface ShopRuntime { shop: Shop; vault: VaultClient; jobs: JobStore; check: CheckService | null; settler: CheckService; agent: AgentDeps }
+export interface ShopRuntime { shop: Shop; vault: VaultClient; jobs: JobStore; check: CheckService | null; settler: CheckService; agent: AgentDeps; dispatch: DispatchShop }
 
 export class Shops {
   private db: DatabaseSync;
   private p: Platform;
   private services: ShopServices;
   private runtimes = new Map<number, ShopRuntime>();
+  /** Books logistics companies and turns their status into vault steps, for every shop. */
+  readonly dispatcher: Dispatcher;
   constructor(db: DatabaseSync, platform: Platform, services: ShopServices) {
     this.db = db; this.p = platform; this.services = services;
+    this.dispatcher = new Dispatcher({ pub: platform.pub, money: platform.money, entries: platform.carriers, log: services.log });
     migrateShops(db);
   }
+
+  /** Every shop's dispatch side (for status polling and webhooks). */
+  dispatchShops(): DispatchShop[] { return this.all().map((s) => this.runtime(s).dispatch); }
 
   get photoCheckOn(): boolean { return !!this.services.counter; }
 
@@ -121,14 +136,14 @@ export class Shops {
     return r ? { userId: r.user_id, name: r.name, lat: r.lat, lng: r.lng, address: getAddress(r.address) } : null;
   }
 
-  /** The logistics companies the platform works with. Booking still asks each shop's vault whether it trusts them. */
+  /** Companies without a booking API (the local simulated one). Booking still asks each vault whether it trusts them. */
   riderPool(): Rider[] {
-    return this.p.carriers.map((c) => ({ id: c.id, name: c.name, address: c.wallet.account.address, lat: 6.55, lng: 3.37 }));
+    return this.p.carriers.filter((c) => !c.connector).map((c) => ({ id: c.id, name: c.name, address: c.wallet.account.address, lat: 6.55, lng: 3.37 }));
   }
 
-  private ownerAddress(shop: Shop): Address | undefined {
-    const r = this.db.prepare('SELECT address FROM users WHERE id = ?').get(shop.ownerId) as unknown as { address: string | null } | undefined;
-    return r?.address ? getAddress(r.address) : undefined;
+  private owner(shop: Shop): { address?: Address; phone: string } {
+    const r = this.db.prepare('SELECT address, phone FROM users WHERE id = ?').get(shop.ownerId) as unknown as { address: string | null; phone: string } | undefined;
+    return { address: r?.address ? getAddress(r.address) : undefined, phone: r?.phone ?? '' };
   }
 
   /** The services running for one shop (created on first use). */
@@ -136,17 +151,37 @@ export class Shops {
     const existing = this.runtimes.get(shop.id);
     if (existing) return existing;
     const vault = new VaultClient(shop.vault, this.p.pub, this.p.agent);
-    const jobs = new JobStore();
+    const dir = this.services.dataDir;
+    const jobs = new JobStore(dir ? join(dir, `jobs-shop${shop.id}.json`) : null);
     const check = this.services.counter ? new CheckService(shop.vault, this.p.pub, this.p.checker, this.services.counter, jobs) : null;
     const settler = check ?? new CheckService(shop.vault, this.p.pub, this.p.checker, new NoPhotoCounter(), jobs);
     const self = this;
     const agent: AgentDeps = {
       extractor: this.services.extractor, channel: this.services.channel, vault, shop: { name: shop.name, lat: shop.lat, lng: shop.lng },
-      money: this.p.money, jobs, prices: this.services.prices, ownerAddress: this.ownerAddress(shop),
+      money: this.p.money, jobs, prices: this.services.prices, ownerAddress: this.owner(shop).address,
+      logistics: this.p.carriers.some((c) => c.connector) ? (supplier, line, goodsNaira) => this.quoteDelivery(shop, vault, supplier, line, goodsNaira) : undefined,
       get riders() { return self.riderPool(); },
     };
-    const rt = { shop, vault, jobs, check, settler, agent };
+    const rt = { shop, vault, jobs, check, settler, agent, dispatch: { vault: shop.vault, jobs, settler } };
     this.runtimes.set(shop.id, rt);
     return rt;
+  }
+
+  /** Quote the logistics companies this shop trusts for one deal; the cheapest becomes the order's delivery. */
+  private async quoteDelivery(shop: Shop, vault: VaultClient, supplier: import('../types.ts').Supplier, line: import('../types.ts').OrderLine, goodsNaira: number) {
+    const job: DeliveryJob = {
+      ref: `shop${shop.id}-${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`,
+      pickup: { name: supplier.name, lat: supplier.lat, lng: supplier.lng, address: `${supplier.name}, ${supplier.market}, Lagos`, contactName: supplier.name, contactPhone: supplier.whatsapp },
+      dropoff: { name: shop.name, lat: shop.lat, lng: shop.lng, address: `${shop.name}, Lagos`, contactName: shop.name, contactPhone: this.owner(shop).phone },
+      item: { name: line.item, quantity: line.quantity, unit: line.unit, valueNaira: goodsNaira },
+      load: line.quantity <= 5 ? 'standard' : line.quantity <= 20 ? 'heavy' : 'freight',
+    };
+    const r = await this.dispatcher.quote(job, (a) => vault.trustedHandler(a));
+    if (!r) return null;
+    return {
+      rider: { id: r.entry.id, name: r.entry.name, address: r.entry.wallet.account.address, lat: shop.lat, lng: shop.lng },
+      feeNaira: r.quote.priceNaira,
+      delivery: { carrier: r.entry.id, carrierName: r.entry.name, job, quote: r.quote, test: r.quote.test },
+    };
   }
 }

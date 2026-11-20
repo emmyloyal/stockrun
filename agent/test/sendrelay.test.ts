@@ -32,17 +32,23 @@ describe('Sendrelay connector', () => {
     expect(new SendrelayCarrier({ apiKey: 'sk_live_abcd1234_secret' }).test).toBe(false);
   });
 
-  it('quotes in naira from kobo, sending the key, both stops, the goods value and a vehicle that fits', async () => {
-    const api = fakeApi({ 'POST /v1/sdk/tasks/quote': { body: { quoteId: 'q_1', expiresAt: '2026-11-19T20:00:00Z', total: 235_000, pricingVehicleType: 'MOTORCYCLE' } } });
-    const q = await new SendrelayCarrier({ apiKey: KEY, fetch: api.f }).quote(JOB);
-    expect(q).toMatchObject({ carrier: 'sendrelay', quoteId: 'q_1', priceNaira: 2350, vehicle: 'MOTORCYCLE', test: true });
-    const c = api.calls[0];
+  it('quotes each vehicle that fits and keeps the cheapest, in naira from kobo, with the key, both stops and the goods value', async () => {
+    const prices: Record<string, number> = { MOTORCYCLE: 235_000, TRICYCLE: 310_000, CAR: 480_000, VAN: 1_010_000 };
+    const calls: any[] = [];
+    const f = (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(init.body as string); calls.push({ headers: init.headers, body });
+      const v = body.preferences.vehicleType[0];
+      return new Response(JSON.stringify({ quoteId: `q_${v}`, expiresAt: '2026-11-19T20:00:00Z', total: prices[v], pricingVehicleType: v }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const q = await new SendrelayCarrier({ apiKey: KEY, fetch: f }).quote(JOB);
+    expect(q).toMatchObject({ carrier: 'sendrelay', quoteId: 'q_MOTORCYCLE', priceNaira: 2350, vehicle: 'MOTORCYCLE', test: true });
+    expect(calls.map((c) => c.body.preferences.vehicleType[0]).sort()).toEqual(['CAR', 'MOTORCYCLE', 'TRICYCLE', 'VAN']);
+    const c = calls[0];
     expect(c.headers['X-Relay-Key']).toBe(KEY);
     expect(c.body.taskType).toBe('PACKAGE_DELIVERY');
     expect(c.body.stages.map((s: any) => s.type)).toEqual(['PICKUP', 'DROPOFF']);
     expect(c.body.stages[0].location).toEqual({ latitude: 6.6045, longitude: 3.3891, address: 'Mile 12 Market, Lagos', countryCode: 'NG' });
     expect(c.body.stages[0].items[0]).toMatchObject({ estimatedValue: 6_650_000, estimatedWeight: 'STANDARD', reference: 'shop1-order7' });
-    expect(c.body.preferences.vehicleType).toContain('MOTORCYCLE');
   });
 
   it('books once per order: idempotency key from our ref, the quoted price as a hard limit, a delivery code and photo', async () => {
@@ -50,11 +56,11 @@ describe('Sendrelay connector', () => {
       'POST /v1/sdk/tasks': { status: 201, body: { task: { id: 'tsk_9', status: 'PENDING', totalFee: 235_000, completionCode: { code: '482913' } }, pricing: { total: 235_000 } } },
     });
     const sr = new SendrelayCarrier({ apiKey: KEY, fetch: api.f });
-    const b = await sr.book(JOB, { carrier: 'sendrelay', quoteId: 'q_1', priceNaira: 2350, expiresAt: null, vehicle: null, test: true });
+    const b = await sr.book(JOB, { carrier: 'sendrelay', quoteId: 'q_1', priceNaira: 2350, expiresAt: null, vehicle: 'MOTORCYCLE', test: true });
     expect(b).toEqual({ carrier: 'sendrelay', bookingId: 'tsk_9', ref: 'shop1-order7', state: 'booked', priceNaira: 2350, handoverCode: '482913', test: true });
     const c = api.calls[0];
     expect(c.headers['Idempotency-Key']).toBe('stockrun-shop1-order7');
-    expect(c.body).toMatchObject({ quoteId: 'q_1', externalId: 'shop1-order7', priceLimit: 235_000, completionCode: {}, requirePhoto: true });
+    expect(c.body).toMatchObject({ quoteId: 'q_1', externalId: 'shop1-order7', priceLimit: 235_000, completionCode: {}, requirePhoto: true, preferences: { vehicleType: ['MOTORCYCLE'] } });
     await expect(sr.book(JOB, { carrier: 'kwik', quoteId: 'x', priceNaira: 1, expiresAt: null, vehicle: null, test: true })).rejects.toThrow(/different carrier/);
   });
 

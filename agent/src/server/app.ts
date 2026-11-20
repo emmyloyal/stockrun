@@ -17,6 +17,7 @@ import { ageText } from '../prices/priceBook.ts';
 import { Accounts, AuthError, linkMessage, type Role, type User } from '../accounts/accounts.ts';
 import type { Shops, ShopRuntime } from '../accounts/shops.ts';
 import { tokenAbi, type Platform } from '../chain/platform.ts';
+import { verifySendrelayWebhook } from '../logistics/sendrelay.ts';
 
 export interface AppOptions {
   platform: Platform;
@@ -24,6 +25,8 @@ export interface AppOptions {
   shops: Shops;
   staticDir?: string;
   secureCookies?: boolean;     // true behind HTTPS
+  /** whsec_... from registering this server's /api/webhooks/sendrelay with Sendrelay; webhooks are refused without it. */
+  sendrelayWebhookSecret?: string;
   log?: (line: string) => void;
 }
 
@@ -192,10 +195,12 @@ export function createApp(o: AppOptions): Server {
       if (!text || text.length > 2000) throw new AuthError(400, 'Send the order as text (up to 2,000 characters).');
       await applyDueSuppliers(rt).catch(() => {});
       const report = await handleOrder(text, rt.agent, { delivery: c.body?.delivery === 'self' ? 'self' : 'logistics' });
+      await shops.dispatcher.bookPending(rt.dispatch).catch((e) => log(`booking: ${(e as Error).message}`));
       return { message: report.message, problems: report.problems };
     }],
     ['GET', /^\/api\/orders$/, async (c) => {
       const rt = ownerShop(c);
+      await shops.dispatcher.bookPending(rt.dispatch).catch(() => {});   // e.g. an ask-owner order the owner just approved
       return Promise.all(rt.jobs.all().sort((a, b) => b.createdAt - a.createdAt).map((j) => orderView(rt, j)));
     }],
     ['POST', /^\/api\/orders\/(\d+)\/settle$/, async (c) => {
@@ -204,6 +209,13 @@ export function createApp(o: AppOptions): Server {
       if (!rt.jobs.get(c.m[1])) throw new AuthError(404, 'No such order in your shop.');
       try { const r = await rt.settler.settle(BigInt(c.m[1]), stage); lastCheck.set(`${rt.shop.id}:${c.m[1]}`, r as CheckResult); return r; }
       catch { throw new AuthError(409, 'Not ready to settle yet.'); }
+    }],
+    /** The owner's count at the door for a logistics delivery (the check service attests it; it decides the fee). */
+    ['POST', /^\/api\/orders\/(\d+)\/received$/, async (c) => {
+      const rt = ownerShop(c);
+      if (!rt.jobs.get(c.m[1])) throw new AuthError(404, 'No such order in your shop.');
+      try { return await shops.dispatcher.ownerCount(rt.dispatch, c.m[1], Number(c.body?.count)); }
+      catch (e) { throw new AuthError(409, (e as Error).message); }
     }],
     ['GET', /^\/api\/map$/, async (c) => {
       const rt = ownerShop(c), shop = rt.agent.shop;
@@ -274,12 +286,32 @@ export function createApp(o: AppOptions): Server {
     }],
   ];
 
+  // Sendrelay status webhooks: signature checked on the raw body; each event once; the task is then re-read from
+  // Sendrelay (the authoritative state) and applied. Answered at once, processed after (Sendrelay waits 10 s at most).
+  const seenEvents = new Set<string>();
+  async function sendrelayWebhook(req: IncomingMessage, res: ServerResponse) {
+    if (!o.sendrelayWebhookSecret) return send(res, 404, { error: 'not found' });
+    const raw = await readBody(req);
+    let ev;
+    try { ev = verifySendrelayWebhook(raw, req.headers['x-relay-signature'] as string | undefined, o.sendrelayWebhookSecret); }
+    catch (e) { log(`sendrelay webhook refused: ${(e as Error).message}`); return send(res, 401, { error: 'bad signature' }); }
+    send(res, 200, { ok: true });
+    if (seenEvents.has(ev.id)) return;
+    seenEvents.add(ev.id);
+    const entry = shops.dispatcher.entries.find((e) => e.id === 'sendrelay');
+    const shopsNow = shops.dispatchShops(), found = shops.dispatcher.find(shopsNow, ev.data.taskId);
+    if (!entry?.connector || !found) return;
+    try { await shops.dispatcher.apply(found.shop, found.orderId, await entry.connector.get(ev.data.taskId)); }
+    catch (e) { log(`sendrelay ${ev.type} for order ${found.orderId}: ${(e as Error).message}`); }
+  }
+
   return createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
     const token = readCookie(req.headers.cookie, COOKIE);
     const user = accounts.session(token);
     const ip = (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0].trim() || req.socket.remoteAddress || '?';
     try {
+      if (url.pathname === '/api/webhooks/sendrelay' && req.method === 'POST') return await sendrelayWebhook(req, res);
       if (req.method === 'POST' && !String(req.headers['content-type'] ?? '').startsWith('application/json'))
         throw new AuthError(415, 'Send JSON.');
       if (url.pathname === '/rpc' && req.method === 'POST') {

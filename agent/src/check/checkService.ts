@@ -147,6 +147,14 @@ export class CheckService {
     throw new Error('settlement emitted no result');
   }
 
+  /**
+   * Attest a count that a person made, not a photo: the shop owner's count at the door for a logistics delivery.
+   * Same on-chain call as a photo count; the app and messages call it the owner's count, never an AI count.
+   */
+  async attestCount(orderId: bigint, stage: Stage, count: number, damage = false): Promise<Hash> {
+    return this.write(stage === 'pickup' ? 'attestPickup' : 'attestDelivery', [orderId, count, damage]);
+  }
+
   private async write(fn: 'attestPickup' | 'attestDelivery' | 'settlePickup' | 'settleDelivery', args: readonly unknown[]): Promise<Hash> {
     // Simulate first so a revert costs no gas and the order state is untouched.
     const { request } = await this.pub.simulateContract({ address: this.vault, abi: checkAbi, functionName: fn, args: args as never, account: this.checker.account });

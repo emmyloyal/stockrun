@@ -9,6 +9,8 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { anvil, xLayer } from 'viem/chains';
 import type { LocalChain } from '../sim/localChain.ts';
 import { fixedRate, usdRate, type Money } from './money.ts';
+import type { CarrierEntry } from '../logistics/dispatch.ts';
+import { SendrelayCarrier } from '../logistics/sendrelay.ts';
 
 export type Wallet = WalletClient<Transport, Chain, Account>;
 
@@ -27,8 +29,8 @@ export interface Platform {
   unit: bigint;              // token amount per circuit money unit (₦5,000)
   money: Money;              // naira <-> token
   supplierPayout: Address;   // where supplier payments go before the naira transfer (pilot: StockRun's off-ramp account)
-  /** Logistics companies every new shop starts with (their on-chain keys, held by StockRun's dispatch desk). */
-  carriers: { id: string; name: string; wallet: Wallet }[];
+  /** Logistics companies every new shop starts with: their dispatch-desk keys (held by StockRun) and booking APIs. */
+  carriers: CarrierEntry[];
   /** Gas the deployer sends a new owner or rider once, so their phone key can sign its own vault steps. */
   gasTopUpWei: bigint;
   /** Block explorer base for transaction links, or null on a local chain. */
@@ -82,10 +84,15 @@ const LOCAL_KEYS = {
   agent: '0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e',
   checker: '0x4bbbf85ce3377467afe5d46f804f221813b2bb87f24d81f60f1fcdbf7cbf4356',
   carrier: '0xdbda1821b80551c9d65939329250298aa3472ba22feea921c0cf5d620ea67b97', // anvil #8: simulated logistics company
+  sendrelayDesk: '0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6', // anvil #9: Sendrelay desk, local only
 } as const;
 
-/** Platform on a local anvil chain started by startLocalChain(): MockToken + MockCircuits, faucet and time travel. */
-export function localPlatform(chain: LocalChain): Platform {
+/**
+ * Platform on a local anvil chain started by startLocalChain(): MockToken + MockCircuits, faucet and time travel.
+ * With `sendrelayKey` (TEST keys only: simulated riders, no money) shops can also book Sendrelay for real.
+ */
+export function localPlatform(chain: LocalChain, opts: { sendrelayKey?: string } = {}): Platform {
+  if (opts.sendrelayKey && !opts.sendrelayKey.startsWith('sk_test_')) throw new Error('The local chain only uses a Sendrelay TEST key (sk_test_...).');
   const transport = http(chain.url);
   const pub = createPublicClient({ chain: anvil, transport }) as PublicClient;
   const wallet = (k: Hex) => createWalletClient({ account: privateKeyToAccount(k), chain: anvil, transport });
@@ -97,7 +104,10 @@ export function localPlatform(chain: LocalChain): Platform {
     token: chain.token, tokenSymbol: 'TEST', circuits: chain.circuits, circuitIds: { restock: 1n, pickup: 2n, delivery: 3n },
     unit: money.toToken(5000), money,
     supplierPayout: privateKeyToAccount('0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a').address,
-    carriers: [{ id: 'sim-logistics', name: 'Demo logistics company (simulated)', wallet: wallet(LOCAL_KEYS.carrier) }],
+    carriers: [
+      { id: 'sim-logistics', name: 'Demo logistics company (simulated)', wallet: wallet(LOCAL_KEYS.carrier), connector: null },
+      ...(opts.sendrelayKey ? [{ id: 'sendrelay', name: 'Sendrelay (test mode)', wallet: wallet(LOCAL_KEYS.sendrelayDesk), connector: new SendrelayCarrier({ apiKey: opts.sendrelayKey }) }] : []),
+    ],
     gasTopUpWei: parseEther('0.01'), explorerTx: null,
     faucet: async (to) => {
       // ₦2,000,000 of test token and 1 test ETH for gas. Test money only: local chain.
@@ -172,6 +182,17 @@ export interface XLayerDeployment {
   circuits: Record<'RestockGuard' | 'PickupCheck' | 'DeliveryCheck', { id: number; nIn: number; nOut: number; gates: number }>;
 }
 
+/**
+ * Logistics companies on mainnet. Sendrelay is used only with a LIVE key and its own dispatch-desk key (which needs a
+ * little OKB to sign pickups and arrivals). Without both, mainnet shops can use self-pickup only.
+ */
+function xlayerCarriers(env: NodeJS.ProcessEnv, wallet: (a: Account) => Wallet): CarrierEntry[] {
+  const key = envValue(env, 'SENDRELAY_API_KEY'), desk = envValue(env, 'SENDRELAY_DESK_PRIVATE_KEY');
+  if (!key || !desk) return [];
+  if (!key.startsWith('sk_live_')) throw new Error('On X Layer mainnet SENDRELAY_API_KEY must be a live key (sk_live_...): a test key books simulated riders while real money is locked.');
+  return [{ id: 'sendrelay', name: 'Sendrelay', wallet: wallet(privateKeyToAccount(envKey(env, 'SENDRELAY_DESK_PRIVATE_KEY'))), connector: new SendrelayCarrier({ apiKey: key }) }];
+}
+
 export const readDeployment = (): XLayerDeployment =>
   JSON.parse(readFileSync(new URL('../../../deployments/xlayer.json', import.meta.url), 'utf8')) as XLayerDeployment;
 
@@ -220,9 +241,7 @@ export async function xlayerPlatform(env: NodeJS.ProcessEnv = process.env): Prom
     token: XLAYER_USDT0, tokenSymbol: symbol, circuits: d.processor,
     circuitIds: { restock: BigInt(d.circuitIds.restock), pickup: BigInt(d.circuitIds.pickup), delivery: BigInt(d.circuitIds.delivery) },
     unit: money.toToken(5000), money, supplierPayout: getAddress(payout),
-    // Logistics companies are added once their dispatch-desk key exists (see agent/src/logistics/). Until then, mainnet
-    // shops can use self-pickup only.
-    carriers: [],
+    carriers: xlayerCarriers(env, wallet),
     gasTopUpWei: XLAYER_GAS_TOPUP_WEI, explorerTx: 'https://www.okx.com/web3/explorer/xlayer/tx/',
   };
 }

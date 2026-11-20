@@ -52,8 +52,8 @@ export class SendrelayCarrier implements Carrier {
     return json as T;
   }
 
-  /** The task body shared by quote and create. */
-  private task(job: DeliveryJob) {
+  /** The task body shared by quote and create (they must match, or Sendrelay refuses the quote). */
+  private task(job: DeliveryJob, vehicle: string) {
     const stop = (p: DeliveryJob['pickup']) => ({ location: { latitude: p.lat, longitude: p.lng, address: p.address, countryCode: 'NG' }, contact: { name: p.contactName, phone: p.contactPhone } });
     return {
       taskType: 'PACKAGE_DELIVERY',
@@ -62,19 +62,24 @@ export class SendrelayCarrier implements Carrier {
           items: [{ name: `${job.item.quantity} x ${job.item.name}`.slice(0, 120), estimatedValue: Math.max(1, kobo(job.item.valueNaira)), estimatedWeight: WEIGHT[job.load], estimatedSize: SIZE[job.load], reference: job.ref.slice(0, 128) }] },
         { type: 'DROPOFF', ...stop(job.dropoff), instructions: `Deliver to ${job.dropoff.name}. Ask the shop owner for the delivery code.` },
       ],
-      preferences: { vehicleType: VEHICLES[job.load] },
+      preferences: { vehicleType: [vehicle] },
     };
   }
 
+  /** One quote per vehicle that can carry the load; the cheapest wins (quotes are free and single-use). */
   async quote(job: DeliveryJob): Promise<CarrierQuote> {
-    const q = await this.call<{ quoteId: string; expiresAt: string; total: number; pricingVehicleType?: string }>('POST', '/v1/sdk/tasks/quote', this.task(job));
-    return { carrier: this.id, quoteId: q.quoteId, priceNaira: naira(q.total), expiresAt: Date.parse(q.expiresAt) || null, vehicle: q.pricingVehicleType ?? null, test: this.test };
+    type Q = { quoteId: string; expiresAt: string; total: number; pricingVehicleType?: string };
+    const tries = await Promise.allSettled(VEHICLES[job.load].map(async (v) => ({ v, q: await this.call<Q>('POST', '/v1/sdk/tasks/quote', this.task(job, v)) })));
+    const ok = tries.flatMap((t) => (t.status === 'fulfilled' ? [t.value] : [])).sort((a, b) => a.q.total - b.q.total);
+    if (!ok.length) throw (tries[0] as PromiseRejectedResult).reason;
+    const { v, q } = ok[0];
+    return { carrier: this.id, quoteId: q.quoteId, priceNaira: naira(q.total), expiresAt: Date.parse(q.expiresAt) || null, vehicle: q.pricingVehicleType ?? v, test: this.test };
   }
 
   async book(job: DeliveryJob, quote: CarrierQuote): Promise<Booking> {
     if (quote.carrier !== this.id) throw new Error('quote is from a different carrier');
     const r = await this.call<{ task: SendrelayTask; pricing?: { total: number } }>('POST', '/v1/sdk/tasks', {
-      ...this.task(job), quoteId: quote.quoteId ?? undefined, externalId: job.ref,
+      ...this.task(job, quote.vehicle ?? VEHICLES[job.load][0]), quoteId: quote.quoteId ?? undefined, externalId: job.ref,
       completionCode: {}, requirePhoto: true,
       // Never pay more than the quote the owner's order was checked against (RestockGuard saw this price).
       priceLimit: kobo(quote.priceNaira),

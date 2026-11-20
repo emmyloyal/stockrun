@@ -35,7 +35,9 @@ if (network === 'xlayer') {
 } else {
   const chain = await startLocalChain();
   stopChain = chain.stop;
-  p = localPlatform(chain);
+  // A Sendrelay TEST key books simulated riders for real on the local chain; a live key is never used here.
+  const sr = envValue(env, 'SENDRELAY_API_KEY');
+  p = localPlatform(chain, { sendrelayKey: sr?.startsWith('sk_test_') ? sr : undefined });
 }
 
 const secret = envValue(env, 'SERVER_SECRET') ?? (network === 'local' ? 'local-only-secret-not-for-real-use-0000000' : undefined);
@@ -50,13 +52,24 @@ const counter = envValue(env, 'GEMINI_API_KEY') ? new GeminiPhotoCounter() : nul
 const extractor = defaultExtractor(new RuleExtractor());
 const accounts = new Accounts(db, sms, secret);
 // Every supplier in data/suppliers.json is a simulated bot today; real suppliers will come in over WhatsApp.
-const shops = new Shops(db, p, { extractor, channel: new BotChannel(), counter, prices: new PriceBook() });
+const log = (l: string) => console.log(`[server] ${l}`);
+const shops = new Shops(db, p, {
+  extractor, channel: new BotChannel(), counter, prices: new PriceBook(), log,
+  dataDir: network === 'local' ? null : dirname(dbFile),
+});
 
 const staticDir = fileURLToPath(new URL('../../../app/dist/', import.meta.url));
 const server = createApp({
   platform: p, accounts, shops, staticDir: existsSync(staticDir) ? staticDir : undefined,
-  secureCookies: envValue(env, 'SECURE_COOKIES') === '1', log: (l) => console.log(`[server] ${l}`),
+  secureCookies: envValue(env, 'SECURE_COOKIES') === '1', log,
+  sendrelayWebhookSecret: envValue(env, 'SENDRELAY_WEBHOOK_SECRET'),
 });
+// Check open deliveries with each company every 20 s, so the vault keeps up even when webhooks cannot reach us.
+let polling = false;
+const poll = setInterval(async () => {
+  if (polling) return; polling = true;
+  try { await shops.dispatcher.poll(shops.dispatchShops()); } catch (e) { log(`dispatch poll: ${(e as Error).message}`); } finally { polling = false; }
+}, 20_000);
 server.on('error', (e: NodeJS.ErrnoException) => {
   console.error(e.code === 'EADDRINUSE' ? `Port ${port} is already in use. Stop the other server or set APP_PORT.` : `Server error: ${e.message}`);
   stopChain(); process.exit(1);
@@ -66,7 +79,8 @@ server.listen(port, async () => {
   console.log(`Deployer ${p.deployer.account.address}: ${formatEther(await p.pub.getBalance({ address: p.deployer.account.address }))} OKB/ETH for vaults and gas top-ups`);
   console.log(`SMS: ${smsKind}. Reader: ${extractor instanceof RuleExtractor ? 'rule-based' : `Gemini (${model()})`}. Photo check: ${counter ? 'on' : 'OFF (set GEMINI_API_KEY)'}`);
   console.log(`Database: ${dbFile}. Suppliers: simulated bots.`);
+  console.log(`Logistics: ${p.carriers.map((c) => `${c.name}${c.connector ? '' : ' (no booking API)'}`).join(', ') || 'none (self-pickup only)'}`);
   if (!existsSync(staticDir)) console.log('App not built yet: run `npm install && npm run build` in app/, then restart.');
 });
-const stop = () => { server.close(); stopChain(); process.exit(0); };
+const stop = () => { clearInterval(poll); server.close(); stopChain(); process.exit(0); };
 process.on('SIGINT', stop); process.on('SIGTERM', stop);

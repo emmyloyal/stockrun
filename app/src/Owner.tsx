@@ -39,6 +39,15 @@ export function Owner({ me, orderBlock = '', approveSuppliers = false }: { me: S
     setTxs((t) => ({ ...t, [o.orderId]: h }));
     await api.settle(o.orderId, 'pickup');
   });
+  /** Logistics delivery: the owner counts at the door; that count decides the company's fee (paid, or held back). */
+  const received = (o: Order) => run('Recording your count…', async () => {
+    const n = Number(counts[`d${o.orderId}`] ?? o.pickup.picked);
+    if (!Number.isInteger(n) || n < 0 || n > o.pickup.picked) throw new Error(`Enter how many arrived, from 0 to ${o.pickup.picked}.`);
+    await api.received(o.orderId, n);
+    const h = await me.send('ownerConfirm', [BigInt(o.orderId), n === o.pickup.picked, false]);
+    setTxs((t) => ({ ...t, [o.orderId]: h }));
+    await api.settle(o.orderId, 'delivery').catch(() => {});   // settles now if the rider has finished, else when they do
+  });
   const confirm = (o: Order, ok: boolean) => run(ok ? 'Confirming delivery…' : 'Reporting a problem…', async () => {
     const h = await me.send('ownerConfirm', [BigInt(o.orderId), ok, !ok]);
     setTxs((t) => ({ ...t, [o.orderId]: h }));
@@ -100,7 +109,19 @@ export function Owner({ me, orderBlock = '', approveSuppliers = false }: { me: S
                   </div>
                 </div>
               )}
-              {o.status === 'PickedUp' && o.delivery.aiCounted && !o.delivery.ownerOk && (
+              {o.logistics && <Logistics o={o} />}
+              {o.logistics && o.status === 'PickedUp' && o.logistics.ownerCount === undefined && (
+                <div className="stack">
+                  <p className="warn">When the rider arrives, count the good {o.unit}s before you give the delivery code. Fewer than {o.pickup.picked} means the delivery fee is held back for you, and StockRun claims the rest from {o.logistics.carrierName}.</p>
+                  <div className="row wrap">
+                    <label className="field"><span>{o.unit}s that arrived</span>
+                      <input type="number" min={0} max={o.pickup.picked} value={counts[`d${o.orderId}`] ?? String(o.pickup.picked)} onChange={(e) => setCounts((c) => ({ ...c, [`d${o.orderId}`]: e.target.value }))} />
+                    </label>
+                    <button className="btn primary" disabled={!!busy} onClick={() => received(o)}>Confirm what arrived</button>
+                  </div>
+                </div>
+              )}
+              {!o.logistics && o.status === 'PickedUp' && o.delivery.aiCounted && !o.delivery.ownerOk && (
                 <div className="row wrap">
                   <button className="btn primary" disabled={!!busy} onClick={() => confirm(o, true)}>I received {o.delivery.delivered} {o.unit}(s)</button>
                   <button className="btn ghost" disabled={!!busy} onClick={() => confirm(o, false)}>Report a problem</button>
@@ -112,6 +133,26 @@ export function Owner({ me, orderBlock = '', approveSuppliers = false }: { me: S
         </ul>
       )}
     </section>
+  );
+}
+
+const STATE: Record<string, string> = {
+  booked: 'Booked', searching: 'Finding a rider', assigned: 'Rider on the way to the supplier', picked_up: 'Picked up, on the way to you',
+  at_dropoff: 'Rider at your shop', delivered: 'Delivered', failed: 'Delivery failed', cancelled: 'Cancelled',
+};
+
+/** The logistics company's side of an order. Pickup is confirmed by the company, not by a StockRun photo. */
+function Logistics({ o }: { o: Order }) {
+  const l = o.logistics!;
+  return (
+    <div className="stack note">
+      <p><strong>{l.carrierName}</strong>{l.test ? ' · test mode, simulated rider' : ''} · {l.state ? STATE[l.state] ?? l.state : 'Booking…'}{l.riderName ? ` · rider ${l.riderName}` : ''}</p>
+      {l.pickupSigned && <p className="fine">Pickup confirmed by {l.carrierName}: their rider checked the goods against your order.</p>}
+      {l.trackingUrl && <p><a href={l.trackingUrl} target="_blank" rel="noreferrer">Track the rider</a></p>}
+      {l.handoverCode && o.status === 'PickedUp' && <p>Delivery code for the rider: <strong className="addr">{l.handoverCode}</strong>. Give it only after you have counted.</p>}
+      {l.ownerCount !== undefined && <p className="fine">You counted {l.ownerCount} of {o.pickup.picked}.</p>}
+      {l.error && <p className="alert">{l.error}</p>}
+    </div>
   );
 }
 

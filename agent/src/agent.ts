@@ -8,8 +8,8 @@ import { searchSuppliers, supplierKey, type Candidate } from './tools/suppliers.
 import { negotiate, isDeal, type SupplierChannel, type Deal } from './tools/negotiate.ts';
 import { bookRider } from './tools/riders.ts';
 import { RESTOCK_REASONS, type ProposeResult, type VaultClient } from './tools/vault.ts';
-import { CATEGORIES, type OrderLine, type Rider, type Shop, type SupplierStatus } from './types.ts';
-import type { JobStore } from './check/jobs.ts';
+import { CATEGORIES, type OrderLine, type Rider, type Shop, type Supplier, type SupplierStatus } from './types.ts';
+import type { JobDelivery, JobStore } from './check/jobs.ts';
 import type { PriceBook } from './prices/priceBook.ts';
 import { catalogueReference } from './prices/priceBook.ts';
 import type { Money } from './chain/money.ts';
@@ -22,6 +22,8 @@ export interface AgentDeps {
   riders: Rider[];
   /** The shop owner's key: the handler for self-pickup orders. */
   ownerAddress?: Address;
+  /** Quote real logistics companies for a deal (cheapest trusted one). Absent or null: the simulated pool is used. */
+  logistics?: (supplier: Supplier, line: OrderLine, goodsNaira: number) => Promise<{ rider: Rider; feeNaira: number; delivery: JobDelivery } | null>;
   shop: Shop;
   /** Naira <-> vault token conversion (see chain/money.ts). */
   money: Money;
@@ -75,9 +77,11 @@ export async function handleOrder(text: string, d: AgentDeps, opts: { delivery?:
     if (!deal || !cand) { outcomes.push({ line, kind: 'no_deal', tried }); continue; }
 
     const unitPrice = d.money.toToken(deal.unitPriceNaira);
-    const booked = delivery === 'self'
+    const quoted = delivery === 'logistics' && d.logistics ? await d.logistics(cand.supplier, line, deal.unitPriceNaira * line.quantity) : null;
+    const booked: { rider: Rider; feeNaira: number; delivery?: JobDelivery } | null = delivery === 'self'
       ? { rider: { id: 'self', name: 'you (self-pickup)', address: d.ownerAddress!, lat: d.shop.lat, lng: d.shop.lng }, feeNaira: 0 }
-      : await bookRider(d.riders, cand.supplier, d.shop, (a: Address) => d.vault.trustedHandler(a));
+      // A real company that cannot quote means "no company available", never a silent fall back to the simulated pool.
+      : quoted ?? (d.logistics ? null : await bookRider(d.riders, cand.supplier, d.shop, (a: Address) => d.vault.trustedHandler(a)));
     if (!booked) { outcomes.push({ line, kind: 'no_rider', deal }); continue; }
 
     const result = await d.vault.propose({
@@ -89,6 +93,7 @@ export async function handleOrder(text: string, d: AgentDeps, opts: { delivery?:
       orderId: String(result.orderId), item: line.item, unit: line.unit, quantity: line.quantity, rider: booked.rider.address,
       supplier: { name: `${cand.supplier.name}, ${cand.supplier.market}`, lat: cand.supplier.lat, lng: cand.supplier.lng },
       shop: { name: d.shop.name, lat: d.shop.lat, lng: d.shop.lng }, createdAt: Date.now(),
+      ...(booked.delivery ? { logistics: booked.delivery } : {}),
     });
     outcomes.push({ line, kind: 'proposed', deal, rider: booked.rider, riderFeeNaira: booked.feeNaira, result });
   }

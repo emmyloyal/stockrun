@@ -55,6 +55,15 @@ The buyer's path on the real-account server:
 
 `serve:xlayer` needs in `../.env`: `DEPLOYER_PRIVATE_KEY`, `AGENT_PRIVATE_KEY`, `CHECK_SERVICE_PRIVATE_KEY`, `SUPPLIER_PAYOUT_ADDRESS`, `NGN_PER_USD`, `SERVER_SECRET` (32+ random characters), and an SMS sender: `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` + `TWILIO_SMS_FROM`, or `SMS=console` to print codes on the server console. Shops are kept in `data/stockrun.db` (`DB_FILE` to move it). Set `SECURE_COOKIES=1` behind HTTPS.
 
+## Logistics companies (`src/logistics/`)
+For "send it with a logistics company" orders:
+1. **Quote:** the agent asks every connected company the shop's vault trusts for a price (Sendrelay: one quote per vehicle that can carry the load; the cheapest wins). RestockGuard checks goods plus delivery; both are locked in escrow.
+2. **Book:** after the money is locked, at no more than the locked fee (a dearer fresh quote is refused) and once per order (the booking is keyed to the order).
+3. **Pickup:** when the company reports "picked up", StockRun's key for that company (its dispatch desk) confirms the ordered quantity on-chain, and PickupCheck pays the supplier. The company's rider checked the goods against the order details; the app says "confirmed by <company>", never "AI-verified".
+4. **Delivery:** the owner counts at the door ("How many arrived?", attested by the check service), then gives the rider the delivery code. When the company reports "completed" (code entered), the desk key marks arrival and DeliveryCheck pays the fee, or holds it back for the owner if goods are short.
+
+Status comes from signed webhooks (`POST /api/webhooks/sendrelay`, verified with `SENDRELAY_WEBHOOK_SECRET`) and from a check every 20 s. On the local server a Sendrelay **test** key books simulated Sendrelay riders for real (`npm run serve` with `SENDRELAY_API_KEY=sk_test_...`); mainnet refuses a test key. `npm run carrier:try` tries the connector on its own.
+
 **Gas on X Layer.** Every transaction, on the server and in the browser, pays a 0.001 gwei tip and at most 1.25 × base fee + tip. The fee is set as viem's last step, so no node's suggestion can raise it. Nothing is sent if the base fee is above 0.5 gwei. `npm run rehearse:xlayer` runs shop set-up and one full order on a local fork of mainnet and reports each wallet's gas at mainnet prices.
 
 ## Supplier prices (`src/prices/`)
@@ -109,7 +118,8 @@ You play the supplier on your own phone. Only the negotiation runs: no vault, no
 - **WhatsApp template and hosting:** the `order_request` template for first contact is not registered, and there is no hosted webhook yet. The agent and webhook run locally behind a tunnel.
 - **Owner replies:** handling "YES <id>" as `approveOrder` is not built. The owner must sign that with the owner key; the agent key cannot do it.
 - **Hosted app:** the app is built (`app/`, served by `npm run app` and `npm run serve`), but it is not deployed anywhere yet.
-- **Logistics companies on real orders:** the Sendrelay connector works (`npm run carrier:try`), but booking it from an order and driving pickup/delivery from its status updates is not wired in yet. On the local server a simulated company stands in; on `serve:xlayer` no company is configured yet, so only self-pickup works there.
+- **Sendrelay on mainnet:** needs a live key (`sk_live_`, which needs a verified business with Sendrelay), `SENDRELAY_DESK_PRIVATE_KEY` with a little OKB, and a public HTTPS address for its webhooks (the server also checks every 20 s without them). Until then `serve:xlayer` offers self-pickup only.
+- **Delivery photo:** Sendrelay's drop-off photo is requested but not yet counted by the photo check; the owner's count at the door decides the fee.
 - **Individual riders:** dropped in favour of logistics companies. Rider sign-in still exists but shows "not built yet".
 - **Getting USDT0 onto a buyer's phone:** not built. The deposit screen shows the phone's address to send USDT0 to.
 - **Real suppliers:** every supplier in `data/suppliers.json` is a simulated bot, also on `serve:xlayer`.
