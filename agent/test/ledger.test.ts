@@ -77,14 +77,20 @@ describe('Paystack deposits', () => {
     const b = (await t.ps.start(9, 10_000_00, 'b@example.com')).reference;
     const c = (await t.ps.start(9, 10_000_00, 'b@example.com')).reference;
     const reply = (r: unknown) => { (t as any).ps['fetch'] = (async () => new Response(JSON.stringify(r))) as unknown as typeof fetch; };
-    reply({ status: true, data: { status: 'failed', reference: a, amount: 1_000_000, currency: 'NGN' } });
-    expect((await t.ps.confirm(a)).status).toBe('failed');
+    reply({ status: true, data: { status: 'abandoned', reference: a, amount: 1_000_000, currency: 'NGN' } });
+    expect((await t.ps.confirm(a)).status).toBe('pending');                 // checkout opened, not paid yet
+    reply(verified({ reference: a, amount: 1_000_000, metadata: { userId: 9 } }));
+    expect((await t.ps.confirm(a)).status).toBe('credited');                // ...and paid later: credited once
+    t.ledger.hold(9, 'spend-it', 1_000_000);
+    reply({ status: true, data: { status: 'failed', reference: c, amount: 1_000_000, currency: 'NGN' } });
+    expect((await t.ps.confirm(c)).status).toBe('failed');
     reply(verified({ reference: b, amount: 100, metadata: { userId: 9 } }));
     await expect(t.ps.confirm(b)).rejects.toThrow(/does not match/);
-    reply(verified({ reference: c, amount: 1_000_000, currency: 'USD', metadata: { userId: 9 } }));
-    await expect(t.ps.confirm(c)).rejects.toThrow(/does not match/);
+    const d = (await t.ps.start(9, 10_000_00, 'b@example.com')).reference;
+    reply(verified({ reference: d, amount: 1_000_000, currency: 'USD', metadata: { userId: 9 } }));
+    await expect(t.ps.confirm(d)).rejects.toThrow(/does not match/);
     await expect(t.ps.confirm('sr_9_madeup')).rejects.toThrow(/No such deposit/);
-    expect(t.ledger.balance(9).availableKobo).toBe(0);
+    expect(t.ledger.balance(9)).toEqual({ availableKobo: 0, heldKobo: 1_000_000 });   // only the one real payment
   });
 
   it('checks amounts and email before contacting Paystack, and verifies webhook signatures', async () => {

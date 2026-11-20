@@ -67,8 +67,10 @@ export class Paystack {
     const d = await this.call<{ status: string; amount: number; currency: string; reference: string; metadata?: { userId?: number | string } }>('GET', `/transaction/verify/${encodeURIComponent(reference)}`);
     if (d.reference !== reference) throw new PaystackError(502, 'Paystack answered for a different payment.');
     if (d.status !== 'success') {
-      if (['failed', 'abandoned', 'reversed'].includes(d.status)) this.db.prepare('UPDATE deposits SET status = ? WHERE reference = ?').run(d.status, reference);
-      return { status: ['failed', 'abandoned', 'reversed'].includes(d.status) ? 'failed' : 'pending', amountKobo: dep.amount_kobo };
+      // 'abandoned' only means the checkout was opened and not finished yet: the buyer can still pay, so it is pending.
+      const final = d.status === 'failed' || d.status === 'reversed';
+      if (final) this.db.prepare('UPDATE deposits SET status = ? WHERE reference = ?').run(d.status, reference);
+      return { status: final ? 'failed' : 'pending', amountKobo: dep.amount_kobo };
     }
     if (d.currency !== 'NGN' || d.amount !== dep.amount_kobo || Number(d.metadata?.userId) !== dep.user_id) {
       this.db.prepare('UPDATE deposits SET status = ? WHERE reference = ?').run('mismatch', reference);
