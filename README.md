@@ -8,8 +8,8 @@ An AI restocking agent for small shops in Lagos, built on TapeOut and X Layer fo
 1. **Order:** the shop owner sends the order by text or voice.
 2. **Approve and lock:** RestockGuard (a TapeOut circuit) approves it, and the money is locked in the vault.
 3. **Find and negotiate:** the agent finds suppliers on the map and negotiates on WhatsApp.
-4. **Pickup check:** the rider photographs the goods at the supplier's shop. PickupCheck approves, and the supplier is paid in naira.
-5. **Delivery check:** the owner confirms receipt. DeliveryCheck pays the rider, or compensates the owner from the rider's bond.
+4. **Pickup check:** the owner chooses who collects: themselves, or a verified logistics company (Sendrelay first). That handler checks the goods at the supplier, and PickupCheck pays the supplier for the count it confirms, in naira.
+5. **Delivery check** (logistics company only): the owner confirms receipt and gives the rider the delivery code. DeliveryCheck pays the company's fee, or holds it back for the owner if goods arrive short; the shortfall is claimed from the company's insurance. There are no rider bonds.
 
 ## TapeOut ecosystem used
 - **Processor Factory, NAND transistors, tapeout, `eval()`, REF:** three decision circuits plus shared comparator circuits.

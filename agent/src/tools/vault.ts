@@ -7,14 +7,14 @@ import {
 export const vaultAbi = parseAbi([
   'function proposeOrder(bytes32 supplierId, uint8 ordered, uint256 unitPrice, uint8 cat, uint8 dist, address rider, uint256 riderFee) returns (uint256)',
   'function supplierStatus(bytes32) view returns (uint8)',
-  'function bond(address) view returns (uint256)',
+  'function trustedHandler(address) view returns (bool)',
   'function unit() view returns (uint256)',
   'function weeklyBudget() view returns (uint256)',
   'function spentThisWeek() view returns (uint256)',
   'function limit() view returns (uint256)',
   'event OrderProposed(uint256 indexed id, uint8 decision, uint8 reason)',
   'event OrderLocked(uint256 indexed id, uint256 amount)',
-  'error NotAuthorized()', 'error BadStatus()', 'error CircuitFailed()', 'error Rejected(uint8 reason)', 'error OrderTooLarge()', 'error NoPayout()',
+  'error NotAuthorized()', 'error BadStatus()', 'error CircuitFailed()', 'error Rejected(uint8 reason)', 'error OrderTooLarge()', 'error NoPayout()', 'error UntrustedHandler()', 'error SelfPickupHasNoFee()',
 ]);
 
 /** RestockGuard reason codes (docs/CIRCUITS.md), worded for the shop owner. */
@@ -45,7 +45,8 @@ export class VaultClient {
   }
 
   supplierStatus(key: Hash) { return this.pub.readContract({ address: this.address, abi: vaultAbi, functionName: 'supplierStatus', args: [key] }); }
-  bond(rider: Address) { return this.pub.readContract({ address: this.address, abi: vaultAbi, functionName: 'bond', args: [rider] }); }
+  /** True for the shop owner (self-pickup) and for logistics companies the owner approved. */
+  trustedHandler(who: Address) { return this.pub.readContract({ address: this.address, abi: vaultAbi, functionName: 'trustedHandler', args: [who] }); }
 
   async propose(a: ProposeArgs): Promise<ProposeResult> {
     const args = [a.supplierKey, a.ordered, a.unitPrice, a.cat, a.dist, a.rider, a.riderFee] as const;

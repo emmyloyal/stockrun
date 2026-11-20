@@ -1,6 +1,6 @@
 // A complete local StockRun deployment on anvil, for the demo and the end-to-end test:
 // MockToken (6-decimal "naira" token), MockCircuits (the reference rules), StockRunVault, an owner who
-// has funded the vault and approved three demo suppliers, and a bonded demo rider.
+// has funded the vault and approved three demo suppliers, and a simulated logistics company the vault trusts (no bond).
 // Uses anvil's well-known PUBLIC test keys; nothing here touches a real network.
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
@@ -36,7 +36,7 @@ export const DEMO_SHOP = { name: 'Demo shop, Ojota', lat: 6.587, lng: 3.381 };
 export const DEMO_SUPPLIERS = [['sim-mile12-adeyemi', 1], ['sim-ketu-chukwu', 2], ['sim-ikotun-nkechi', 1]] as const;
 
 export const tokenAbi = parseAbi(['function mint(address,uint256)', 'function approve(address,uint256) returns (bool)', 'function balanceOf(address) view returns (uint256)']);
-export const vaultAdminAbi = parseAbi(['function deposit(uint256)', 'function queueSupplier(bytes32,uint8,address)', 'function applySupplier(bytes32)', 'function postBond(uint256)', 'function locked() view returns (uint256)']);
+export const vaultAdminAbi = parseAbi(['function deposit(uint256)', 'function queueSupplier(bytes32,uint8,address)', 'function applySupplier(bytes32)', 'function locked() view returns (uint256)']);
 
 export interface LocalChain { url: string; pub: PublicClient; token: Address; circuits: Address; vault: Address; vaultClient: VaultClient; riders: Rider[]; stop: () => void }
 
@@ -59,7 +59,7 @@ export async function startLocalChain(port = 18545 + Math.floor(Math.random() * 
   const token = await deploy('MockToken');
   const circuits = await deploy('MockCircuits');
   // Weekly budget 200 units (₦1,000,000); auto-approve limit 40 units (₦200,000).
-  const vault = await deploy('StockRunVault', [token, circuits, 1n, 2n, 3n, UNIT, owner.address, agent.address, checker.address, 200n * UNIT, 40n * UNIT]);
+  const vault = await deploy('StockRunVault', [token, circuits, 1n, 2n, 3n, UNIT, owner.address, agent.address, checker.address, 200n * UNIT, 40n * UNIT, [rider.address]]);
 
   await send(o.writeContract({ address: token, abi: tokenAbi, functionName: 'mint', args: [owner.address, 1000n * UNIT] }));
   await send(o.writeContract({ address: token, abi: tokenAbi, functionName: 'approve', args: [vault, 1000n * UNIT] }));
@@ -70,15 +70,11 @@ export async function startLocalChain(port = 18545 + Math.floor(Math.random() * 
   for (const [id] of DEMO_SUPPLIERS)
     await send(o.writeContract({ address: vault, abi: vaultAdminAbi, functionName: 'applySupplier', args: [supplierKey(id)] }));
 
-  const r = w(rider);
-  await send(o.writeContract({ address: token, abi: tokenAbi, functionName: 'mint', args: [rider.address, 300n * UNIT] }));
-  await send(r.writeContract({ address: token, abi: tokenAbi, functionName: 'approve', args: [vault, 300n * UNIT] }));
-  await send(r.writeContract({ address: vault, abi: vaultAdminAbi, functionName: 'postBond', args: [300n * UNIT] }));
 
   return {
     url, pub, token, circuits, vault,
     vaultClient: new VaultClient(vault, pub, w(agent)),
-    riders: [{ id: 'r1', name: 'Tunde (demo rider)', address: rider.address, lat: 6.6, lng: 3.39 }],
+    riders: [{ id: 'r1', name: 'Demo logistics company (simulated)', address: rider.address, lat: 6.6, lng: 3.39 }],
     stop: () => { proc.kill(); },
   };
 }

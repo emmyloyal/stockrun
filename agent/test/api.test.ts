@@ -40,7 +40,8 @@ describe.skipIf(!localChainAvailable())('app API', () => {
     server = createApi({
       pub: chain.pub, vault: chain.vault, chainId: anvil.id, jobs, money: fixedRate(TOKEN_PER_NAIRA), rpcUrl: chain.url,
       check: new CheckService(chain.vault, chain.pub, checker, counter, jobs),
-      agent: { extractor: new RuleExtractor(), channel: new BotChannel(), vault: chain.vaultClient, riders: chain.riders, shop: DEMO_SHOP, money: fixedRate(TOKEN_PER_NAIRA), jobs, prices: new PriceBook() },
+      settler: new CheckService(chain.vault, chain.pub, checker, counter, jobs),
+      agent: { extractor: new RuleExtractor(), channel: new BotChannel(), vault: chain.vaultClient, riders: chain.riders, ownerAddress: accounts.owner.address, shop: DEMO_SHOP, money: fixedRate(TOKEN_PER_NAIRA), jobs, prices: new PriceBook() },
     });
     await new Promise<void>((r) => server.listen(0, r));
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;

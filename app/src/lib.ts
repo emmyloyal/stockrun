@@ -8,7 +8,7 @@ export interface Place { name: string; lat: number; lng: number }
 export interface CheckResult {
   status: 'retake' | 'waiting_rider' | 'settled' | 'mismatch' | 'error';
   message: string;
-  outcome?: 'paid' | 'paid_part' | 'held' | 'rider_paid' | 'compensated';
+  outcome?: 'paid' | 'paid_part' | 'held' | 'rider_paid' | 'short';
   qty?: number; reason?: number; aiCount?: number; expected?: number; damage?: boolean; attestTx?: Hex; settleTx?: Hex;
 }
 export interface Order {
@@ -41,7 +41,7 @@ export interface Shop { id: number; name: string; lat: number; lng: number; vaul
 export interface Me { user: User | null; shop?: Shop | null; hasBackup?: boolean }
 export interface Backup { ciphertext: string; salt: string; iv: string; kdf: string }
 export interface ShopMoney {
-  vault: Address; vaultNaira: number; lockedNaira: number; riderBondsNaira: number; availableNaira: number; walletNaira: number;
+  vault: Address; vaultNaira: number; lockedNaira: number; availableNaira: number; walletNaira: number;
   weeklyBudgetNaira: number; spentThisWeekNaira: number; limitNaira: number;
 }
 
@@ -56,7 +56,7 @@ export const api = {
   orders: () => call<Order[]>('/api/orders'),
   map: () => call<MapData>('/api/map'),
   riderJobs: (rider: Address) => call<Order[]>(`/api/riders/${rider}/jobs`),
-  placeOrder: (text: string) => call<{ message: string; problems: string[] }>('/api/orders', { text }),
+  placeOrder: (text: string, delivery: 'self' | 'logistics' = 'logistics') => call<{ message: string; problems: string[] }>('/api/orders', { text, delivery }),
   photo: (id: string, stage: 'pickup' | 'delivery', photo: { mediaType: string; data: string }) => call<CheckResult>(`/api/orders/${id}/photo`, { stage, ...photo }),
   settle: (id: string, stage: 'pickup' | 'delivery') => call<CheckResult>(`/api/orders/${id}/settle`, { stage }),
   confirmCount: (id: string, stage: 'pickup' | 'delivery') => call<CheckResult>(`/api/orders/${id}/confirm-count`, { stage }),

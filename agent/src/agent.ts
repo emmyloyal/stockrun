@@ -18,7 +18,10 @@ export interface AgentDeps {
   extractor: Extractor;
   channel: SupplierChannel;
   vault: VaultClient;
+  /** Logistics companies that can be booked (each with its on-chain key). */
   riders: Rider[];
+  /** The shop owner's key: the handler for self-pickup orders. */
+  ownerAddress?: Address;
   shop: Shop;
   /** Naira <-> vault token conversion (see chain/money.ts). */
   money: Money;
@@ -38,7 +41,12 @@ export type LineOutcome =
 
 export interface AgentReport { outcomes: LineOutcome[]; problems: string[]; message: string }
 
-export async function handleOrder(text: string, d: AgentDeps): Promise<AgentReport> {
+/** How the goods reach the shop: the owner collects them, or a logistics company delivers. */
+export type DeliveryChoice = 'self' | 'logistics';
+
+export async function handleOrder(text: string, d: AgentDeps, opts: { delivery?: DeliveryChoice } = {}): Promise<AgentReport> {
+  const delivery = opts.delivery ?? 'logistics';
+  if (delivery === 'self' && !d.ownerAddress) throw new Error('self-pickup needs the owner key');
   const { order, problems } = await parseOrder(text, d.extractor);
   const statusCache = new Map<string, SupplierStatus>();
   for (const line of order.lines) {
@@ -67,8 +75,9 @@ export async function handleOrder(text: string, d: AgentDeps): Promise<AgentRepo
     if (!deal || !cand) { outcomes.push({ line, kind: 'no_deal', tried }); continue; }
 
     const unitPrice = d.money.toToken(deal.unitPriceNaira);
-    const goodsValue = unitPrice * BigInt(line.quantity);
-    const booked = await bookRider(d.riders, cand.supplier, d.shop, goodsValue, (a: Address) => d.vault.bond(a));
+    const booked = delivery === 'self'
+      ? { rider: { id: 'self', name: 'you (self-pickup)', address: d.ownerAddress!, lat: d.shop.lat, lng: d.shop.lng }, feeNaira: 0 }
+      : await bookRider(d.riders, cand.supplier, d.shop, (a: Address) => d.vault.trustedHandler(a));
     if (!booked) { outcomes.push({ line, kind: 'no_rider', deal }); continue; }
 
     const result = await d.vault.propose({
@@ -98,12 +107,15 @@ export function ownerMessage(outcomes: LineOutcome[], problems: string[]): strin
     } else if (o.kind === 'no_deal') {
       out.push(`✗ ${what}: no deal within your price. ${o.tried.join('; ')}.`);
     } else if (o.kind === 'no_rider') {
-      out.push(`✗ ${what}: deal at ${ngn(o.deal.unitPriceNaira)} each with ${o.deal.supplier.name}, but no bonded rider is free.`);
+      out.push(`✗ ${what}: deal at ${ngn(o.deal.unitPriceNaira)} each with ${o.deal.supplier.name}, but no logistics company is available for this shop. You can collect it yourself instead.`);
     } else {
       const total = o.deal.unitPriceNaira * o.line.quantity;
-      const head = `${what} from ${o.deal.supplier.name} at ${ngn(o.deal.unitPriceNaira)} each (${ngn(total)} + ${ngn(o.riderFeeNaira)} delivery, rider ${o.rider.name})`;
+      const self = o.rider.id === 'self';
+      const head = self
+        ? `${what} from ${o.deal.supplier.name} at ${ngn(o.deal.unitPriceNaira)} each (${ngn(total)}; you collect it yourself, no delivery fee)`
+        : `${what} from ${o.deal.supplier.name} at ${ngn(o.deal.unitPriceNaira)} each (${ngn(total)} + ${ngn(o.riderFeeNaira)} delivery by ${o.rider.name})`;
       const r = o.result;
-      if (r.status === 'locked') out.push(`✓ ${head}. RestockGuard approved; funds locked in escrow. Order #${r.orderId}, tx ${r.txHash}. The supplier is paid only after the rider checks the goods.`);
+      if (r.status === 'locked') out.push(`✓ ${head}. RestockGuard approved; funds locked in escrow. Order #${r.orderId}, tx ${r.txHash}. ${self ? ' At the supplier, count the goods and confirm in the app: the supplier is paid for what you confirm.' : ' The supplier is paid only after the logistics company has checked the goods at pickup.'}`);
       else if (r.status === 'ask_owner') out.push(`? ${head}. Needs your OK because ${RESTOCK_REASONS[r.reason] ?? `reason ${r.reason}`}. Reply YES ${r.orderId} to approve. (tx ${r.txHash})`);
       else if (r.status === 'rejected') out.push(`✗ ${head}. RestockGuard rejected it: ${RESTOCK_REASONS[r.reason] ?? `reason ${r.reason}`}. Nothing was charged.`);
       else if (r.status === 'too_large') out.push(`✗ ${head}. Too large for one order; split it.`);

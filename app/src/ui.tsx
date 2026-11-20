@@ -25,8 +25,8 @@ export function Outcome({ r }: { r: CheckResult }) {
     : r.status === 'waiting_rider' ? `Photo counted ${r.aiCount}. Waiting for the rider's count`
     : r.outcome === 'paid' ? `PickupCheck: supplier paid for all ${r.qty}`
     : r.outcome === 'paid_part' ? `PickupCheck: supplier paid for ${r.qty} (short supply)`
-    : r.outcome === 'compensated' ? `DeliveryCheck: owner paid back for ${r.qty} from the rider's bond`
-    : r.outcome === 'rider_paid' ? 'DeliveryCheck: rider paid'
+    : r.outcome === 'short' ? `DeliveryCheck: ${r.qty} short, delivery fee held back for you`
+    : r.outcome === 'rider_paid' ? 'DeliveryCheck: logistics company paid'
     : 'Circuit says: hold';
   return (
     <div className={`outcome ${tone}`} role="status">

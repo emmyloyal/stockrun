@@ -27,6 +27,8 @@ export interface Platform {
   unit: bigint;              // token amount per circuit money unit (₦5,000)
   money: Money;              // naira <-> token
   supplierPayout: Address;   // where supplier payments go before the naira transfer (pilot: StockRun's off-ramp account)
+  /** Logistics companies every new shop starts with (their on-chain keys, held by StockRun's dispatch desk). */
+  carriers: { id: string; name: string; wallet: Wallet }[];
   /** Gas the deployer sends a new owner or rider once, so their phone key can sign its own vault steps. */
   gasTopUpWei: bigint;
   /** Block explorer base for transaction links, or null on a local chain. */
@@ -45,14 +47,16 @@ export const tokenAbi = parseAbi([
   'function decimals() view returns (uint8)', 'function symbol() view returns (string)',
 ]);
 
-/** Deploy a vault owned by `owner` (the shop owner's phone key). Budget and limit are whole naira. */
-export async function deployVault(p: Platform, owner: Address, weeklyBudgetNaira: number, limitNaira: number): Promise<Address> {
+/** Deploy a vault owned by `owner` (the shop owner's phone key). Budget and limit are whole naira. The shop starts
+ *  trusting the platform's logistics companies (or `carriers`); the owner can add or remove them later. */
+export async function deployVault(p: Platform, owner: Address, weeklyBudgetNaira: number, limitNaira: number, carriers?: Address[]): Promise<Address> {
   const units = (naira: number) => BigInt(Math.floor(naira / 5000)) * p.unit;
   const a = artifact('StockRunVault');
   const hash = await p.deployer.deployContract({
     abi: a.abi, bytecode: a.bytecode.object,
     args: [p.token, p.circuits, p.circuitIds.restock, p.circuitIds.pickup, p.circuitIds.delivery, p.unit, owner,
-      p.agent.account.address, p.checker.account.address, units(weeklyBudgetNaira), units(limitNaira)],
+      p.agent.account.address, p.checker.account.address, units(weeklyBudgetNaira), units(limitNaira),
+      carriers ?? p.carriers.map((c) => c.wallet.account.address)],
   });
   const r = await p.pub.waitForTransactionReceipt({ hash });
   if (r.status !== 'success' || !r.contractAddress) throw new Error('vault deployment failed');
@@ -77,6 +81,7 @@ const LOCAL_KEYS = {
   deployer: '0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba',
   agent: '0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e',
   checker: '0x4bbbf85ce3377467afe5d46f804f221813b2bb87f24d81f60f1fcdbf7cbf4356',
+  carrier: '0xdbda1821b80551c9d65939329250298aa3472ba22feea921c0cf5d620ea67b97', // anvil #8: simulated logistics company
 } as const;
 
 /** Platform on a local anvil chain started by startLocalChain(): MockToken + MockCircuits, faucet and time travel. */
@@ -92,6 +97,7 @@ export function localPlatform(chain: LocalChain): Platform {
     token: chain.token, tokenSymbol: 'TEST', circuits: chain.circuits, circuitIds: { restock: 1n, pickup: 2n, delivery: 3n },
     unit: money.toToken(5000), money,
     supplierPayout: privateKeyToAccount('0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a').address,
+    carriers: [{ id: 'sim-logistics', name: 'Demo logistics company (simulated)', wallet: wallet(LOCAL_KEYS.carrier) }],
     gasTopUpWei: parseEther('0.01'), explorerTx: null,
     faucet: async (to) => {
       // ₦2,000,000 of test token and 1 test ETH for gas. Test money only: local chain.
@@ -214,6 +220,9 @@ export async function xlayerPlatform(env: NodeJS.ProcessEnv = process.env): Prom
     token: XLAYER_USDT0, tokenSymbol: symbol, circuits: d.processor,
     circuitIds: { restock: BigInt(d.circuitIds.restock), pickup: BigInt(d.circuitIds.pickup), delivery: BigInt(d.circuitIds.delivery) },
     unit: money.toToken(5000), money, supplierPayout: getAddress(payout),
+    // Logistics companies are added once their dispatch-desk key exists (see agent/src/logistics/). Until then, mainnet
+    // shops can use self-pickup only.
+    carriers: [],
     gasTopUpWei: XLAYER_GAS_TOPUP_WEI, explorerTx: 'https://www.okx.com/web3/explorer/xlayer/tx/',
   };
 }

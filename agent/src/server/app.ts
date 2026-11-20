@@ -29,7 +29,7 @@ export interface AppOptions {
 
 const vaultReadAbi = parseAbi([
   'function locked() view returns (uint256)', 'function weeklyBudget() view returns (uint256)', 'function spentThisWeek() view returns (uint256)',
-  'function limit() view returns (uint256)', 'function totalBonds() view returns (uint256)', 'function bond(address) view returns (uint256)',
+  'function limit() view returns (uint256)',
   'function pendingSupplierStatus(bytes32) view returns (uint8)', 'function supplierEffectiveAt(bytes32) view returns (uint256)',
   'function applySupplier(bytes32)',
 ]);
@@ -171,18 +171,18 @@ export function createApp(o: AppOptions): Server {
       return { shop };
     }],
     ['GET', /^\/api\/shop\/money$/, async (c) => {
-      const rt = ownerShop(c), v = rt.shop.vault, read = (functionName: 'locked' | 'weeklyBudget' | 'spentThisWeek' | 'limit' | 'totalBonds') =>
+      const rt = ownerShop(c), v = rt.shop.vault, read = (functionName: 'locked' | 'weeklyBudget' | 'spentThisWeek' | 'limit') =>
         p.pub.readContract({ address: v, abi: vaultReadAbi, functionName });
-      const [vaultBal, walletBal, locked, budget, spent, limit, bonds] = await Promise.all([
+      const [vaultBal, walletBal, locked, budget, spent, limit] = await Promise.all([
         p.pub.readContract({ address: p.token, abi: tokenAbi, functionName: 'balanceOf', args: [v] }),
         p.pub.readContract({ address: p.token, abi: tokenAbi, functionName: 'balanceOf', args: [need(c).address!] }),
-        read('locked'), read('weeklyBudget'), read('spentThisWeek'), read('limit'), read('totalBonds'),
+        read('locked'), read('weeklyBudget'), read('spentThisWeek'), read('limit'),
       ]);
       const unitNaira = (x: bigint) => naira(x);
       return {
         vault: v, token: p.token, network: p.name,
-        vaultNaira: naira(vaultBal), lockedNaira: naira(locked), riderBondsNaira: naira(bonds),
-        availableNaira: Math.max(0, naira(vaultBal) - naira(locked) - naira(bonds)),
+        vaultNaira: naira(vaultBal), lockedNaira: naira(locked),
+        availableNaira: Math.max(0, naira(vaultBal) - naira(locked)),
         walletNaira: naira(walletBal), weeklyBudgetNaira: unitNaira(budget), spentThisWeekNaira: unitNaira(spent), limitNaira: unitNaira(limit),
       };
     }],
@@ -191,7 +191,7 @@ export function createApp(o: AppOptions): Server {
       const text = typeof c.body?.text === 'string' ? c.body.text.trim() : '';
       if (!text || text.length > 2000) throw new AuthError(400, 'Send the order as text (up to 2,000 characters).');
       await applyDueSuppliers(rt).catch(() => {});
-      const report = await handleOrder(text, rt.agent);
+      const report = await handleOrder(text, rt.agent, { delivery: c.body?.delivery === 'self' ? 'self' : 'logistics' });
       return { message: report.message, problems: report.problems };
     }],
     ['GET', /^\/api\/orders$/, async (c) => {
@@ -200,9 +200,9 @@ export function createApp(o: AppOptions): Server {
     }],
     ['POST', /^\/api\/orders\/(\d+)\/settle$/, async (c) => {
       const rt = ownerShop(c), stage = stageOf(c.body);
-      if (!stage || !rt.check) throw new AuthError(400, 'stage must be pickup or delivery, and the photo check must be on.');
+      if (!stage) throw new AuthError(400, 'stage must be pickup or delivery.');
       if (!rt.jobs.get(c.m[1])) throw new AuthError(404, 'No such order in your shop.');
-      try { const r = await rt.check.settle(BigInt(c.m[1]), stage); lastCheck.set(`${rt.shop.id}:${c.m[1]}`, r as CheckResult); return r; }
+      try { const r = await rt.settler.settle(BigInt(c.m[1]), stage); lastCheck.set(`${rt.shop.id}:${c.m[1]}`, r as CheckResult); return r; }
       catch { throw new AuthError(409, 'Not ready to settle yet.'); }
     }],
     ['GET', /^\/api\/map$/, async (c) => {
@@ -239,14 +239,6 @@ export function createApp(o: AppOptions): Server {
         for (const j of rt.jobs.forRider(u.address)) views.push(await orderView(rt, j));
       }
       return views.sort((a, b) => b.createdAt - a.createdAt);
-    }],
-    ['GET', /^\/api\/rider\/bonds$/, async (c) => {
-      const u = need(c, 'rider');
-      if (!u.address) return [];
-      return Promise.all(shops.all().map(async (s) => ({
-        shopId: s.id, shop: s.name, vault: s.vault,
-        bondNaira: naira(await p.pub.readContract({ address: s.vault, abi: vaultReadAbi, functionName: 'bond', args: [u.address!] })),
-      })));
     }],
     ['POST', /^\/api\/jobs\/(\d+)\/(\d+)\/photo$/, async (c) => {
       const { rt, job } = riderJob(c), stage = stageOf(c.body);

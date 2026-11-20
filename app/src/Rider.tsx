@@ -170,7 +170,7 @@ function Stage({ cfg, me, job, stage, place, refresh }: { cfg: Config; me: Signe
           </button>
           <p className="fine">{stage === 'pickup'
             ? `Confirming means the supplier is paid for ${result.aiCount}, not ${result.expected}.`
-            : `Confirming means the owner is paid back for the missing ${result.expected! - result.aiCount!} from your bond.`}</p>
+            : `Confirming means the delivery fee is held back for the owner, and the missing ${result.expected! - result.aiCount!} are claimed from the logistics company.`}</p>
         </div>
       )}
     </div>

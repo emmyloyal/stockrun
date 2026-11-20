@@ -6,7 +6,7 @@ import { deployVault, sendGasTopUp, type Platform } from '../chain/platform.ts';
 import { VaultClient } from '../tools/vault.ts';
 import { CheckService } from '../check/checkService.ts';
 import { JobStore } from '../check/jobs.ts';
-import type { PhotoCounter } from '../check/photoCount.ts';
+import { NoPhotoCounter, type PhotoCounter } from '../check/photoCount.ts';
 import type { AgentDeps } from '../agent.ts';
 import type { Extractor } from '../llm.ts';
 import type { SupplierChannel } from '../tools/negotiate.ts';
@@ -50,7 +50,8 @@ export function validateShop(i: Partial<ShopInput>): ShopInput {
 }
 
 export interface ShopServices { extractor: Extractor; channel: SupplierChannel; counter: PhotoCounter | null; prices: PriceBook }
-export interface ShopRuntime { shop: Shop; vault: VaultClient; jobs: JobStore; check: CheckService | null; agent: AgentDeps }
+/** `check` is null when no photo model is configured; `settler` always works (settling needs no photo). */
+export interface ShopRuntime { shop: Shop; vault: VaultClient; jobs: JobStore; check: CheckService | null; settler: CheckService; agent: AgentDeps }
 
 export class Shops {
   private db: DatabaseSync;
@@ -84,7 +85,7 @@ export class Shops {
   }
 
   /**
-   * Send this person's phone key its one-off gas allowance, so it can sign deposits, bonds and confirmations.
+   * Send this person's phone key its one-off gas allowance, so it can sign deposits, pickups and confirmations.
    * Once per account (recorded before sending, so concurrent requests cannot both send); a failed send is cleared so
    * it can be retried. Returns the transaction, or null if nothing was sent now.
    */
@@ -120,11 +121,14 @@ export class Shops {
     return r ? { userId: r.user_id, name: r.name, lat: r.lat, lng: r.lng, address: getAddress(r.address) } : null;
   }
 
-  /** Every rider with a key. Bonds live in each shop's vault, so booking still checks the bond there. */
+  /** The logistics companies the platform works with. Booking still asks each shop's vault whether it trusts them. */
   riderPool(): Rider[] {
-    return (this.db.prepare('SELECT r.user_id, r.name, r.lat, r.lng, u.address FROM riders r JOIN users u ON u.id = r.user_id WHERE u.address IS NOT NULL').all() as unknown as
-      { user_id: number; name: string; lat: number; lng: number; address: string }[])
-      .map((r) => ({ id: `u${r.user_id}`, name: r.name, address: getAddress(r.address), lat: r.lat, lng: r.lng }));
+    return this.p.carriers.map((c) => ({ id: c.id, name: c.name, address: c.wallet.account.address, lat: 6.55, lng: 3.37 }));
+  }
+
+  private ownerAddress(shop: Shop): Address | undefined {
+    const r = this.db.prepare('SELECT address FROM users WHERE id = ?').get(shop.ownerId) as unknown as { address: string | null } | undefined;
+    return r?.address ? getAddress(r.address) : undefined;
   }
 
   /** The services running for one shop (created on first use). */
@@ -134,13 +138,14 @@ export class Shops {
     const vault = new VaultClient(shop.vault, this.p.pub, this.p.agent);
     const jobs = new JobStore();
     const check = this.services.counter ? new CheckService(shop.vault, this.p.pub, this.p.checker, this.services.counter, jobs) : null;
+    const settler = check ?? new CheckService(shop.vault, this.p.pub, this.p.checker, new NoPhotoCounter(), jobs);
     const self = this;
     const agent: AgentDeps = {
       extractor: this.services.extractor, channel: this.services.channel, vault, shop: { name: shop.name, lat: shop.lat, lng: shop.lng },
-      money: this.p.money, jobs, prices: this.services.prices,
+      money: this.p.money, jobs, prices: this.services.prices, ownerAddress: this.ownerAddress(shop),
       get riders() { return self.riderPool(); },
     };
-    const rt = { shop, vault, jobs, check, agent };
+    const rt = { shop, vault, jobs, check, settler, agent };
     this.runtimes.set(shop.id, rt);
     return rt;
   }

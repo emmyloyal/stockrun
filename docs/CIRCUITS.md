@@ -36,10 +36,10 @@ Decides how much the supplier is paid at pickup.
 | --- | --- | --- |
 | 1 | `atSupplier` | Rider's signed GPS inside supplier geofence |
 | 8 | `ordered` | Units ordered |
-| 8 | `aiCount` | Units counted by AI in pickup photo (signed by check service) |
-| 8 | `riderCount` | Units confirmed by rider |
+| 8 | `aiCount` | Units counted by AI in a pickup photo (check service). With no photo the vault passes `riderCount`, so the handler's count stands |
+| 8 | `riderCount` | Units confirmed by the handler (owner or logistics company) |
 | 1 | `damage` | AI flags visible damage |
-| 1 | `bonded` | Rider bond ≥ order value (vault computes) |
+| 1 | `bonded` | **Trusted handler**: the owner (self-pickup) or an owner-approved logistics company (vault computes; the wire keeps its taped-out name) |
 
 Rules (first match wins):
 1. `!atSupplier` → HOLD (00), reason 1
@@ -51,7 +51,9 @@ Rules (first match wins):
 Outputs: `decision` (2), `payQty` (8; 0 when HOLD), `reason` (3).
 
 ## 3. DeliveryCheck — 21 inputs → 13 outputs
-Pays the rider or compensates the owner from the bond.
+Pays the logistics company's fee, or withholds it for the owner when goods arrive short. Not used for self-pickup.
+There are no bonds: on COMPENSATE the vault keeps the fee for the owner and the shortfall is claimed off-chain from
+the company; `shortQty` is recorded in the `DeliveryShort` event.
 
 | Bits | Name | Meaning |
 | --- | --- | --- |

@@ -9,7 +9,7 @@ Phone-first web app with two modes, owner and rider. It is built with React and 
 cd app && npm install && npm run build
 cd ../agent && npm run serve                # http://localhost:8080, local chain; SMS codes appear in this console
 ```
-Sign in as a shop owner, tap "Get test money", deposit, approve a supplier, then skip the 24 h wait with the test-chain control (`POST /api/dev/advance-day`). Orders need a bonded rider, which can only be added through the API until the rider screens are built.
+Sign in as a shop owner, tap "Get test money", deposit, approve a supplier, then skip the 24 h wait with the test-chain control (`POST /api/dev/advance-day`). Choose "I'll collect them myself" to finish an order on your own: after it locks, confirm the count and the supplier is paid. "Send them with a logistics company" books the simulated company on the local server.
 
 ## Run the local demo
 ```

@@ -17,7 +17,7 @@ export const checkAbi = parseAbi([
   'event SupplierPaid(uint256 indexed id, address payout, uint8 qty, uint256 amount, uint8 reason)',
   'event PickupHeld(uint256 indexed id, uint8 reason)',
   'event RiderPaid(uint256 indexed id, address rider, uint256 amount)',
-  'event OwnerCompensated(uint256 indexed id, uint8 shortQty, uint256 amount)',
+  'event DeliveryShort(uint256 indexed id, uint8 shortQty, uint256 feeWithheld)',
   'event DeliveryHeld(uint256 indexed id, uint8 reason)',
   'error NotAuthorized()', 'error BadStatus()', 'error CircuitFailed()',
 ]);
@@ -27,25 +27,25 @@ export const STATUS = { None: 0, AwaitingOwner: 1, Locked: 2, PickedUp: 3, Deliv
 /** Reason codes in plain words (app/README.md). */
 export const PICKUP_REASONS: Record<number, string> = {
   0: 'All goods counted. Supplier paid in full.',
-  1: 'Rider is not at the supplier.',
-  2: "Rider's bond is too low for this order.",
+  1: 'The handler is not at the supplier.',
+  2: 'This shop no longer trusts that logistics company. Nothing was paid.',
   3: 'Damaged goods. The supplier should replace them.',
   4: 'No goods counted.',
   5: 'Short supply. The supplier is paid for what was counted.',
 };
 export const DELIVERY_REASONS: Record<number, string> = {
-  0: 'Delivered. Rider paid.',
-  1: 'Rider is not at the shop yet.',
+  0: 'Delivered. Logistics company paid.',
+  1: 'The rider is not at the shop yet.',
   2: 'The owner reported a problem. Under review.',
   3: 'Damage reported. Under review.',
-  4: "Short delivery. The owner is paid back from the rider's bond.",
+  4: 'Short delivery. The delivery fee is held back for the owner; StockRun claims the rest from the logistics company.',
   5: "Waiting for the owner's confirmation.",
 };
 
 export type CheckResult =
   | { status: 'retake'; message: string }
   | { status: 'waiting_rider'; aiCount: number; damage: boolean; attestTx: Hash; message: string }
-  | { status: 'settled'; outcome: 'paid' | 'paid_part' | 'held' | 'rider_paid' | 'compensated'; qty: number; reason: number;
+  | { status: 'settled'; outcome: 'paid' | 'paid_part' | 'held' | 'rider_paid' | 'short'; qty: number; reason: number;
       aiCount: number; damage: boolean; attestTx: Hash; settleTx: Hash; message: string }
   | { status: 'mismatch'; aiCount: number; expected: number; damage: boolean; message: string }
   | { status: 'error'; message: string };
@@ -141,7 +141,7 @@ export class CheckService {
       }
       if (l.eventName === 'PickupHeld') return { status: 'settled' as const, outcome: 'held' as const, qty: 0, reason: l.args.reason, settleTx, message: PICKUP_REASONS[l.args.reason] ?? '' };
       if (l.eventName === 'RiderPaid') return { status: 'settled' as const, outcome: 'rider_paid' as const, qty: 0, reason: 0, settleTx, message: DELIVERY_REASONS[0] };
-      if (l.eventName === 'OwnerCompensated') return { status: 'settled' as const, outcome: 'compensated' as const, qty: l.args.shortQty, reason: 4, settleTx, message: DELIVERY_REASONS[4] };
+      if (l.eventName === 'DeliveryShort') return { status: 'settled' as const, outcome: 'short' as const, qty: l.args.shortQty, reason: 4, settleTx, message: DELIVERY_REASONS[4] };
       if (l.eventName === 'DeliveryHeld') return { status: 'settled' as const, outcome: 'held' as const, qty: 0, reason: l.args.reason, settleTx, message: DELIVERY_REASONS[l.args.reason] ?? '' };
     }
     throw new Error('settlement emitted no result');

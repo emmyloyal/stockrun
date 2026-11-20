@@ -9,7 +9,7 @@ Full plan (living doc): https://claude.ai/artifact/Eg2nTvmL9rk9ATxjSAcbcW
 | Nov 20–23 | Build and tape out circuits | Comparator + min circuits, RestockGuard, PickupCheck, DeliveryCheck taped out; eval matches reference on fork |
 | Nov 23–26 | Vault contract and tests | Vault deployed; fork tests incl. attack tests pass |
 | Nov 25–29 | AI agent and WhatsApp | Order parsing, supplier ranking, negotiation with 1 real supplier + 2 bots |
-| Nov 28–Dec 1 | Rider app and photo check | Pickup/delivery photos counted by AI; signed GPS; bond deposit |
+| Nov 28–Dec 1 | Logistics companies and self-pickup | Sendrelay booked from orders; its status updates drive pickup/delivery; self-pickup confirm; no bonds |
 | Nov 30–Dec 3 | Map, wiring, DeWEB | Full demo path end to end; app live on DeWEB |
 | Dec 2–4 | Pilot with shop owners | 1–2 real owners try it; quotes and feedback captured |
 | Dec 5–6 | Video and submission | 3-min video, description, form submitted |

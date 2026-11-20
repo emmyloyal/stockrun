@@ -104,7 +104,7 @@ describe.skipIf(!localChainAvailable())('photo check on a local chain', () => {
     expect(await svc.settle(id, 'pickup')).toMatchObject({ outcome: 'paid', qty: 5, reason: 0 });
   }, 60_000);
 
-  it('short delivery: 5 picked up, photo at the shop shows 3 -> owner compensated from the bond', async () => {
+  it('short delivery: 5 picked up, photo at the shop shows 3 -> delivery fee held back for the owner', async () => {
     const id = await order('5 cartons of Indomie within 5 km');
     await riderPickup(id, 5);
     counter.queue.push(report({ count: 5 }));
@@ -112,7 +112,7 @@ describe.skipIf(!localChainAvailable())('photo check on a local chain', () => {
     await riderArrive(id);
     counter.queue.push(report({ count: 3 }));
     expect(await svc.delivery(id, PHOTO)).toMatchObject({ status: 'mismatch', aiCount: 3, expected: 5 });
-    expect(await svc.confirmShort(id, 'delivery')).toMatchObject({ status: 'settled', outcome: 'compensated', qty: 2, reason: 4 });
+    expect(await svc.confirmShort(id, 'delivery')).toMatchObject({ status: 'settled', outcome: 'short', qty: 2, reason: 4 });
   }, 60_000);
 
   it('a short photo followed by a better photo settles in full; confirming needs a pending short count', async () => {

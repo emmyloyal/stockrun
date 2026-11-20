@@ -7,7 +7,8 @@ import {ITapeOutCircuits, IERC20Min} from "./interfaces/ITapeOutCircuits.sol";
 /// @notice Holds one shop's restocking funds. Every payment is decided by a TapeOut circuit.
 /// @dev Design rules (see CLAUDE.md): the agent never moves money; the vault builds every circuit
 ///      input itself; a failed circuit call holds the order; owner approval never overrides a reject.
-///      Skeleton for the hackathon — not audited.
+///      Goods are collected by a trusted handler, never by a stranger: the owner (self-pickup) or a
+///      logistics company the owner approved. There are no bonds. Skeleton for the hackathon — not audited.
 contract StockRunVault {
     // ---------------------------------------------------------------- types
     enum Status { None, AwaitingOwner, Locked, PickedUp, Delivered, Refunded }
@@ -15,7 +16,7 @@ contract StockRunVault {
     struct Order {
         bytes32 supplierId;
         address payout;        // supplier's off-ramp address, copied from the owner's registry at proposal
-        address rider;
+        address rider;         // handler: the owner (self-pickup) or an owner-approved logistics company's key
         uint8 ordered;         // order units
         uint8 cat;
         uint8 dist;
@@ -57,8 +58,9 @@ contract StockRunVault {
     mapping(bytes32 => uint256) public supplierEffectiveAt;
     mapping(bytes32 => address) public supplierPayout;          // owner-registered off-ramp address per supplier
     mapping(bytes32 => address) public pendingSupplierPayout;
-    mapping(address => uint256) public bond;                    // rider bonds
-    uint256 public totalBonds;                                  // sum of bonds: never withdrawable by the owner
+    mapping(address => bool) public carrier;                    // owner-approved logistics companies (their keys)
+    mapping(address => bool) public pendingCarrier;
+    mapping(address => uint256) public carrierEffectiveAt;
     uint256 public locked;                                      // funds locked in open orders
     Order[] public orders;
 
@@ -68,30 +70,35 @@ contract StockRunVault {
     event SupplierPaid(uint256 indexed id, address payout, uint8 qty, uint256 amount, uint8 reason);
     event PickupHeld(uint256 indexed id, uint8 reason);
     event RiderPaid(uint256 indexed id, address rider, uint256 amount);
-    event OwnerCompensated(uint256 indexed id, uint8 shortQty, uint256 amount);
+    event DeliveryShort(uint256 indexed id, uint8 shortQty, uint256 feeWithheld);
     event DeliveryHeld(uint256 indexed id, uint8 reason);
     event Refunded(uint256 indexed id, uint256 amount);
+    event SelfCollected(uint256 indexed id, uint8 qty);
 
     error NotAuthorized(); error BadStatus(); error CircuitFailed(); error Rejected(uint8 reason); error OrderTooLarge(); error NoPayout();
+    error UntrustedHandler(); error SelfPickupHasNoFee();
 
     modifier only(address who) { if (msg.sender != who) revert NotAuthorized(); _; }
 
     constructor(
         IERC20Min token_, ITapeOutCircuits circuits_, uint256 restockId, uint256 pickupId, uint256 deliveryId,
-        uint256 unit_, address owner_, address agent_, address checkService_, uint256 weeklyBudget_, uint256 limit_
+        uint256 unit_, address owner_, address agent_, address checkService_, uint256 weeklyBudget_, uint256 limit_,
+        address[] memory carriers_
     ) {
         token = token_; circuits = circuits_;
         restockGuardId = restockId; pickupCheckId = pickupId; deliveryCheckId = deliveryId;
         unit = unit_; owner = owner_; agent = agent_; checkService = checkService_;
         weeklyBudget = weeklyBudget_; limit = limit_; weekStart = block.timestamp;
+        // Logistics companies the owner chose when setting up the shop. Later additions wait DELAY.
+        for (uint256 i; i < carriers_.length; i++) { if (carriers_[i] != owner_ && carriers_[i] != address(0)) carrier[carriers_[i]] = true; }
     }
 
     // ================================================================ owner settings
     function deposit(uint256 amount) external { require(token.transferFrom(msg.sender, address(this), amount)); }
 
-    /// @notice Owner withdraws free funds. Locked order funds and rider bonds stay in the vault.
+    /// @notice Owner withdraws free funds. Funds locked in open orders stay in the vault.
     function withdraw(uint256 amount) external only(owner) {
-        require(amount + locked + totalBonds <= token.balanceOf(address(this)), "locked");
+        require(amount + locked <= token.balanceOf(address(this)), "locked");
         require(token.transfer(owner, amount));
     }
 
@@ -116,17 +123,27 @@ contract StockRunVault {
 
     function setAgent(address a) external only(owner) { agent = a; }
 
-    // ================================================================ riders
-    function postBond(uint256 amount) external {
-        require(token.transferFrom(msg.sender, address(this), amount));
-        bond[msg.sender] += amount; totalBonds += amount;
+    // ================================================================ logistics companies
+    /// @notice Owner approves (or removes) a logistics company's key. Approval waits DELAY, like a
+    ///         supplier payout change; removal is immediate and holds that company's open pickups.
+    function queueCarrier(address c, bool approve) external only(owner) {
+        if (c == address(0) || c == owner) revert UntrustedHandler();
+        if (!approve) { carrier[c] = false; carrierEffectiveAt[c] = 0; return; }
+        pendingCarrier[c] = true; carrierEffectiveAt[c] = block.timestamp + DELAY;
     }
-    // TODO: bond withdrawal with a cooldown and no open orders.
+    function applyCarrier(address c) external {
+        require(carrierEffectiveAt[c] != 0 && block.timestamp >= carrierEffectiveAt[c]);
+        carrier[c] = pendingCarrier[c]; pendingCarrier[c] = false; carrierEffectiveAt[c] = 0;
+    }
+    /// @notice Who may collect goods: the owner (self-pickup) or an approved logistics company.
+    function trustedHandler(address h) public view returns (bool) { return h == owner || carrier[h]; }
 
     // ================================================================ 1. order → RestockGuard
     function proposeOrder(
         bytes32 supplierId, uint8 ordered, uint256 unitPrice, uint8 cat, uint8 dist, address rider, uint256 riderFee
     ) external only(agent) returns (uint256 id) {
+        if (!trustedHandler(rider)) revert UntrustedHandler();
+        if (rider == owner && riderFee != 0) revert SelfPickupHasNoFee();
         id = orders.length;
         Order storage o = orders.push();
         o.supplierId = supplierId; o.payout = supplierPayout[supplierId]; o.ordered = ordered; o.unitPrice = unitPrice;
@@ -166,6 +183,9 @@ contract StockRunVault {
     }
 
     // ================================================================ 2. pickup → PickupCheck
+    /// @notice The handler confirms the goods at the supplier: the owner when collecting, or the logistics
+    ///         company once its rider has checked them against the order. The handler's count is what the
+    ///         supplier is paid for; a photo count from the check service, if one is given, can only lower it.
     function riderPickup(uint256 id, bool atSupplier, uint8 riderCount) external {
         Order storage o = orders[id];
         if (msg.sender != o.rider) revert NotAuthorized();
@@ -181,11 +201,14 @@ contract StockRunVault {
 
     function settlePickup(uint256 id) external {
         Order storage o = orders[id];
-        if (o.status != Status.Locked || !o.riderCounted || !o.aiCounted) revert BadStatus();
-        bool bonded = bond[o.rider] >= _orderValue(o);
+        if (o.status != Status.Locked || !o.riderCounted) revert BadStatus();
+        // PickupCheck's `bonded` input (circuit #2, unchanged) now carries "the handler is trusted". It is
+        // re-checked here, so removing a logistics company holds its pickups (reason 2).
+        bool trusted = trustedHandler(o.rider);
+        uint8 photoCount = o.aiCounted ? o.aiCount : o.riderCount;   // no photo: the handler's count stands
         bytes memory input = _pack(
-            _f(o.atSupplier ? 1 : 0, 1), _f(o.ordered, 8), _f(o.aiCount, 8), _f(o.riderCount, 8),
-            _f(o.pickupDamage ? 1 : 0, 1), _f(bonded ? 1 : 0, 1), _f(0, 0), _f(0, 0)
+            _f(o.atSupplier ? 1 : 0, 1), _f(o.ordered, 8), _f(photoCount, 8), _f(o.riderCount, 8),
+            _f(o.pickupDamage ? 1 : 0, 1), _f(trusted ? 1 : 0, 1), _f(0, 0), _f(0, 0)
         );
         uint256[] memory out = _unpack(_eval(pickupCheckId, input), _w3(2, 8, 3));
         uint8 decision = uint8(out[0]); uint8 qty = uint8(out[1]); uint8 reason = uint8(out[2]);
@@ -199,6 +222,8 @@ contract StockRunVault {
         if (unused > 0) spentThisWeek -= unused;
         require(token.transfer(o.payout, pay));
         emit SupplierPaid(id, o.payout, qty, pay, reason);
+        // Self-pickup: the owner has the goods in hand, so there is no delivery step and no fee.
+        if (o.rider == owner) { o.status = Status.Delivered; emit SelfCollected(id, qty); }
     }
 
     // ================================================================ 3. delivery → DeliveryCheck
@@ -238,13 +263,12 @@ contract StockRunVault {
         if (decision == 2) {                                                 // PAY_RIDER
             require(token.transfer(o.rider, o.riderFee));
             emit RiderPaid(id, o.rider, o.riderFee);
-        } else if (decision == 1) {                                          // COMPENSATE from bond; fee withheld
+        } else if (decision == 1) {                                          // SHORT: delivery fee withheld
+            // No bonds: the fee stays in the vault for the owner, and the shortfall is claimed off-chain from
+            // the logistics company (insurance or dispute). Circuit #3's COMPENSATE decision lands here.
             if (shortQty == 0 || shortQty > o.picked) revert CircuitFailed();
-            uint256 comp = uint256(shortQty) * o.unitPrice;
-            if (comp > bond[o.rider]) comp = bond[o.rider];
-            bond[o.rider] -= comp; totalBonds -= comp;                       // comp stays in vault for the owner
-            spentThisWeek = spentThisWeek > o.riderFee + comp ? spentThisWeek - o.riderFee - comp : 0;
-            emit OwnerCompensated(id, shortQty, comp);
+            spentThisWeek = spentThisWeek > o.riderFee ? spentThisWeek - o.riderFee : 0;
+            emit DeliveryShort(id, shortQty, o.riderFee);
         } else revert CircuitFailed();
     }
 

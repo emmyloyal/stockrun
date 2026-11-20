@@ -29,7 +29,7 @@ describe.skipIf(!localChainAvailable())('agent end to end on a local chain', () 
 
   afterAll(() => { chain?.stop(); });
 
-  it('small order: negotiates, books a bonded rider, RestockGuard approves and locks funds', async () => {
+  it('small order: negotiates, books a trusted logistics company, RestockGuard approves and locks funds', async () => {
     const report = await handleOrder('5 cartons of Indomie within 5 km', deps);
     const [o] = report.outcomes;
     expect(o.kind).toBe('proposed');

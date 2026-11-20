@@ -14,7 +14,7 @@ import { RuleExtractor } from '../rules.ts';
 import { BotChannel } from '../sim/bots.ts';
 import { startLocalChain, accounts, DEMO_SHOP, TOKEN_PER_NAIRA } from '../sim/localChain.ts';
 import { CheckService } from '../check/checkService.ts';
-import { GeminiPhotoCounter } from '../check/photoCount.ts';
+import { GeminiPhotoCounter, NoPhotoCounter } from '../check/photoCount.ts';
 import { JobStore } from '../check/jobs.ts';
 import { PriceBook } from '../prices/priceBook.ts';
 import { fixedRate } from '../chain/money.ts';
@@ -38,7 +38,8 @@ const staticDir = fileURLToPath(new URL('../../../app/dist/', import.meta.url));
 
 const server = createApi({
   pub: chain.pub, vault: chain.vault, chainId: anvil.id, jobs, check, money: fixedRate(TOKEN_PER_NAIRA), rpcUrl: chain.url,
-  agent: { extractor, channel: new BotChannel(), vault: chain.vaultClient, riders: chain.riders, shop: DEMO_SHOP, money: fixedRate(TOKEN_PER_NAIRA), jobs, prices: new PriceBook() },
+  settler: check ?? new CheckService(chain.vault, chain.pub, checker, new NoPhotoCounter(), jobs),
+  agent: { extractor, channel: new BotChannel(), vault: chain.vaultClient, riders: chain.riders, ownerAddress: accounts.owner.address, shop: DEMO_SHOP, money: fixedRate(TOKEN_PER_NAIRA), jobs, prices: new PriceBook() },
   staticDir: existsSync(staticDir) ? staticDir : undefined,
   demoKeys: DEMO_KEYS,
   log: (l) => console.log(`[app] ${l}`),

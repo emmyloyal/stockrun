@@ -52,7 +52,7 @@ export interface Supplier {
 export interface Rider {
   id: string;
   name: string;
-  address: `0x${string}`;  // rider's wallet (bond holder)
+  address: `0x${string}`;  // the handler's on-chain key: a logistics company the shop approved (no bond)
   lat: number;
   lng: number;
 }

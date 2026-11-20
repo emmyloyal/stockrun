@@ -24,7 +24,7 @@ if (existsSync(envFile)) process.loadEnvFile(envFile);
 const AGENT_FUND = parseEther('0.001'), CHECK_FUND = parseEther('0.002'); // what we send the service keys on mainnet
 const USER_GAS_TOPUP = parseEther('0.00005'); // planned OKB top-up per owner / rider
 const vaultAbi = parseAbi([
-  'function deposit(uint256)', 'function queueSupplier(bytes32,uint8,address)', 'function applySupplier(bytes32)', 'function postBond(uint256)',
+  'function deposit(uint256)', 'function queueSupplier(bytes32,uint8,address)', 'function applySupplier(bytes32)',
   'function riderPickup(uint256,bool,uint8)', 'function riderArrive(uint256,bool)', 'function ownerConfirm(uint256,bool,bool)',
 ]);
 class Scripted implements PhotoCounter { queue: PhotoCount[] = []; async count() { return this.queue.shift() ?? null; } }
@@ -73,7 +73,7 @@ try {
   const okb0 = { deployer: await p.pub.getBalance({ address: p.deployer.account.address }) };
 
   // 1. Shop vault: weekly budget ₦300,000, auto-approve up to ₦100,000.
-  const vault = await deployVault(p, owner.address, 300_000, 100_000);
+  const vault = await deployVault(p, owner.address, 300_000, 100_000, [rider.address]);  // rider = the shop's logistics company
   const deployCost = okb0.deployer - await p.pub.getBalance({ address: p.deployer.account.address });
   console.log(`vault ${vault} deployed; cost ${formatEther(deployCost)} OKB on the fork`);
 
@@ -85,10 +85,8 @@ try {
   await test.increaseTime({ seconds: 86_400 }); await test.mine({ blocks: 1 });
   await send(ow.writeContract({ address: vault, abi: vaultAbi, functionName: 'applySupplier', args: [supplierKey('sim-mile12-adeyemi')] }));
 
-  // 3. Rider: bond 80 USDT0 in this vault.
+  // 3. Logistics company: trusted by this vault from set-up; no bond.
   const rw = createWalletClient({ account: rider, chain: xLayerChain, transport: http(url, FORK_HTTP) });
-  await send(rw.writeContract({ address: p.token, abi: tokenAbi, functionName: 'approve', args: [vault, 2n ** 255n] }));
-  await send(rw.writeContract({ address: vault, abi: vaultAbi, functionName: 'postBond', args: [80_000_000n] }));
 
   // 4. Agent: order from text; RestockGuard (#1, real circuit) decides.
   const jobs = new JobStore();

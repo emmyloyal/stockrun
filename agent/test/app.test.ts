@@ -71,9 +71,9 @@ describe.skipIf(!localChainAvailable())('multi-shop app server', () => {
   }, 60_000);
   afterAll(() => { server?.close(); chain?.stop(); });
 
-  it('two owners and two riders: sign up, set up, order, pick up, with nobody reaching anyone else', async () => {
-    const ada = person('0803 111 1111'), bisi = person('0803 222 2222'), tunde = person('0805 333 3333'), musa = person('0805 444 4444');
-    for (const [who, role] of [[ada, 'owner'], [bisi, 'owner'], [tunde, 'rider'], [musa, 'rider']] as const) await who.signIn(role);
+  it('two owners: set up, deposit, order with a logistics company or collect it yourself, with neither reaching the other', async () => {
+    const ada = person('0803 111 1111'), bisi = person('0803 222 2222'), tunde = person('0805 333 3333');
+    for (const [who, role] of [[ada, 'owner'], [bisi, 'owner'], [tunde, 'rider']] as const) await who.signIn(role);
 
     // Shop setup deploys a vault owned by the phone key.
     const shop = (await ada.call('/api/shop', { name: "Ada's Provisions", ...OJOTA, weeklyBudgetNaira: 500_000, limitNaira: 100_000 })).json.shop;
@@ -94,26 +94,37 @@ describe.skipIf(!localChainAvailable())('multi-shop app server', () => {
     await ada.sign(shop.vault, 'deposit', [p.money.toToken(400_000)]);
     expect((await ada.call('/api/shop/money')).json).toMatchObject({ vaultNaira: 400_000, availableNaira: 400_000, weeklyBudgetNaira: 500_000, limitNaira: 100_000 });
 
-    // Riders: profile + bond in Ada's vault.
-    await tunde.call('/api/rider/profile', { name: 'Tunde', lat: 6.6, lng: 3.39 });
-    await musa.call('/api/rider/profile', { name: 'Musa', lat: 6.45, lng: 3.39 });
-    await tunde.sign(p.token, 'approve', [shop.vault, 2n ** 255n]);
-    await tunde.sign(shop.vault, 'postBond', [p.money.toToken(200_000)]);
-
-    // Order: the agent proposes to Ada's vault; RestockGuard approves; Tunde (bonded) is booked.
+    // Order with a logistics company: the platform's company is trusted by every new vault; no bond anywhere.
+    const company = p.carriers[0].wallet;
     const placed = (await ada.call('/api/orders', { text: '5 cartons of Indomie within 5 km' })).json;
-    expect(placed.message).toMatch(/funds locked in escrow\. Order #0/);
+    expect(placed.message).toMatch(/delivery by Demo logistics company.*funds locked in escrow\. Order #0/);
     expect((await bisi.call('/api/orders')).json).toEqual([]);                       // Bisi sees none of Ada's orders
-    const [job] = (await tunde.call('/api/rider/jobs')).json;
-    expect(job).toMatchObject({ shopId: shop.id, orderId: '0', status: 'Locked', rider: tunde.key.address });
-    expect((await musa.call('/api/rider/jobs')).json).toEqual([]);
+    const [job] = (await ada.call('/api/orders')).json;
+    expect(job).toMatchObject({ orderId: '0', status: 'Locked', rider: company.account.address });
 
-    // Pickup: Tunde signs his count; Musa cannot send photos for Tunde's job; the photo settles the pickup.
-    await tunde.sign(shop.vault, 'riderPickup', [0n, true, 5]);
-    expect((await musa.call(`/api/jobs/${shop.id}/0/photo`, { stage: 'pickup', mediaType: 'image/jpeg', data: JPEG })).status).toBe(404);
-    counter.queue.push(seen(5));
-    expect((await tunde.call(`/api/jobs/${shop.id}/0/photo`, { stage: 'pickup', mediaType: 'image/jpeg', data: JPEG })).json).toMatchObject({ status: 'settled', outcome: 'paid', qty: 5 });
+    // The company confirms the 5 cartons at pickup (its dispatch desk signs); no photo needed; the supplier is paid.
+    const ch = await company.writeContract({ address: shop.vault, abi: vaultAbi, functionName: 'riderPickup', args: [0n, true, 5] });
+    await p.pub.waitForTransactionReceipt({ hash: ch });
+    expect((await bisi.call(`/api/orders/0/settle`, { stage: 'pickup' })).status).toBe(404);       // not Bisi's order
+    expect((await ada.call(`/api/orders/0/settle`, { stage: 'pickup' })).json).toMatchObject({ status: 'settled', outcome: 'paid', qty: 5 });
     expect(await p.pub.readContract({ address: p.token, abi: tokenAbi, functionName: 'balanceOf', args: [p.supplierPayout] })).toBe(5n * p.money.toToken(13_300));
+
+    // Bisi collects herself: no delivery fee; her own count pays the supplier and the order is done.
+    const bshop = (await bisi.call('/api/me')).json.shop;
+    await bisi.sign(bshop.vault, 'queueSupplier', [adeyemi.key, 1, map.supplierPayout]);
+    await bisi.call('/api/dev/advance-day', {});
+    await bisi.sign(bshop.vault, 'applySupplier', [supplierKey('sim-mile12-adeyemi')]);
+    await bisi.sign(p.token, 'approve', [bshop.vault, 2n ** 255n]);
+    await bisi.sign(bshop.vault, 'deposit', [p.money.toToken(100_000)]);
+    const mine = (await bisi.call('/api/orders', { text: '3 cartons of Indomie within 10 km', delivery: 'self' })).json;
+    expect(mine.message).toMatch(/you collect it yourself, no delivery fee.*funds locked in escrow/);
+    const [bjob] = (await bisi.call('/api/orders')).json;
+    expect(bjob).toMatchObject({ rider: bisi.key.address, riderFeeNaira: 0, status: 'Locked' });
+    const payoutBefore = await p.pub.readContract({ address: p.token, abi: tokenAbi, functionName: 'balanceOf', args: [p.supplierPayout] });
+    await bisi.sign(bshop.vault, 'riderPickup', [BigInt(bjob.orderId), true, 3]);
+    expect((await bisi.call(`/api/orders/${bjob.orderId}/settle`, { stage: 'pickup' })).json).toMatchObject({ status: 'settled', outcome: 'paid', qty: 3 });
+    expect(await p.pub.readContract({ address: p.token, abi: tokenAbi, functionName: 'balanceOf', args: [p.supplierPayout] }) - payoutBefore).toBe(3n * p.money.toToken(13_300));
+    expect((await bisi.call('/api/orders')).json[0].status).toBe('Delivered');
   }, 120_000);
 
   it('refuses the unauthenticated, the wrong role, non-JSON writes and test-node controls', async () => {

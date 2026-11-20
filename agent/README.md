@@ -22,7 +22,7 @@ npm run demo -- "5 cartons of Indomie, 10 bags of rice at 80k, within 5 km"
 | parse_order | `src/tools/parseOrder.ts` | Gemini maps free text (English/Pidgin) onto the product catalogue. Code validates the result: quantity 1–255, prices, radius. |
 | search_suppliers | `src/tools/suppliers.ts` | Suppliers within the radius that stock the item, ranked preferred > approved > unknown, then by distance and price. Blocked suppliers are dropped. Unknown suppliers are only *suggested* to the owner. |
 | negotiate | `src/tools/negotiate.ts` | Fixed-wording messages, so no message can ever promise payment before the pickup check (guard + tests). Gemini reads each reply. Code counters: first 5% under the ask, then halfway, and never above the ceiling (the owner's max, or list price + 5%). |
-| book_rider | `src/tools/riders.ts` | Nearest rider whose vault bond covers the goods. Fee: ₦1,500 + ₦250/km. |
+| book_rider | `src/tools/riders.ts` | Nearest logistics company the shop's vault trusts (no bond). Simulated fee: ₦1,500 + ₦250/km; Sendrelay quotes come from `src/logistics/`. Self-pickup skips this. |
 | propose_order | `src/tools/vault.ts` | Simulates first, so a REJECT costs no gas. Then it sends the transaction and reads `OrderProposed`. Results: locked / ask owner / rejected (with reason) / too large / circuit failed. |
 | report | `ownerMessage` in `src/agent.ts` | WhatsApp summary for the owner. Every on-chain claim carries the tx hash. |
 
@@ -75,7 +75,7 @@ The check service holds the **check key**. That key can only call `attestPickup`
 2. **Code decides.** `decideCount` only attests a clear count. Anything doubtful asks the rider for a new photo, and the order holds meanwhile.
 3. **The circuit pays.** After attesting, the service calls `settlePickup` or `settleDelivery`.
    - PickupCheck pays the supplier for the lower of the photo count and the rider's count.
-   - DeliveryCheck pays the rider, compensates the owner from the bond, or waits.
+   - DeliveryCheck pays the logistics company, holds its fee back for the owner when goods arrive short, or waits.
 - `JobStore` keeps what the chain does not: the item, the unit, and the supplier and shop locations. All money figures are read from the vault.
 - **Try it on a real photo:** `npm run count -- photo.jpg "Indomie noodles carton (40 x 70g)" carton 5`. The last number is the order size, used only by code. This needs `GEMINI_API_KEY`. Nothing is attested.
 - **Photo test, 19 Nov 2026** (gemini-3.5-flash-lite; 5 public Wikimedia Commons photos plus 1 drawn test image; the photos are not in the repo):
@@ -109,7 +109,8 @@ You play the supplier on your own phone. Only the negotiation runs: no vault, no
 - **WhatsApp template and hosting:** the `order_request` template for first contact is not registered, and there is no hosted webhook yet. The agent and webhook run locally behind a tunnel.
 - **Owner replies:** handling "YES <id>" as `approveOrder` is not built. The owner must sign that with the owner key; the agent key cannot do it.
 - **Hosted app:** the app is built (`app/`, served by `npm run app` and `npm run serve`), but it is not deployed anywhere yet.
-- **Rider screens for real accounts:** a rider can sign in and make a key, then sees "not built yet". Rider profile, bond and jobs exist in the server API only. Until they are built, no rider can be booked on the real-account server, so orders stop at "no bonded rider is free".
+- **Logistics companies on real orders:** the Sendrelay connector works (`npm run carrier:try`), but booking it from an order and driving pickup/delivery from its status updates is not wired in yet. On the local server a simulated company stands in; on `serve:xlayer` no company is configured yet, so only self-pickup works there.
+- **Individual riders:** dropped in favour of logistics companies. Rider sign-in still exists but shows "not built yet".
 - **Getting USDT0 onto a buyer's phone:** not built. The deposit screen shows the phone's address to send USDT0 to.
 - **Real suppliers:** every supplier in `data/suppliers.json` is a simulated bot, also on `serve:xlayer`.
 - **Signed GPS:** the rider's "at the supplier" and "at the shop" are still self-reported.

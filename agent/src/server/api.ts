@@ -19,6 +19,8 @@ export interface ApiDeps {
   chainId: number;
   agent: AgentDeps;
   check: CheckService | null;          // null when no photo model is configured
+  /** Runs settlements (anyone may); works without a photo model, e.g. for self-pickup. */
+  settler: CheckService;
   jobs: JobStore;
   money: Money;
   rpcUrl: string;                      // chain RPC that /rpc forwards to
@@ -76,7 +78,7 @@ export function createApi(d: ApiDeps): Server {
     ['POST', /^\/api\/orders$/, async (_m, body) => {
       const text = typeof body?.text === 'string' ? body.text.trim() : '';
       if (!text || text.length > 2000) throw new HttpError(400, 'Send the order as text (up to 2,000 characters).');
-      const report = await handleOrder(text, d.agent);
+      const report = await handleOrder(text, d.agent, { delivery: body?.delivery === 'self' ? 'self' : 'logistics' });
       return { message: report.message, problems: report.problems };
     }],
     ['POST', /^\/api\/orders\/(\d+)\/photo$/, async (m, body) => {
@@ -99,15 +101,14 @@ export function createApi(d: ApiDeps): Server {
       return r;
     }],
     ['POST', /^\/api\/orders\/(\d+)\/settle$/, async (m, body) => {
-      if (!d.check) throw new HttpError(503, 'Settlement runs through the check service, which is off.');
       const stage = body?.stage === 'delivery' ? 'delivery' : 'pickup';
       try {
-        const r = await d.check.settle(BigInt(m[1]), stage);
+        const r = await d.settler.settle(BigInt(m[1]), stage);
         const prev = lastCheck.get(m[1]);
         const merged = { ...r, aiCount: prev && 'aiCount' in prev ? prev.aiCount : 0, damage: prev && 'damage' in prev ? prev.damage : false, attestTx: prev && 'attestTx' in prev ? prev.attestTx : r.settleTx } as CheckResult;
         lastCheck.set(m[1], merged);
         return merged;
-      } catch { throw new HttpError(409, 'Not ready to settle yet: both the photo check and the rider\'s step are needed.'); }
+      } catch { throw new HttpError(409, 'Not ready to settle yet: the count at pickup is needed first.'); }
     }],
   ];
 

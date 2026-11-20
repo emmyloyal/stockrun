@@ -1,5 +1,5 @@
-// book_rider: nearest rider whose bond covers the goods. In the demo the pool is simulated;
-// bonds are read from the vault, so an unbonded rider is never booked (PickupCheck would hold anyway).
+// book_rider: the nearest logistics company this shop's vault trusts. No bonds: the vault only accepts handlers the
+// owner approved (or the owner, for self-pickup), and PickupCheck re-checks that before paying.
 import type { Address } from 'viem';
 import type { Rider, Shop, Supplier } from '../types.ts';
 import { haversineKm } from './suppliers.ts';
@@ -10,11 +10,11 @@ export function riderFeeNaira(km: number): number {
 }
 
 export async function bookRider(
-  pool: Rider[], supplier: Supplier, shop: Shop, goodsValue: bigint, bondOf: (a: Address) => Promise<bigint>,
+  pool: Rider[], supplier: Supplier, shop: Shop, trusted: (a: Address) => Promise<boolean>,
 ): Promise<{ rider: Rider; feeNaira: number } | null> {
   const byDistance = [...pool].sort((a, b) => haversineKm(a, supplier) - haversineKm(b, supplier));
   for (const rider of byDistance) {
-    if ((await bondOf(rider.address)) >= goodsValue) return { rider, feeNaira: riderFeeNaira(haversineKm(supplier, shop)) };
+    if (await trusted(rider.address)) return { rider, feeNaira: riderFeeNaira(haversineKm(supplier, shop)) };
   }
   return null;
 }
