@@ -1,11 +1,11 @@
-// StockRun for everyone: sign in with a phone number or a wallet, keep a profile, deposit naira, and ask the agent
+// StockRun for everyone: sign in with an email address or a wallet, keep a profile, deposit naira, and ask the agent
 // for what you want with a budget and a delivery pin. The agent finds sellers on the map, negotiates on WhatsApp and
 // pays the seller only once the logistics company (or you, collecting) has the goods.
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import {
-  avatarUrl, currentPosition, hasWallet, load, naira, preparePhoto, readSmsCode, save, server, short, signWithWallet,
+  avatarUrl, currentPosition, hasWallet, load, naira, preparePhoto, save, server, short, signWithWallet,
   type Coins, type Config, type Me, type Movement, type Order, type Place, type RequestRecord, type Seller, type User,
 } from './lib';
 import { CircuitTrail, Outcome, StatusPill } from './ui';
@@ -55,41 +55,18 @@ export function AccountApp({ cfg }: { cfg: Config }) {
   );
 }
 
-// ---------------------------------------------------------------- sign in: phone or wallet
+// ---------------------------------------------------------------- sign in: email or wallet
 function SignIn({ cfg, onDone }: { cfg: Config; onDone: () => void }) {
-  const [way, setWay] = useState<'phone' | 'email' | 'wallet'>(cfg.emailSignIn ? 'email' : 'phone');
-  const [phone, setPhone] = useState('');
+  const [way, setWay] = useState<'email' | 'wallet'>(cfg.emailSignIn ? 'email' : 'wallet');
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const go = (label: string, f: () => Promise<void>) => run(setBusy, setError, label, f);
-  const signIn = (c: string) => go('Signing in…', async () => {
-    if (way === 'email') await server.emailVerify(email, c); else await server.verify(phone, c);
-    save('stockrun.signin', way); onDone();
-  });
+  const signIn = (c: string) => go('Signing in…', async () => { await server.emailVerify(email, c); save('stockrun.signin', 'email'); onDone(); });
   const pick = (w: typeof way) => { setWay(w); setSent(false); setCode(''); setError(''); };
   const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
-  const codeBox = (<>
-    <label className="field"><span>6-digit code</span>
-      <input inputMode="numeric" autoComplete="one-time-code" autoFocus maxLength={6} value={code} onChange={(e) => {
-        const c = e.target.value.replace(/\D/g, '');
-        setCode(c);
-        if (c.length === 6 && !busy) signIn(c);   // pasted or filled in by the phone: sign in straight away
-      }} />
-    </label>
-    <p className="fine">{way === 'email' ? `We've emailed a code to ${email.trim()}. Not there? Check Spam or Promotions.` : "We've texted you a code. Your phone may fill it in for you."}</p>
-    <button className="btn primary" disabled={!!busy || code.length !== 6} onClick={() => signIn(code)}>Sign in</button>
-    <button className="link" disabled={!!busy} onClick={() => { setSent(false); setCode(''); }}>{way === 'email' ? 'Use a different email' : 'Use a different number'}</button>
-  </>);
-  // Once a texted code is sent, let the phone read it from the SMS and sign in by itself (Android Chrome: Web OTP).
-  useEffect(() => {
-    if (!sent || way !== 'phone') return;
-    const stop = new AbortController();
-    readSmsCode(stop.signal).then((c) => { if (c && !stop.signal.aborted) { setCode(c); signIn(c); } });
-    return () => stop.abort();
-  }, [sent, way]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <section className="stack">
@@ -100,7 +77,6 @@ function SignIn({ cfg, onDone }: { cfg: Config; onDone: () => void }) {
       </header>
       <nav className="tabs" role="tablist">
         {cfg.emailSignIn && <button role="tab" aria-selected={way === 'email'} className={way === 'email' ? 'on' : ''} onClick={() => pick('email')}>Email</button>}
-        <button role="tab" aria-selected={way === 'phone'} className={way === 'phone' ? 'on' : ''} onClick={() => pick('phone')}>Phone number</button>
         <button role="tab" aria-selected={way === 'wallet'} className={way === 'wallet' ? 'on' : ''} onClick={() => pick('wallet')}>Wallet</button>
       </nav>
       <div className="panel stack">
@@ -108,16 +84,20 @@ function SignIn({ cfg, onDone }: { cfg: Config; onDone: () => void }) {
           <label className="field"><span>Email address</span>
             <input type="email" inputMode="email" autoComplete="email" placeholder="ada@gmail.com" value={email} onChange={(e) => setEmail(e.target.value)} disabled={sent} />
           </label>
-          {!sent
-            ? <button className="btn primary" disabled={!!busy || !emailOk} onClick={() => go('Sending…', async () => { await server.emailCode(email.trim()); setSent(true); })}>Email me a code</button>
-            : codeBox}
-        </>) : way === 'phone' ? (<>
-          <label className="field"><span>Phone number</span>
-            <input inputMode="tel" autoComplete="tel" placeholder="0803 123 4567" value={phone} onChange={(e) => setPhone(e.target.value)} disabled={sent} />
-          </label>
-          {!sent
-            ? <button className="btn primary" disabled={!!busy || phone.replace(/\D/g, '').length < 10} onClick={() => go('Sending…', async () => { await server.requestCode(phone); setSent(true); })}>Send me a code</button>
-            : codeBox}
+          {!sent ? (
+            <button className="btn primary" disabled={!!busy || !emailOk} onClick={() => go('Sending…', async () => { await server.emailCode(email.trim()); setSent(true); })}>Email me a code</button>
+          ) : (<>
+            <label className="field"><span>6-digit code</span>
+              <input inputMode="numeric" autoComplete="one-time-code" autoFocus maxLength={6} value={code} onChange={(e) => {
+                const c = e.target.value.replace(/\D/g, '');
+                setCode(c);
+                if (c.length === 6 && !busy) signIn(c);   // pasted or filled in: sign in straight away
+              }} />
+            </label>
+            <p className="fine">We've emailed a code to {email.trim()}. Not there? Check Spam or Promotions.</p>
+            <button className="btn primary" disabled={!!busy || code.length !== 6} onClick={() => signIn(code)}>Sign in</button>
+            <button className="link" disabled={!!busy} onClick={() => { setSent(false); setCode(''); }}>Use a different email</button>
+          </>)}
         </>) : (<>
           <p>Sign in with OKX Wallet or MetaMask. You sign a short message: it costs nothing and moves no money.</p>
           {!hasWallet() && <p className="warn">No wallet found in this browser. Open StockRun inside the OKX Wallet or MetaMask app, or install their extension.</p>}
@@ -317,7 +297,7 @@ function Money({ cfg, me, onChange }: { cfg: Config; me: Me; onChange: () => voi
   const [note, setNote] = useState('');
   const [sheet, setSheet] = useState<null | 'amount' | 'pay'>(null);
   const [amount, setAmount] = useState(0);
-  // Naira for people who signed in with a phone number or email, dollars for people who signed in with a wallet.
+  // Naira for people who signed in with email, dollars for people who signed in with a wallet.
   const how = load<'phone' | 'email' | 'wallet' | ''>('stockrun.signin', '');
   const currency: Currency = how === 'wallet' || (!how && !me.user?.phone && !me.user?.email && me.user?.wallet) ? 'usd' : 'ngn';
   const close = useCallback(() => { setSheet(null); setError(''); }, []);
@@ -491,9 +471,6 @@ function AmountSheet({ title, currency, max, onClose, onContinue }: { title: str
 function Profile({ user, onChange }: { user: User; onChange: () => void }) {
   const [username, setUsername] = useState(user.username ?? '');
   const [displayName, setDisplayName] = useState(user.displayName ?? '');
-  const [phone, setPhone] = useState('');
-  const [code, setCode] = useState('');
-  const [sent, setSent] = useState(false);
   const [pic, setPic] = useState(0);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
@@ -513,26 +490,19 @@ function Profile({ user, onChange }: { user: User; onChange: () => void }) {
         <label className="field"><span>Username</span><input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="ada_lagos" maxLength={20} /></label>
         <label className="field"><span>Name</span><input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Ada Obi" maxLength={40} /></label>
         <button className="btn primary" disabled={!!busy} onClick={() => go('Saving…', async () => { await server.profile({ username: username.trim() || undefined, displayName }); onChange(); setSaved('Saved.'); })}>Save</button>
-        <p className="fine">Your username, name and picture are public. Your phone number, email and wallet are never shown to others.</p>
+        <p className="fine">Your username, name and picture are public. Your email and wallet are never shown to others.</p>
       </div>
       <div className="panel stack">
         <h2>Sign-in methods</h2>
-        <p>Phone: {user.phone ?? 'not added'}{user.email ? ` · Email: ${user.email}` : ''} · Wallet: {user.wallet ? short(user.wallet) : 'not connected'}</p>
+        <p>Email: {user.email ?? 'not added'} · Wallet: {user.wallet ? short(user.wallet) : 'not connected'}</p>
         {!user.wallet && <button className="btn ghost" disabled={!!busy || !hasWallet()} onClick={() => go('Waiting for your wallet…', async () => {
           const s = await signWithWallet(async (a) => (await server.walletMessage(a)).message);
           await server.addWallet(s.message, s.signature); onChange(); setSaved('Wallet connected.');
         })}>{hasWallet() ? 'Connect a wallet' : 'No wallet in this browser'}</button>}
-        {!user.phone && (<>
-          <label className="field"><span>Add a phone number</span><input inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="0803 123 4567" disabled={sent} /></label>
-          {!sent ? <button className="btn ghost" disabled={!!busy || phone.replace(/\D/g, '').length < 10} onClick={() => go('Sending…', async () => { await server.requestCode(phone); setSent(true); })}>Send code</button> : (<>
-            <label className="field"><span>Code</span><input inputMode="numeric" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} /></label>
-            <button className="btn ghost" disabled={!!busy || code.length !== 6} onClick={() => go('Adding…', async () => { await server.addPhone(phone, code); onChange(); setSaved('Phone added.'); })}>Add phone</button>
-          </>)}
-        </>)}
       </div>
       <div className="panel stack">
         <h2>Log out</h2>
-        <p className="fine">Logs you out on this phone. Your balance, orders and profile stay safe; log back in with your phone number or wallet.</p>
+        <p className="fine">Logs you out on this device. Your balance, orders and profile stay safe; log back in with your email or wallet.</p>
         <button className="btn danger" disabled={!!busy} onClick={() => go('Logging out…', async () => {
           await server.logout();
           save('stockrun.signin', '');

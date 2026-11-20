@@ -1,21 +1,20 @@
-// The real multi-shop StockRun server: phone sign-in, one vault per shop owner, buyers deposit from their own phone key
+// The real multi-shop StockRun server: email or wallet sign-in, one vault per shop owner, buyers deposit from their own phone key
 // and then tell the agent what to buy.
-//   npm run serve            local anvil chain, test money, SMS codes printed here (for trying the app)
+//   npm run serve            local anvil chain, test money, emailed sign-in codes printed here (for trying the app)
 //   npm run serve:xlayer     X Layer MAINNET: real USDT0, the taped-out circuits, real gas
 // X Layer needs in ../.env: DEPLOYER_PRIVATE_KEY, AGENT_PRIVATE_KEY, CHECK_SERVICE_PRIVATE_KEY, SUPPLIER_PAYOUT_ADDRESS,
-// NGN_PER_USD, SERVER_SECRET (32+ characters), and an SMS sender (TWILIO_* or SMS=console). Optional: GEMINI_API_KEY
+// NGN_PER_USD, SERVER_SECRET (32+ characters), and the GMAIL_* keys for emailed sign-in codes (or SMS=console to print them). Optional: GEMINI_API_KEY
 // (photo check and order reading), APP_PORT (8080), DB_FILE (agent/data/stockrun.db), SECURE_COOKIES=1 behind HTTPS.
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { formatEther } from 'viem';
 import { createApp } from './app.ts';
-import { Accounts, openDb } from '../accounts/accounts.ts';
+import { Accounts, AuthError, openDb } from '../accounts/accounts.ts';
 import { Buyers } from '../buyers/buyers.ts';
 import { Ledger } from '../money/ledger.ts';
 import { Paystack } from '../money/paystack.ts';
 import { NairaOrders } from '../orders/nairaOrders.ts';
-import { smsFromEnv } from '../accounts/sms.ts';
 import { emailFromEnv } from '../accounts/email.ts';
 import { circuitEvaluator, envValue, localPlatform, xlayerPlatform, type Platform } from '../chain/platform.ts';
 import { startLocalChain } from '../sim/localChain.ts';
@@ -45,7 +44,6 @@ if (network === 'xlayer') {
 
 const secret = envValue(env, 'SERVER_SECRET') ?? (network === 'local' ? 'local-only-secret-not-for-real-use-0000000' : undefined);
 if (!secret || secret.length < 32) throw new Error('Set SERVER_SECRET in .env (32+ random characters). It protects sign-in codes.');
-const { sms, kind: smsKind } = smsFromEnv(env, network === 'local');
 const { mail, kind: mailKind } = emailFromEnv(env, network === 'local');
 
 // Local: a fresh database each run (the chain is fresh too). X Layer: a file (accounts, naira ledger, orders).
@@ -63,9 +61,9 @@ const orders = new NairaOrders({ db, ledger, evalCircuit: circuitEvaluator(p), s
 buyers = new Buyers(db, p, ledger, orders, { extractor, channel: new BotChannel(), prices, log, dataDir: network === 'local' ? null : dirname(dbFile) });
 const paystackKey = envValue(env, 'PAYSTACK_SECRET_KEY');
 const publicUrl = envValue(env, 'PUBLIC_URL') ?? `http://localhost:${port}`;
-// Code texts end with "@<this site's domain> #<code>" so phones can fill the code in by themselves (Web OTP).
-const otpHost = (() => { try { const u = new URL(publicUrl); return u.protocol === 'https:' && !u.port ? u.hostname : null; } catch { return null; } })();
-const accounts = new Accounts(db, sms, secret, Date.now, otpHost, mail);
+// Sign-in is by email or wallet. Phone sign-in is off (no SMS sender); accounts made earlier by phone still work.
+const noSms = { send: async () => { throw new AuthError(503, 'Phone sign-in is off. Use email or a wallet.'); } };
+const accounts = new Accounts(db, noSms, secret, Date.now, null, mail);
 const paystack = paystackKey ? new Paystack(db, ledger, { secretKey: paystackKey, callbackUrl: `${publicUrl}/?deposit=done` }) : null;
 
 const staticDir = fileURLToPath(new URL('../../../app/dist/', import.meta.url));
@@ -90,7 +88,7 @@ server.on('error', (e: NodeJS.ErrnoException) => {
 server.listen(port, async () => {
   console.log(`StockRun on http://localhost:${port}  (${network === 'xlayer' ? 'X LAYER MAINNET, real money' : 'local test chain, test money'})`);
   console.log(`Deployer ${p.deployer.account.address}: ${formatEther(await p.pub.getBalance({ address: p.deployer.account.address }))} OKB/ETH for vaults and gas top-ups`);
-  console.log(`SMS: ${smsKind}. Email: ${mailKind}. Reader: ${extractor instanceof RuleExtractor ? 'rule-based' : `Gemini (${model()})`}.`);
+  console.log(`Email: ${mailKind}. Reader: ${extractor instanceof RuleExtractor ? 'rule-based' : `Gemini (${model()})`}.`);
   console.log(`Naira: ${paystack ? `Paystack (${paystack.test ? 'TEST mode, no real money' : 'LIVE'}), held by StockRun in a ledger` : network === 'local' ? 'test naira button (local only)' : 'deposits OFF (set PAYSTACK_SECRET_KEY)'}`);
   console.log(`Demo naira (free, not real money): ${network === 'local' || envValue(env, 'DEMO_NAIRA') === '1' ? 'ON' : 'off'}. Database: ${dbFile}. Sellers: simulated bots.`);
   console.log(`Logistics: ${p.carriers.map((c) => `${c.name}${c.connector ? '' : ' (no booking API)'}`).join(', ') || 'none (self-pickup only)'}`);

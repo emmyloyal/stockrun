@@ -76,8 +76,6 @@ const signedIn = async (p: Promise<{ user: User; token?: string }>) => { const r
 export const server = {
   config: () => call<Config>('/api/config'),
   me: () => call<Me>('/api/me'),
-  requestCode: (phone: string) => call<{ sent: true }>('/api/auth/code', { phone }),
-  verify: (phone: string, code: string) => signedIn(call('/api/auth/verify', { phone, code })),
   emailCode: (email: string) => call<{ sent: true }>('/api/auth/email-code', { email }),
   emailVerify: (email: string, code: string) => signedIn(call('/api/auth/email-verify', { email, code })),
   walletMessage: (address: Address) => call<{ message: string }>(`/api/auth/wallet-message?address=${address}`),
@@ -85,7 +83,6 @@ export const server = {
   logout: async () => { try { return await call<{ ok: true }>('/api/auth/logout', {}); } finally { setSessionToken(null); } },
   profile: (p: { username?: string; displayName?: string }) => call<{ user: User }>('/api/me/profile', p),
   avatar: (mediaType: string, data: string) => call<{ user: User }>('/api/me/avatar', { mediaType, data }),
-  addPhone: (phone: string, code: string) => call<{ user: User }>('/api/me/phone', { phone, code }),
   addWallet: (message: string, signature: Hex) => call<{ user: User }>('/api/me/wallet', { message, signature }),
   coins: () => call<Coins>('/api/me/coins'),
   deposit: (amountNaira: number, email: string) => call<{ reference: string; checkoutUrl: string }>('/api/naira/deposit', { amountNaira, email }),
@@ -156,16 +153,3 @@ export const naira = (n: number) => `₦${n.toLocaleString('en-NG', { maximumFra
 export const short = (h: string) => `${h.slice(0, 6)}…${h.slice(-4)}`;
 export function load<T>(key: string, fallback: T): T { try { const v = localStorage.getItem(key); return v ? (JSON.parse(v) as T) : fallback; } catch { return fallback; } }
 export function save(key: string, value: unknown) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private mode */ } }
-
-/**
- * Web OTP (Chrome on Android): wait for the sign-in SMS and read its code, after the person taps "Allow".
- * Works only when the text ends with "@<this site's domain> #<code>". Resolves null where unsupported or cancelled;
- * iPhones instead offer the code above the keyboard (autocomplete="one-time-code").
- */
-export async function readSmsCode(signal: AbortSignal): Promise<string | null> {
-  if (!('OTPCredential' in window) || !navigator.credentials) return null;
-  try {
-    const c = await navigator.credentials.get({ otp: { transport: ['sms'] }, signal } as CredentialRequestOptions) as (Credential & { code?: string }) | null;
-    return c?.code && /^\d{6}$/.test(c.code) ? c.code : null;
-  } catch { return null; }
-}

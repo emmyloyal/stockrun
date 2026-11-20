@@ -21,7 +21,7 @@ import { kobo } from '../money/ledger.ts';
 import { NairaBackend } from '../orders/backends.ts';
 import { NairaOrders, SELF_HANDLER } from '../orders/nairaOrders.ts';
 import type { User } from '../accounts/accounts.ts';
-import { AuthError } from '../accounts/accounts.ts';
+import { AuthError, normalisePhone } from '../accounts/accounts.ts';
 
 /** Nigeria (with a little margin): rejects pins dropped by mistake far away (and 0,0). */
 export const IN_NIGERIA = (lat: number, lng: number) => lat > 4.0 && lat < 14.0 && lng > 2.6 && lng < 14.7;
@@ -91,7 +91,11 @@ export class Buyers {
   /** Run a request: find sellers near the place, negotiate, and place orders within the budget (naira). */
   async request(user: User, raw: unknown): Promise<{ id: number; message: string; problems: string[] }> {
     const i = validateRequest(raw as Partial<RequestInput>);
-    const contactPhone = i.contactPhone || user.phone;
+    // The rider's number: typed by the buyer (checked and written as +234...), else the account's own phone.
+    let contactPhone = user.phone ?? undefined;
+    if (i.contactPhone) {
+      try { contactPhone = normalisePhone(i.contactPhone); } catch { throw new AuthError(400, 'Enter the rider contact number like 0803 123 4567.'); }
+    }
     if (i.delivery === 'logistics' && !contactPhone) throw new AuthError(400, 'Add a phone number so the logistics rider can reach you, or collect it yourself.');
     const budgetKobo = Math.min(kobo(i.budgetNaira), this.ledger.balance(user.id).availableKobo);
     if (budgetKobo < kobo(1_000)) throw new AuthError(409, 'Deposit naira first: your balance pays for the order.');

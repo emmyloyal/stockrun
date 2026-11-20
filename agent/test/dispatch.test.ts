@@ -10,6 +10,7 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { anvil } from 'viem/chains';
 import { createApp } from '../src/server/app.ts';
 import { Accounts, ConsoleSms, openDb } from '../src/accounts/accounts.ts';
+import { ConsoleEmail } from '../src/accounts/email.ts';
 import { Buyers } from '../src/buyers/buyers.ts';
 import { circuitEvaluator, localPlatform, type Platform } from '../src/chain/platform.ts';
 import { startLocalChain, localChainAvailable, type LocalChain } from '../src/sim/localChain.ts';
@@ -39,7 +40,7 @@ const PLACE = { lat: 6.6045, lng: 3.3891, address: '12 Ikorodu Road, Ketu, Lagos
 
 describe.skipIf(!localChainAvailable())('logistics company booked from a naira request', () => {
   let chain: LocalChain; let p: Platform; let server: Server; let base: string; let buyers: Buyers; let ledger: Ledger;
-  const sms = new ConsoleSms(), standin = new StandIn();
+  const mail = new ConsoleEmail(), standin = new StandIn();
   let cookie = '';
   const call = async (path: string, body?: unknown) => {
     const r = await fetch(base + path, { method: body === undefined ? 'GET' : 'POST', headers: { 'Content-Type': 'application/json', cookie }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -57,18 +58,18 @@ describe.skipIf(!localChainAvailable())('logistics company booked from a naira r
     ledger = new Ledger(db);
     const orders = new NairaOrders({ db, ledger, evalCircuit: circuitEvaluator(p), supplierStatus: (k) => buyers.sellerStatus(k), carriers: () => buyers.carrierKeys() });
     buyers = new Buyers(db, p, ledger, orders, { extractor: new RuleExtractor(), channel: new BotChannel(), prices: new PriceBook() });
-    server = createApp({ platform: p, accounts: new Accounts(db, sms, 'x'.repeat(40)), buyers, ledger, prices: new PriceBook(), paystack: null });
+    server = createApp({ platform: p, accounts: new Accounts(db, new ConsoleSms(), 'x'.repeat(40), Date.now, null, mail), buyers, ledger, prices: new PriceBook(), paystack: null });
     await new Promise<void>((r) => server.listen(0, r));
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     const l = console.log; console.log = () => {};
-    try { await call('/api/auth/code', { phone: '0803 777 0001' }); } finally { console.log = l; }
-    await call('/api/auth/verify', { phone: '0803 777 0001', code: sms.sent.at(-1)!.text.match(/(\d{6})/)![1] });
+    try { await call('/api/auth/email-code', { email: 'buyer@example.com' }); } finally { console.log = l; }
+    await call('/api/auth/email-verify', { email: 'buyer@example.com', code: mail.sent.at(-1)!.text.match(/(\d{6})/)![1] });
     await call('/api/dev/naira', { amountNaira: 300_000 });
   }, 60_000);
   afterAll(() => { server?.close(); chain?.stop(); });
 
   it('books at its quote, pays the seller on its pickup, then pays or holds back its fee on the buyer\'s count', async () => {
-    const placed = (await call('/api/requests', { text: '5 cartons of Indomie', budgetNaira: 100_000, place: PLACE, delivery: 'logistics' })).json;
+    const placed = (await call('/api/requests', { text: '5 cartons of Indomie', budgetNaira: 100_000, place: PLACE, delivery: 'logistics', contactPhone: '0803 777 0001' })).json;
     expect(placed.message).toMatch(/₦2,500 delivery by Stand-in Logistics.*funds locked in escrow/);
     let [o] = (await call('/api/orders')).json;
     expect(o).toMatchObject({ money: 'naira', self: false, status: 'Locked', riderFeeNaira: 2500, logistics: { carrier: 'standin', state: 'booked', handoverCode: '482913' } });
@@ -89,7 +90,7 @@ describe.skipIf(!localChainAvailable())('logistics company booked from a naira r
     expect(o.evidence.map((e: { circuit: string }) => e.circuit)).toEqual(['restock', 'pickup', 'delivery']);
 
     // Second order arrives short (3 of 5): the fee comes back to the buyer.
-    await call('/api/requests', { text: '5 cartons of Indomie', budgetNaira: 100_000, place: PLACE, delivery: 'logistics' });
+    await call('/api/requests', { text: '5 cartons of Indomie', budgetNaira: 100_000, place: PLACE, delivery: 'logistics', contactPhone: '0803 777 0001' });
     const o2 = (await call('/api/orders')).json.find((x: any) => x.orderId !== o.orderId);
     standin.move(o2.logistics.bookingId, 'picked_up'); await poll();
     const before = (await call('/api/me')).json.naira.availableNaira;

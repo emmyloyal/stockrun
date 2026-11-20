@@ -53,7 +53,7 @@ export function createApp(o: AppOptions): Server {
   const { platform: p, accounts, buyers, ledger, paystack } = o;
   const log = o.log ?? (() => {});
   const lastCheck = new Map<string, CheckResult>();
-  const codeRequests = new Map<string, number[]>();         // per-IP limit on SMS sends
+  const codeRequests = new Map<string, number[]>();         // per-IP limit on emailed codes
 
   const need = (c: Ctx): User => { if (!c.user) throw new AuthError(401, 'Sign in first.'); return c.user; };
   const signedIn = (res: ServerResponse, r: { user: User; token: string }) => {
@@ -92,14 +92,6 @@ export function createApp(o: AppOptions): Server {
 
   const routes: [string, RegExp, Handler][] = [
     // ---------------------------------------------------------------- sign-in
-    ['POST', /^\/api\/auth\/code$/, async (c) => {
-      const t = Date.now(), hits = (codeRequests.get(c.ip) ?? []).filter((x) => x > t - 3600_000);
-      if (hits.length >= 20) throw new AuthError(429, 'Too many sign-in attempts from this network. Try again later.');
-      codeRequests.set(c.ip, [...hits, t]);
-      await accounts.requestCode(String(c.body?.phone ?? ''));
-      return { sent: true };
-    }],
-    ['POST', /^\/api\/auth\/verify$/, async (c, res) => signedIn(res, accounts.verifyCode(String(c.body?.phone ?? ''), String(c.body?.code ?? '')))],
     ['POST', /^\/api\/auth\/email-code$/, async (c) => {
       const t = Date.now(), hits = (codeRequests.get(c.ip) ?? []).filter((x) => x > t - 3600_000);
       if (hits.length >= 20) throw new AuthError(429, 'Too many sign-in attempts from this network. Try again later.');
@@ -130,7 +122,6 @@ export function createApp(o: AppOptions): Server {
       if (typeof c.body?.data !== 'string') throw new AuthError(400, 'Send the picture as base64.');
       return { user: accounts.setAvatar(u, Buffer.from(c.body.data, 'base64'), String(c.body?.mediaType ?? '')) };
     }],
-    ['POST', /^\/api\/me\/phone$/, async (c) => ({ user: accounts.addPhone(need(c), String(c.body?.phone ?? ''), String(c.body?.code ?? '')) })],
     ['POST', /^\/api\/me\/wallet$/, async (c) => ({ user: await accounts.addWallet(need(c), String(c.body?.message ?? ''), String(c.body?.signature ?? '0x') as Hex) })],
     /** Coins in the connected wallet on X Layer (read from the chain; StockRun never holds them). */
     ['GET', /^\/api\/me\/coins$/, async (c) => {
