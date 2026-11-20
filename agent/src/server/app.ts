@@ -57,7 +57,7 @@ export function createApp(o: AppOptions): Server {
 
   const need = (c: Ctx): User => { if (!c.user) throw new AuthError(401, 'Sign in first.'); return c.user; };
   const signedIn = (res: ServerResponse, r: { user: User; token: string }) => {
-    res.setHeader('Set-Cookie', cookie(r.token, 30 * 24 * 3600, o.secureCookies));
+    res.setHeader('Set-Cookie', cookie(r.token, 365 * 24 * 3600, o.secureCookies));   // signed in for a year on this device
     log(`signed in: user ${r.user.id} (${r.user.phone ? 'phone' : 'wallet'})`);
     return { user: r.user, token: r.token };   // the token is for apps on another origin (DeWEB): `Authorization: Bearer`
   };
@@ -254,7 +254,7 @@ export function createApp(o: AppOptions): Server {
       res.setHeader('Access-Control-Max-Age', '600');
       if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
     }
-    const bearer = /^Bearer ([A-Za-z0-9_-]{20,})$/.exec(String(req.headers.authorization ?? ''))?.[1];
+    const bearer = /^Bearer ([A-Za-z0-9_.-]{20,800})$/.exec(String(req.headers.authorization ?? ''))?.[1];
     const token = bearer ?? readCookie(req.headers.cookie, COOKIE);
     const user = accounts.session(token);
     const ip = (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0].trim() || req.socket.remoteAddress || '?';

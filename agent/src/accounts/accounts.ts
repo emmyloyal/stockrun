@@ -7,8 +7,10 @@
 //
 // Codes are 6 digits, stored as an HMAC (never in plain text), valid for 10 minutes, 5 guesses each, and limited to
 // 1 per minute and 5 per hour per phone. Wallet messages carry a random nonce, are valid for 10 minutes and work once.
-// Session tokens are random and stored only as a SHA-256 hash.
-import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
+// Sign-in lasts a year on the device: the session is a pass signed with SERVER_SECRET naming the phone or wallet,
+// so it survives a server restart even when the database was wiped (the account is then recreated from the pass).
+// Signing out deletes the pass from the browser and records it as revoked on the server.
+import { createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import { createRequire } from 'node:module';
 import type { DatabaseSync as DB } from 'node:sqlite';
 // Loaded through require: the test bundler does not know the newer `node:sqlite` built-in. Types still come from Node.
@@ -29,7 +31,7 @@ export interface SmsSender { send(phone: string, text: string): Promise<void> }
 
 export const CODE_TTL_MS = 10 * 60_000;
 export const MAX_GUESSES = 5;
-export const SESSION_TTL_MS = 30 * 24 * 3600_000;
+export const SESSION_TTL_MS = 365 * 24 * 3600_000;
 export const WALLET_MSG_TTL_MS = 10 * 60_000;
 export const AVATAR_MAX_BYTES = 300_000;
 const RESEND_GAP_MS = 60_000, HOURLY_LIMIT = 5;
@@ -69,8 +71,7 @@ export function openDb(file = ':memory:'): DatabaseSync {
     CREATE INDEX IF NOT EXISTS codes_phone ON codes(phone, created_at);
     CREATE TABLE IF NOT EXISTS wallet_nonces (
       nonce TEXT PRIMARY KEY, address TEXT NOT NULL, issued_at INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0);
-    CREATE TABLE IF NOT EXISTS sessions (
-      token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), expires_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS revoked_sessions (sid TEXT PRIMARY KEY, expires_at INTEGER NOT NULL);
   `);
   return db;
 }
@@ -81,7 +82,6 @@ const toUser = (r: UserRow): User => ({
   id: r.id, phone: r.phone, wallet: r.wallet ? getAddress(r.wallet) : null, username: r.username,
   displayName: r.display_name, hasAvatar: !!r.has_avatar, createdAt: r.created_at,
 });
-const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 
 export class Accounts {
   private db: DatabaseSync;
@@ -99,10 +99,24 @@ export class Accounts {
     const r = this.db.prepare(`SELECT ${USER_COLS} FROM users WHERE ${col} = ?`).get(v) as unknown as UserRow | undefined;
     return r ? toUser(r) : null;
   }
+  /** A signed pass: `v1.<payload>.<signature>`. The payload names who (phone or wallet), not a database id. */
   private startSession(user: User) {
-    const token = randomBytes(32).toString('base64url');
-    this.db.prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)').run(sha256(token), user.id, this.now() + SESSION_TTL_MS);
-    return { user, token };
+    const who = user.phone ? `p:${user.phone}` : `w:${user.wallet!.toLowerCase()}`;
+    const t = this.now();
+    const payload = Buffer.from(JSON.stringify({ who, sid: randomBytes(12).toString('base64url'), iat: t, exp: t + SESSION_TTL_MS })).toString('base64url');
+    return { user, token: `v1.${payload}.${this.sign(payload)}` };
+  }
+  private sign(payload: string) { return createHmac('sha256', this.secret).update(`session:${payload}`).digest('base64url'); }
+  private readPass(token: string): { who: string; sid: string; exp: number } | null {
+    const m = /^v1\.([A-Za-z0-9_-]{20,600})\.([A-Za-z0-9_-]{43})$/.exec(token);
+    if (!m) return null;
+    const want = Buffer.from(this.sign(m[1])), got = Buffer.from(m[2]);
+    if (want.length !== got.length || !timingSafeEqual(want, got)) return null;
+    try {
+      const p = JSON.parse(Buffer.from(m[1], 'base64url').toString('utf8')) as { who?: unknown; sid?: unknown; exp?: unknown };
+      if (typeof p.who !== 'string' || typeof p.sid !== 'string' || typeof p.exp !== 'number' || p.exp < this.now()) return null;
+      return { who: p.who, sid: p.sid, exp: p.exp };
+    } catch { return null; }
   }
 
   // ---------------------------------------------------------------- phone
@@ -197,15 +211,25 @@ export class Accounts {
   }
 
   // ---------------------------------------------------------------- sessions
-  /** The signed-in user for a session token, or null. */
+  /**
+   * The signed-in user for a pass, or null. A valid pass whose account is missing (the database was wiped by a
+   * restart) recreates the account from the phone or wallet it names: the person proved it when signing in.
+   */
   session(token: string | undefined): User | null {
-    if (!token) return null;
-    const r = this.db.prepare(`SELECT u.id, u.phone, u.wallet, u.username, u.display_name, (u.avatar IS NOT NULL) AS has_avatar, u.created_at
-      FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?`)
-      .get(sha256(token), this.now()) as unknown as UserRow | undefined;
-    return r ? toUser(r) : null;
+    const pass = token ? this.readPass(token) : null;
+    if (!pass || this.db.prepare('SELECT 1 FROM revoked_sessions WHERE sid = ?').get(pass.sid)) return null;
+    const [kind, v] = [pass.who.slice(0, 2), pass.who.slice(2)];
+    if (kind !== 'p:' && kind !== 'w:') return null;
+    const col = kind === 'p:' ? 'phone' : 'wallet';
+    const found = this.find(col, v);
+    if (found) return found;
+    const id = Number(this.db.prepare(`INSERT INTO users (${col}, created_at) VALUES (?, ?)`).run(v, this.now()).lastInsertRowid);
+    return this.byId(id);
   }
-  signOut(token: string): void { this.db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(sha256(token)); }
+  signOut(token: string): void {
+    const pass = this.readPass(token);
+    if (pass) this.db.prepare('INSERT OR IGNORE INTO revoked_sessions (sid, expires_at) VALUES (?, ?)').run(pass.sid, pass.exp);
+  }
 
   // ---------------------------------------------------------------- profile
   /** Username: 3-20 letters, digits or _, unique (case-insensitive). Display name: up to 40 characters. */

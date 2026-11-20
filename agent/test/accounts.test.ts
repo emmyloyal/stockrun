@@ -68,15 +68,52 @@ describe('sign-in with an SMS code', () => {
     await expect(acc.requestCode('08031234567')).rejects.toThrow(/Too many codes/);
   });
 
-  it('never stores codes or session tokens in plain text', async () => {
+  it('never stores codes in plain text, and keeps no session list a database leak could replay', async () => {
     const db = openDb(); const sms = new ConsoleSms();
     const acc = new Accounts(db, sms, SECRET);
     await quiet(() => acc.requestCode('08031234567'));
     const code = sms.sent[0].text.match(/(\d{6})/)![1];
     const { token } = acc.verifyCode('08031234567', code);
-    const dump = JSON.stringify([db.prepare('SELECT * FROM codes').all(), db.prepare('SELECT * FROM sessions').all()]);
+    const dump = JSON.stringify([db.prepare('SELECT * FROM codes').all(), db.prepare('SELECT * FROM revoked_sessions').all()]);
     expect(dump).not.toContain(code);
     expect(dump).not.toContain(token);
+  });
+});
+
+describe('staying signed in', () => {
+  it('a pass lasts a year on the device, and survives the server losing its database', async () => {
+    let t = 1_800_000_000_000;
+    const sms = new ConsoleSms();
+    const before = new Accounts(openDb(), sms, SECRET, () => t);
+    await quiet(() => before.requestCode('08031234567'));
+    const { token } = before.verifyCode('08031234567', sms.sent.at(-1)!.text.match(/(\d{6})/)![1]);
+    const w = privateKeyToAccount(generatePrivateKey());
+    const m = before.walletChallenge(w.address).message;
+    const wallet = (await before.verifyWallet(m, await w.signMessage({ message: m }))).token;
+
+    const after = new Accounts(openDb(), sms, SECRET, () => t);           // restart: empty database, same secret
+    expect(after.session(token)).toMatchObject({ phone: '+2348031234567' });
+    expect(after.session(token)!.id).toBe(after.session(token)!.id);       // recreated once, then found
+    expect(after.session(wallet)).toMatchObject({ wallet: w.address });
+    t += 364 * 24 * 3600_000;
+    expect(after.session(token)?.phone).toBe('+2348031234567');
+    t += 2 * 24 * 3600_000;
+    expect(after.session(token)).toBeNull();                                // a year later: sign in again
+  });
+
+  it('refuses edited, forged and other-server passes; signing out revokes the pass', async () => {
+    const { acc, lastCode } = setup();
+    await quiet(() => acc.requestCode('08031234567'));
+    const { token } = acc.verifyCode('08031234567', lastCode());
+    const [v, payload, sig] = token.split('.');
+    const forged = Buffer.from(JSON.stringify({ ...JSON.parse(Buffer.from(payload, 'base64url').toString()), who: 'p:+2348059999999' })).toString('base64url');
+    expect(acc.session(`${v}.${forged}.${sig}`)).toBeNull();
+    expect(acc.session(`${v}.${payload}.${sig.replace(/^./, sig[0] === 'A' ? 'B' : 'A')}`)).toBeNull();
+    expect(new Accounts(openDb(), new ConsoleSms(), 'another-server-secret-that-is-long-0000').session(token)).toBeNull();
+    expect(acc.session('random-garbage-token-value-xyz')).toBeNull();
+    expect(acc.session(token)?.phone).toBe('+2348031234567');
+    acc.signOut(token);
+    expect(acc.session(token)).toBeNull();
   });
 });
 
