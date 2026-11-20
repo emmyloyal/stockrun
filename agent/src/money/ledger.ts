@@ -75,6 +75,16 @@ export class Ledger {
   deposit(userId: number, reference: string, kobo: number): boolean {
     return this.post(`paystack:${reference}`, 'deposit', userId, kobo, ['system', 'paystack'], [`user:${userId}`, 'available'], `Paystack ${reference}`);
   }
+  /** Demo naira for trying StockRun without money: NOT real money, labelled as such, from the same system account. */
+  demoCredit(userId: number, key: string, kobo: number): boolean {
+    return this.post(`demo:${key}`, 'demo', userId, kobo, ['system', 'paystack'], [`user:${userId}`, 'available'], 'Demo naira (not real money)');
+  }
+  /** Demo naira a person received since `sinceMs` (for the daily cap). */
+  demoSince(userId: number, sinceMs: number): number {
+    const r = this.db.prepare(`SELECT COALESCE(SUM(e.amount), 0) s FROM ledger_tx t JOIN ledger_entries e ON e.tx_id = t.id JOIN ledger_accounts a ON a.id = e.account_id
+      WHERE t.type = 'demo' AND t.user_id = ? AND t.created_at >= ? AND a.owner = ? AND a.kind = 'available'`).get(userId, sinceMs, `user:${userId}`) as unknown as { s: number };
+    return r.s;
+  }
   /** Lock money for an order (goods + delivery). Fails if the person has not got it. */
   hold(userId: number, orderKey: string, kobo: number): boolean {
     return this.post(`hold:${orderKey}`, 'hold', userId, kobo, [`user:${userId}`, 'available'], [`user:${userId}`, 'held'], orderKey);

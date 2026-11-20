@@ -93,6 +93,7 @@ describe.skipIf(!localChainAvailable())('StockRun server', () => {
     const ask = { text: '5 cartons of Indomie', budgetNaira: 80_000, place: MILE12, delivery: 'self' };
     expect((await chi.call('/api/requests', ask)).status).toBe(409);                                        // deposit first
     expect((await chi.call('/api/dev/naira', { amountNaira: 100_000 })).json.naira).toEqual({ availableNaira: 100_000, heldNaira: 0 });
+    expect((await chi.call('/api/dev/naira', { amountNaira: 600_000 })).status).toBe(400);                   // over ₦500,000 at a time
 
     expect((await chi.call('/api/map?lat=6.6045&lng=3.3891&radius=10')).json.sellers[0]).toMatchObject({ verified: true, simulated: true });
     const r = (await chi.call('/api/requests', ask)).json;

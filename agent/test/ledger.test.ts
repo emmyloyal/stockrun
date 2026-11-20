@@ -35,6 +35,20 @@ describe('naira ledger', () => {
     expect(l.check().ok).toBe(true);
   });
 
+  it('demo naira is labelled, counted per day, and kept apart from Paystack deposits', () => {
+    let t = 1_800_000_000_000;
+    const l = new Ledger(openDb(), () => t);
+    l.demoCredit(5, 'a', kobo(500_000));
+    l.demoCredit(5, 'b', kobo(500_000));
+    expect(l.demoCredit(5, 'b', kobo(500_000))).toBe(false);                 // same key: once
+    l.deposit(5, 'real', kobo(1_000));
+    expect(l.demoSince(5, t - 3600_000)).toBe(kobo(1_000_000));               // Paystack money is not counted as demo
+    expect(l.history(5).map((m) => [m.type, m.memo])).toContainEqual(['demo', 'Demo naira (not real money)']);
+    t += 25 * 3600_000;
+    expect(l.demoSince(5, t - 24 * 3600_000)).toBe(0);                       // a new day
+    expect(l.check().ok).toBe(true);
+  });
+
   it('shows a person their own history only', () => {
     const l = new Ledger(openDb());
     l.deposit(3, 'a', 500_00); l.deposit(4, 'b', 700_00); l.hold(3, 'o', 200_00);

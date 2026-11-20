@@ -66,7 +66,8 @@ const paystack = paystackKey ? new Paystack(db, ledger, { secretKey: paystackKey
 
 const staticDir = fileURLToPath(new URL('../../../app/dist/', import.meta.url));
 const server = createApp({
-  platform: p, accounts, buyers, ledger, prices, paystack, staticDir: existsSync(staticDir) ? staticDir : undefined,
+  platform: p, accounts, buyers, ledger, prices, paystack, demoNaira: network === 'local' || envValue(env, 'DEMO_NAIRA') === '1',
+  staticDir: existsSync(staticDir) ? staticDir : undefined,
   secureCookies: envValue(env, 'SECURE_COOKIES') === '1', log,
   sendrelayWebhookSecret: envValue(env, 'SENDRELAY_WEBHOOK_SECRET'),
   // e.g. ALLOWED_ORIGINS=https://1-2-433.tapekit.org (the app on DeWEB), comma-separated
@@ -87,7 +88,7 @@ server.listen(port, async () => {
   console.log(`Deployer ${p.deployer.account.address}: ${formatEther(await p.pub.getBalance({ address: p.deployer.account.address }))} OKB/ETH for vaults and gas top-ups`);
   console.log(`SMS: ${smsKind}. Reader: ${extractor instanceof RuleExtractor ? 'rule-based' : `Gemini (${model()})`}.`);
   console.log(`Naira: ${paystack ? `Paystack (${paystack.test ? 'TEST mode, no real money' : 'LIVE'}), held by StockRun in a ledger` : network === 'local' ? 'test naira button (local only)' : 'deposits OFF (set PAYSTACK_SECRET_KEY)'}`);
-  console.log(`Database: ${dbFile}. Sellers: simulated bots.`);
+  console.log(`Demo naira (free, not real money): ${network === 'local' || envValue(env, 'DEMO_NAIRA') === '1' ? 'ON' : 'off'}. Database: ${dbFile}. Sellers: simulated bots.`);
   console.log(`Logistics: ${p.carriers.map((c) => `${c.name}${c.connector ? '' : ' (no booking API)'}`).join(', ') || 'none (self-pickup only)'}`);
   if (!existsSync(staticDir)) console.log('App not built yet: run `npm install && npm run build` in app/, then restart.');
 });

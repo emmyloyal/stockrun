@@ -24,7 +24,7 @@ function App() {
       </main>
       {cfg && (
         <footer className={`demo-bar${cfg.network === 'xlayer' ? ' live' : ''}`}>
-          {cfg.network === 'xlayer' ? 'Circuits on X Layer mainnet' : 'Local test chain'} · naira {cfg.naira.paystack ? (cfg.naira.test ? 'via Paystack test mode' : 'via Paystack') : 'deposits off'} · demo sellers
+          {cfg.network === 'xlayer' ? 'Circuits on X Layer mainnet' : 'Local test chain'} · naira {cfg.naira.paystack ? (cfg.naira.test ? 'via Paystack test mode' : 'via Paystack') : 'deposits off'}{cfg.naira.testCredit ? ' · demo naira on' : ''} · demo sellers
         </footer>
       )}
     </div>

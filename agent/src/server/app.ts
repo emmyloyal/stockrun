@@ -27,6 +27,8 @@ export interface AppOptions {
   buyers: Buyers;
   ledger: Ledger;
   prices: PriceBook;
+  /** Free demo naira for trying the app (labelled "not real money"); capped per tap and per day. */
+  demoNaira?: boolean;
   /** Paystack for naira deposits; null: deposits are off (or test naira on the local chain). */
   paystack: Paystack | null;
   staticDir?: string;
@@ -109,7 +111,7 @@ export function createApp(o: AppOptions): Server {
     // ---------------------------------------------------------------- me
     ['GET', /^\/api\/config$/, async () => ({
       chainId: p.chain.id, network: p.name, token: p.token, tokenSymbol: p.tokenSymbol, explorerTx: p.explorerTx,
-      naira: { paystack: !!paystack, test: paystack?.test ?? true, testCredit: !paystack && !!p.faucet },
+      naira: { paystack: !!paystack, test: paystack?.test ?? true, testCredit: !!o.demoNaira || (!paystack && !!p.faucet) },
       logistics: p.carriers.map((x) => ({ id: x.id, name: x.name, api: !!x.connector })),
     })],
     ['GET', /^\/api\/me$/, async (c) => (c.user ? { user: c.user, naira: money(c.user.id) } : { user: null })],
@@ -150,13 +152,14 @@ export function createApp(o: AppOptions): Server {
       return { ...r, amountNaira: toNaira(r.amountKobo), naira: money(u.id) };
     }],
     ['GET', /^\/api\/naira\/history$/, async (c) => ledger.history(need(c).id).map((m) => ({ ...m, amountNaira: toNaira(m.amountKobo) }))],
-    /** Local test chain only: test naira, clearly labelled. Never on X Layer. */
+    /** Demo naira to try StockRun without money: on the local chain, or when the server switches it on. Labelled. */
     ['POST', /^\/api\/dev\/naira$/, async (c) => {
       const u = need(c);
-      if (paystack || !p.faucet) throw new AuthError(404, 'Test naira only exists on the local test network.');
+      if (!o.demoNaira && (paystack || !p.faucet)) throw new AuthError(404, 'Demo naira is not switched on here.');
       const n = Math.round(Number(c.body?.amountNaira));
-      if (!(n >= 100 && n <= 5_000_000)) throw new AuthError(400, 'From ₦100 to ₦5,000,000.');
-      ledger.deposit(u.id, `test-${u.id}-${Date.now()}`, kobo(n));
+      if (!(n >= 100 && n <= 500_000)) throw new AuthError(400, 'Demo naira: from ₦100 to ₦500,000 at a time.');
+      if (ledger.demoSince(u.id, Date.now() - 24 * 3600_000) + kobo(n) > kobo(2_000_000)) throw new AuthError(429, 'That is the demo limit for today (₦2,000,000).');
+      ledger.demoCredit(u.id, `${u.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, kobo(n));
       return { naira: money(u.id) };
     }],
 

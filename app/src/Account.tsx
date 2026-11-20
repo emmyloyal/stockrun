@@ -313,6 +313,13 @@ function Money({ cfg, me, onChange }: { cfg: Config; me: Me; onChange: () => voi
         </dl>
         <p className="fine">Naira you deposit is held by StockRun and is not on-chain. Every payment from it is still decided by a TapeOut circuit on X Layer.</p>
         <label className="field"><span>Deposit (₦)</span><input className="money" inputMode="numeric" placeholder="50,000" value={n ? n.toLocaleString('en-NG') : ''} onChange={(e) => setAmount(e.target.value)} /></label>
+        {cfg.naira.testCredit && (
+          <div className="stack note">
+            <p><strong>Try it free:</strong> demo naira is play money for testing. It is not real money and buys nothing real.</p>
+            <button className="btn primary" disabled={!!busy || n < 100 || n > 500_000} onClick={() => run(setBusy, setError, 'Adding demo naira…', async () => { await server.testNaira(n); onChange(); refresh(); setNote(`${naira(n)} demo naira added (not real money).`); })}>Add {n ? naira(n) : ''} demo naira</button>
+            <p className="fine">Up to ₦500,000 at a time and ₦2,000,000 a day.</p>
+          </div>
+        )}
         {cfg.naira.paystack ? (<>
           <label className="field"><span>Email (Paystack sends your receipt)</span><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" /></label>
           <button className="btn primary" disabled={!!busy || n < 100 || !email.includes('@')} onClick={() => run(setBusy, setError, 'Opening Paystack…', async () => {
@@ -321,16 +328,14 @@ function Money({ cfg, me, onChange }: { cfg: Config; me: Me; onChange: () => voi
             location.href = r.checkoutUrl;
           })}>Pay {n ? naira(n) : ''} with Paystack</button>
           {cfg.naira.test && <p className="fine">Paystack is in test mode: use their test card, no real money moves.</p>}
-        </>) : cfg.naira.testCredit ? (
-          <button className="btn primary" disabled={!!busy || n < 100} onClick={() => run(setBusy, setError, 'Adding test naira…', async () => { await server.testNaira(n); onChange(); refresh(); })}>Add {n ? naira(n) : ''} test naira</button>
-        ) : <p className="warn">Naira deposits are not switched on yet on this server.</p>}
+        </>) : !cfg.naira.testCredit && <p className="warn">Naira deposits are not switched on yet on this server.</p>}
         {busy && <p className="busy">{busy}</p>}
         {error && <p className="alert">{error}</p>}
         {note && <p className="ok">{note}</p>}
         {moves.length > 0 && (
           <details className="supplier-list"><summary>History</summary>
             <ul className="cards">{moves.map((m) => (
-              <li key={m.key} className="card row between"><span>{m.type === 'deposit' ? 'Deposit' : m.type === 'hold' ? 'Locked for an order' : m.type === 'release' ? 'Came back to you' : m.type}</span><span className={m.amountNaira > 0 ? 'ok' : ''}>{m.amountNaira > 0 ? '+' : ''}{naira(m.amountNaira)}</span></li>
+              <li key={m.key} className="card row between"><span>{m.type === 'deposit' ? 'Deposit (Paystack)' : m.type === 'demo' ? 'Demo naira (not real money)' : m.type === 'hold' ? 'Locked for an order' : m.type === 'release' ? 'Came back to you' : m.type}</span><span className={m.amountNaira > 0 ? 'ok' : ''}>{m.amountNaira > 0 ? '+' : ''}{naira(m.amountNaira)}</span></li>
             ))}</ul>
           </details>
         )}
