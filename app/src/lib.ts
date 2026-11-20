@@ -7,6 +7,7 @@ export interface Config {
   naira: { paystack: boolean; test: boolean; testCredit: boolean };
   logistics: { id: string; name: string; api: boolean }[];
   emailSignIn: boolean;
+  sellerHunt: boolean;
 }
 export interface User { id: number; phone: string | null; email: string | null; wallet: Address | null; username: string | null; displayName: string | null; hasAvatar: boolean; createdAt: number }
 export interface NairaBalance { availableNaira: number; heldNaira: number }
@@ -36,6 +37,9 @@ export interface Order {
   };
 }
 export interface RequestRecord { id: number; text: string; budgetNaira: number; place: Place; delivery: 'self' | 'logistics'; message: string; createdAt: number }
+/** A seller the AI found on Google Maps or the web: real, but not confirmed by StockRun. */
+export interface FoundSeller { id: string; name: string; address: string; lat: number; lng: number; phone: string; source: 'maps' | 'web'; sourceUrl: string | null; km: number }
+export interface HuntResult { searches: string[]; checked: number; dropped: number; sellers: FoundSeller[] }
 export interface Seller {
   id: string; name: string; market: string; lat: number; lng: number; simulated: boolean; verified: boolean; km: number;
   prices: { item: string; priceNaira: number; source: string; age: string | null }[];
@@ -76,6 +80,7 @@ const signedIn = async (p: Promise<{ user: User; token?: string }>) => { const r
 export const server = {
   config: () => call<Config>('/api/config'),
   me: () => call<Me>('/api/me'),
+  hunt: (text: string, place: Place) => call<HuntResult>('/api/hunt', { text, place }),
   emailCode: (email: string) => call<{ sent: true }>('/api/auth/email-code', { email }),
   emailVerify: (email: string, code: string) => signedIn(call('/api/auth/email-verify', { email, code })),
   walletMessage: (address: Address) => call<{ message: string }>(`/api/auth/wallet-message?address=${address}`),

@@ -6,7 +6,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import {
   avatarUrl, currentPosition, hasWallet, load, naira, preparePhoto, save, server, short, signWithWallet,
-  type Coins, type Config, type Me, type Movement, type Order, type Place, type RequestRecord, type Seller, type User,
+  type Coins, type Config, type FoundSeller, type HuntResult, type Me, type Movement, type Order, type Place, type RequestRecord, type Seller, type User,
 } from './lib';
 import { CircuitTrail, Outcome, StatusPill } from './ui';
 
@@ -47,7 +47,7 @@ export function AccountApp({ cfg }: { cfg: Config }) {
           <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{l}</button>
         ))}
       </nav>
-      {tab === 'ask' && <Ask user={u} me={me} onAsked={() => { reload(); setTab('orders'); }} goMoney={() => setTab('money')} />}
+      {tab === 'ask' && <Ask cfg={cfg} user={u} me={me} onAsked={() => { reload(); setTab('orders'); }} goMoney={() => setTab('money')} />}
       {tab === 'orders' && <Orders cfg={cfg} onChange={reload} />}
       {tab === 'money' && <Money cfg={cfg} me={me} onChange={reload} />}
       {tab === 'me' && <Profile user={u} onChange={() => { setBust(Date.now()); reload(); }} />}
@@ -114,13 +114,14 @@ function SignIn({ cfg, onDone }: { cfg: Config; onDone: () => void }) {
 }
 
 // ---------------------------------------------------------------- ask: what, budget, where; sellers on the map
-function Ask({ user, me, onAsked, goMoney }: { user: User; me: Me; onAsked: () => void; goMoney: () => void }) {
+function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me: Me; onAsked: () => void; goMoney: () => void }) {
   const [text, setText] = useState('');
   const [budget, setBudget] = useState('');
   const [place, setPlace] = useState<Place>(() => load<Place>('stockrun.place', { lat: NaN, lng: NaN, address: '' }));
   const [delivery, setDelivery] = useState<'logistics' | 'self'>('logistics');
   const [contact, setContact] = useState('');
   const [sellers, setSellers] = useState<Seller[]>([]);
+  const [hunt, setHunt] = useState<HuntResult | null>(null);
   const [reply, setReply] = useState('');
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
@@ -150,13 +151,22 @@ function Ask({ user, me, onAsked, goMoney }: { user: User; me: Me; onAsked: () =
       L.circleMarker([s.lat, s.lng], { radius: 8, color: s.verified ? '#18794A' : '#7A8194', weight: 3, fillOpacity: 0.8, fillColor: s.verified ? '#18794A' : '#7A8194' })
         .bindPopup(`<div class="pop"><strong>${esc(s.name)}</strong><span>${esc(s.market)} · ${s.km} km${s.simulated ? ' · demo seller' : ''}</span><table>${rows}</table></div>`).addTo(g);
     }
+    for (const f of hunt?.sellers ?? []) {
+      L.circleMarker([f.lat, f.lng], { radius: 9, color: '#C2410C', weight: 3, fillOpacity: 0.85, fillColor: '#F97316' })
+        .bindPopup(`<div class="pop"><strong>${esc(f.name)}</strong><span>${f.km} km · found by AI on ${f.source === 'maps' ? 'Google Maps' : 'the web'} · not confirmed by StockRun</span>${f.sourceUrl ? `<a href="${esc(f.sourceUrl)}" target="_blank" rel="noreferrer">Where we found it</a>` : ''}</div>`).addTo(g);
+    }
     if (pinned) L.circleMarker([place.lat, place.lng], { radius: 10, color: '#141B2E', weight: 3, fillColor: '#F4C20D', fillOpacity: 1 }).bindTooltip('Deliver here').addTo(g);
-  }, [sellers, place.lat, place.lng, pinned]);
+  }, [sellers, hunt, place.lat, place.lng, pinned]);
 
   const here = () => run(setBusy, setError, 'Finding you…', async () => {
     const p = await currentPosition();
     setPlace((x) => ({ ...x, lat: p.lat, lng: p.lng }));
     map.current?.setView([p.lat, p.lng], 15);
+  });
+  const findReal = () => run(setBusy, setError, 'The AI is searching Google Maps and the web for real sellers…', async () => {
+    const r = await server.hunt(text, place);
+    setHunt(r);
+    if (r.sellers.length && map.current) map.current.fitBounds(L.latLngBounds([[place.lat, place.lng], ...r.sellers.map((s): [number, number] => [s.lat, s.lng])]).pad(0.2));
   });
   const ask = () => run(setBusy, setError, 'The agent is finding sellers and haggling…', async () => {
     const r = await server.ask({ text, budgetNaira: Number(budget.replace(/\D/g, '')), place, delivery, contactPhone: contact || undefined });
@@ -181,8 +191,15 @@ function Ask({ user, me, onAsked, goMoney }: { user: User; me: Me; onAsked: () =
         <div ref={el} className="map pick" />
         <div className="row wrap">
           <button className="btn ghost" onClick={here}>Use where I am</button>
-          <span className="fine">{pinned ? `Pin: ${place.lat.toFixed(4)}, ${place.lng.toFixed(4)} · ${sellers.length} seller(s) within 25 km` : 'Tap the map to drop the delivery pin.'}</span>
+          <span className="fine">{pinned ? `Pin: ${place.lat.toFixed(4)}, ${place.lng.toFixed(4)} · ${sellers.length} demo seller(s) within 25 km` : 'Tap the map to drop the delivery pin.'}</span>
         </div>
+        {cfg.sellerHunt && (
+          <div className="stack note">
+            <button className="btn ghost" disabled={!!busy || text.trim().length < 3 || !pinned} onClick={findReal}>Find real sellers with AI</button>
+            <p className="fine">The AI searches Google Maps and the web near your pin and keeps only sellers whose WhatsApp number it can prove from the source. They are not checked by StockRun.</p>
+            {hunt && <FoundList hunt={hunt} />}
+          </div>
+        )}
         <fieldset className="stack choice-group">
           <legend className="fine">How should it reach you?</legend>
           <label className="row"><input type="radio" checked={delivery === 'logistics'} onChange={() => setDelivery('logistics')} /> A verified logistics company delivers it</label>
@@ -198,6 +215,20 @@ function Ask({ user, me, onAsked, goMoney }: { user: User; me: Me; onAsked: () =
         {reply && <pre className="reply">{reply}</pre>}
       </div>
     </div>
+  );
+}
+function FoundList({ hunt }: { hunt: HuntResult }) {
+  if (!hunt.sellers.length) return <p className="muted">No seller with a WhatsApp number turned up near your pin ({hunt.checked} checked). Try other words, or move the pin.</p>;
+  return (
+    <ul className="cards">
+      {hunt.sellers.map((f: FoundSeller) => (
+        <li key={f.id} className="card stack tight">
+          <span className="row between"><strong>{f.name}</strong><span className="pill found">found by AI</span></span>
+          <span className="fine">{f.km} km · {f.address}</span>
+          <span className="fine">WhatsApp {f.phone} · from {f.source === 'maps' ? 'its Google Maps listing' : 'a web page'}{f.sourceUrl && <> · <a href={f.sourceUrl} target="_blank" rel="noreferrer">source</a></>}</span>
+        </li>
+      ))}
+    </ul>
   );
 }
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);

@@ -39,6 +39,10 @@ services:
         sync: false
       - key: SMS                 # "console" prints sign-in codes in the Render log (pilot only); or set TERMII_* (or TWILIO_*)
         sync: false
+      - key: GOOGLE_MAPS_API_KEY # AI seller hunt (Places API New); SELLER_WEB_SEARCH=on adds Gemini web search
+        sync: false
+      - key: SELLER_WEB_SEARCH
+        sync: false
       - key: GMAIL_CLIENT_ID     # email sign-in codes through the Gmail API (SMTP ports are blocked on the free plan)
         sync: false
       - key: GMAIL_CLIENT_SECRET

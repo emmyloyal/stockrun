@@ -12,13 +12,14 @@ import { STATUS, type CheckResult } from '../check/checkService.ts';
 import { haversineKm, loadSuppliers, supplierKey } from '../tools/suppliers.ts';
 import { ageText, type PriceBook } from '../prices/priceBook.ts';
 import { Accounts, AuthError, type User } from '../accounts/accounts.ts';
-import type { Buyers } from '../buyers/buyers.ts';
+import { IN_NIGERIA, type Buyers } from '../buyers/buyers.ts';
 import { tokenAbi, type Platform } from '../chain/platform.ts';
 import { verifySendrelayWebhook } from '../logistics/sendrelay.ts';
 import { kobo, toNaira, LedgerError, type Ledger } from '../money/ledger.ts';
 import { PaystackError, type Paystack } from '../money/paystack.ts';
 import { SELF_HANDLER } from '../orders/nairaOrders.ts';
 import { RESTOCK_REASONS } from '../tools/vault.ts';
+import { huntEnabled, huntSellers, type HuntDeps } from '../discovery/hunt.ts';
 import { PICKUP_REASONS, DELIVERY_REASONS } from '../check/checkService.ts';
 
 export interface AppOptions {
@@ -35,6 +36,8 @@ export interface AppOptions {
   secureCookies?: boolean;     // true behind HTTPS
   /** Other sites allowed to call this server (CORS), e.g. the app on DeWEB. They sign in with a bearer token. */
   allowedOrigins?: string[];
+  /** The AI seller hunt (Google Maps + web search); absent or with neither search: off. */
+  hunt?: Omit<HuntDeps, 'db'> & { db: HuntDeps['db']; perUserDaily?: number; siteDaily?: number };
   /** whsec_... from registering /api/webhooks/sendrelay with Sendrelay; webhooks are refused without it. */
   sendrelayWebhookSecret?: string;
   log?: (line: string) => void;
@@ -54,6 +57,7 @@ export function createApp(o: AppOptions): Server {
   const log = o.log ?? (() => {});
   const lastCheck = new Map<string, CheckResult>();
   const codeRequests = new Map<string, number[]>();         // per-IP limit on emailed codes
+  const hunts = new Map<number, number[]>();                 // per-user hunt times (each hunt costs Google lookups)
 
   const need = (c: Ctx): User => { if (!c.user) throw new AuthError(401, 'Sign in first.'); return c.user; };
   const signedIn = (res: ServerResponse, r: { user: User; token: string }) => {
@@ -114,6 +118,7 @@ export function createApp(o: AppOptions): Server {
       naira: { paystack: !!paystack, test: paystack?.test ?? true, testCredit: !!o.demoNaira || (!paystack && !!p.faucet) },
       logistics: p.carriers.map((x) => ({ id: x.id, name: x.name, api: !!x.connector })),
       emailSignIn: accounts.emailSignIn,
+      sellerHunt: !!o.hunt && huntEnabled(o.hunt),
     })],
     ['GET', /^\/api\/me$/, async (c) => (c.user ? { user: c.user, naira: money(c.user.id) } : { user: null })],
     ['POST', /^\/api\/me\/profile$/, async (c) => ({ user: accounts.setProfile(need(c), c.body ?? {}) })],
@@ -192,6 +197,27 @@ export function createApp(o: AppOptions): Server {
       try { return await buyers.dispatcher.ownerCount(rt.dispatch, c.m[1], Number(c.body?.count)); }
       catch (e) { throw new AuthError(409, (e as Error).message); }
       finally { void u; }
+    }],
+
+    // ---------------------------------------------------------------- the AI seller hunt
+    /** Real sellers of what the buyer wants near their pin, found by the agent on Google Maps and the web. */
+    ['POST', /^\/api\/hunt$/, async (c) => {
+      const u = need(c), h = o.hunt;
+      if (!h || !huntEnabled(h)) throw new AuthError(503, 'The AI seller search is not switched on yet on this server.');
+      const text = String(c.body?.text ?? '').trim(), lat = Number(c.body?.place?.lat), lng = Number(c.body?.place?.lng);
+      const address = String(c.body?.place?.address ?? '').trim();
+      if (text.length < 3 || text.length > 200) throw new AuthError(400, 'Say what you want to buy (up to 200 characters).');
+      if (!IN_NIGERIA(lat, lng)) throw new AuthError(400, 'Put the delivery pin on the map, in Nigeria.');
+      const t = Date.now(), day = t - 24 * 3600_000;
+      const mine = (hunts.get(u.id) ?? []).filter((x) => x > day), all = [...hunts.values()].flat().filter((x) => x > day);
+      if (mine.length >= (h.perUserDaily ?? 5)) throw new AuthError(429, "You have used today's AI seller searches. Try again tomorrow.");
+      if (all.length >= (h.siteDaily ?? 50)) throw new AuthError(429, "The AI seller search has reached today's limit. Try again tomorrow.");
+      hunts.set(u.id, [...mine, t]);
+      const r = await huntSellers(text, { lat, lng, address: address || `${lat.toFixed(4)}, ${lng.toFixed(4)}` }, h);
+      return {
+        searches: r.plan.queries, checked: r.checked, dropped: r.dropped,
+        sellers: r.sellers.map((s) => ({ id: s.id, name: s.name, address: s.address, lat: s.lat, lng: s.lng, phone: s.phone, source: s.source, sourceUrl: s.sourceUrl, km: s.km })),
+      };
     }],
 
     // ---------------------------------------------------------------- the map
