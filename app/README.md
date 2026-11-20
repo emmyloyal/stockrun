@@ -65,3 +65,15 @@ cd ../agent && npm run app                 # http://localhost:8080
 - **Signed GPS:** location is checked in the rider's browser and the rider signs the result. The check service does not verify it yet.
 - **GPS and camera on a phone over plain `http://`:** browsers block them. Testing on a phone needs HTTPS, for example the cloudflared tunnel.
 - **Reason codes for RestockGuard rejections:** these show as plain words in the order message, but not yet as a separate badge.
+
+## Hosting on DeWEB
+The built app is stored on X Layer under our circuit #1 as `1.2.433.tape`, served at `https://1-2-433.tapekit.org/`. The server runs elsewhere, at a public HTTPS address.
+```
+cd app && npm run build
+cd ../agent && npm run deweb:publish -- --api https://<server>             # rehearsal on a local fork: shows the cost
+cd ../agent && npm run deweb:publish -- --api https://<server> --live      # publishes (deployer key, real OKB)
+```
+- **Cost:** about 0.084 OKB the first time, measured on a fork on 2026-11-20. That is 0.08 OKB to open the container once, and about 0.0043 OKB to store 724 KB. The name fee is 0 at the moment; fees are read live. Later publishes rewrite only the files that changed.
+- **The server address** lives in `stockrun-config.json` next to `index.html`. Moving the server means republishing that one small file.
+- **On the server**, set `ALLOWED_ORIGINS=https://1-2-433.tapekit.org`. The app on DeWEB signs in with a bearer token, not a cookie.
+- **What the gateway allows:** its site policy permits `fetch` to any `https:` origin, and only loads scripts from the chain. Calls to our server show as "off-chain" in the gateway's status page. That is honest: sign-in, the agent and logistics run on the server.

@@ -12,7 +12,8 @@
     "rehearse:xlayer": "node src/rehearseXLayer.ts",
     "serve": "node src/server/main.ts",
     "serve:xlayer": "node src/server/main.ts --network=xlayer",
-    "carrier:try": "node src/logistics/tryCarrier.ts"
+    "carrier:try": "node src/logistics/tryCarrier.ts",
+    "deweb:publish": "node src/deweb/publish.ts"
   },
   "dependencies": {
     "@google/genai": "2.32.0",
