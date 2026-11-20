@@ -72,14 +72,13 @@ describe.skipIf(!localChainAvailable())('multi-shop app server', () => {
   afterAll(() => { server?.close(); chain?.stop(); });
 
   it('two owners: set up, deposit, order with a logistics company or collect it yourself, with neither reaching the other', async () => {
-    const ada = person('0803 111 1111'), bisi = person('0803 222 2222'), tunde = person('0805 333 3333');
-    for (const [who, role] of [[ada, 'owner'], [bisi, 'owner'], [tunde, 'rider']] as const) await who.signIn(role);
+    const ada = person('0803 111 1111'), bisi = person('0803 222 2222');
+    for (const who of [ada, bisi]) await who.signIn('owner');
 
     // Shop setup deploys a vault owned by the phone key.
     const shop = (await ada.call('/api/shop', { name: "Ada's Provisions", ...OJOTA, weeklyBudgetNaira: 500_000, limitNaira: 100_000 })).json.shop;
     expect(await p.pub.readContract({ address: shop.vault, abi: vaultAbi, functionName: 'owner' })).toBe(ada.key.address);
     expect((await ada.call('/api/shop', { name: 'Again', ...OJOTA, weeklyBudgetNaira: 500_000, limitNaira: 100_000 })).status).toBe(409);
-    expect((await tunde.call('/api/shop', { name: 'Rider shop', ...OJOTA, weeklyBudgetNaira: 500_000, limitNaira: 100_000 })).status).toBe(403);
     expect((await bisi.call('/api/shop', { name: 'Far away', lat: 9.07, lng: 7.49, weeklyBudgetNaira: 500_000, limitNaira: 100_000 })).status).toBe(400);
     await bisi.call('/api/shop', { name: "Bisi's Store", lat: 6.6, lng: 3.35, weeklyBudgetNaira: 300_000, limitNaira: 50_000 });
 
@@ -137,7 +136,8 @@ describe.skipIf(!localChainAvailable())('multi-shop app server', () => {
     await anon.signIn('rider');
     expect((await rpc(anon.cookie(), 'eth_blockNumber')).status).toBe(200);
     expect((await rpc(anon.cookie(), 'evm_increaseTime')).status).toBe(403);
-    expect((await anon.call('/api/orders')).status).toBe(403);                        // riders have no shop orders
+    expect((await anon.call('/api/me')).json.user.role).toBe('owner');               // no rider accounts: asking for one gives an owner
+    expect((await anon.call('/api/orders')).status).toBe(409);                        // ...who must set up a shop first
     expect((await anon.call('/api/auth/verify', { phone: '0807 555 5555', code: '000000' })).status).toBe(400);
   }, 60_000);
 

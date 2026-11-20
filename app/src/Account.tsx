@@ -25,11 +25,12 @@ export function AccountApp({ cfg }: { cfg: ServerConfig }) {
   if (!u.address || !key || addressOf(key).toLowerCase() !== u.address.toLowerCase()) {
     return <section className="stack"><KeySetup user={u} hasBackup={!!me.hasBackup} onDone={reload} />{signOut}</section>;
   }
-  if (u.role === 'rider') {
+  if (u.role !== 'owner') {
+    // StockRun is for shop owners only: goods are collected by the owner or a verified logistics company.
     return (
       <section className="stack">
-        <header className="screen-head"><p className="eyebrow">Rider</p><h1>Not built yet</h1></header>
-        <p>Rider screens for real accounts are not built yet. Your key is set up on this phone ({short(u.address)}).</p>
+        <header className="screen-head"><p className="eyebrow">StockRun</p><h1>For shop owners</h1></header>
+        <p>StockRun no longer has rider accounts. Deliveries are done by verified logistics companies, or shop owners collect their goods themselves.</p>
         {signOut}
       </section>
     );
@@ -45,7 +46,6 @@ const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 function SignIn({ onDone }: { onDone: () => void }) {
   const [phone, setPhone] = useState('');
   const [code, setCode] = useState('');
-  const [role, setRole] = useState<'owner' | 'rider'>('owner');
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -65,12 +65,7 @@ function SignIn({ onDone }: { onDone: () => void }) {
             <label className="field"><span>6-digit code from the SMS</span>
               <input inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} />
             </label>
-            <fieldset className="stack choice-group">
-              <legend className="fine">New here? I am a…</legend>
-              <label className="row"><input type="radio" checked={role === 'owner'} onChange={() => setRole('owner')} /> Shop owner: I buy stock for my shop</label>
-              <label className="row"><input type="radio" checked={role === 'rider'} onChange={() => setRole('rider')} /> Rider: I pick up and deliver</label>
-            </fieldset>
-            <button className="btn primary" disabled={busy || code.length !== 6} onClick={() => run(async () => { await server.verify(phone, code, role); onDone(); })}>Sign in</button>
+            <button className="btn primary" disabled={busy || code.length !== 6} onClick={() => run(async () => { await server.verify(phone, code, 'owner'); onDone(); })}>Sign in</button>
             <button className="link" disabled={busy} onClick={() => { setSent(false); setCode(''); }}>Use a different number</button>
           </>
         )}

@@ -119,7 +119,7 @@ export function createApp(o: AppOptions): Server {
       return { sent: true };
     }],
     ['POST', /^\/api\/auth\/verify$/, async (c, res) => {
-      const role = c.body?.role === 'rider' ? 'rider' : 'owner';
+      const role = 'owner';   // shop owners only: no rider accounts (logistics companies or the owner collect goods)
       const { user, token } = accounts.verifyCode(String(c.body?.phone ?? ''), String(c.body?.code ?? ''), role);
       res.setHeader('Set-Cookie', cookie(token, 30 * 24 * 3600, o.secureCookies));
       log(`signed in: user ${user.id} (${user.role})`);
