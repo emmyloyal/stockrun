@@ -1,47 +1,43 @@
-// Multi-shop HTTP server for real owners and riders.
-// - Sign-in: phone number + SMS code -> HttpOnly session cookie. Every write must be JSON (with SameSite=Lax cookies,
-//   that stops other websites from posting on a user's behalf).
-// - Keys stay on phones: owners and riders sign their own vault steps in the browser and send them through /rpc.
-//   This server holds only the deployer key (creates vaults), the agent key (proposes) and the check key (attests).
-// - Owners see only their own shop. Riders see and act only on jobs booked to their own key.
+// StockRun HTTP server: anyone in Nigeria signs in (phone code or wallet), keeps a profile, deposits naira (Paystack)
+// and asks the agent for what they want with a budget and a delivery pin.
+// - Sessions: HttpOnly cookie on the same origin, or a bearer token for the app hosted elsewhere (DeWEB).
+//   Every write must be JSON (with SameSite=Lax cookies that stops other websites posting for a signed-in person).
+// - Naira is held by StockRun in a ledger (not on-chain); every payment decision is still a TapeOut circuit's.
+// - People see only their own money, requests and orders.
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
-import { parseAbi, type Address, type Hex } from 'viem';
-import { handleOrder } from '../agent.ts';
-import { checkAbi, STATUS, type CheckResult } from '../check/checkService.ts';
-import type { Job } from '../check/jobs.ts';
-import type { MediaType } from '../check/photoCount.ts';
+import { formatEther, type Hex } from 'viem';
+import { STATUS, type CheckResult } from '../check/checkService.ts';
 import { haversineKm, loadSuppliers, supplierKey } from '../tools/suppliers.ts';
-import { ageText } from '../prices/priceBook.ts';
-import { Accounts, AuthError, linkMessage, type Role, type User } from '../accounts/accounts.ts';
-import type { Shops, ShopRuntime } from '../accounts/shops.ts';
+import { ageText, type PriceBook } from '../prices/priceBook.ts';
+import { Accounts, AuthError, type User } from '../accounts/accounts.ts';
+import type { Buyers } from '../buyers/buyers.ts';
 import { tokenAbi, type Platform } from '../chain/platform.ts';
 import { verifySendrelayWebhook } from '../logistics/sendrelay.ts';
+import { kobo, toNaira, LedgerError, type Ledger } from '../money/ledger.ts';
+import { PaystackError, type Paystack } from '../money/paystack.ts';
+import { SELF_HANDLER } from '../orders/nairaOrders.ts';
+import { RESTOCK_REASONS } from '../tools/vault.ts';
+import { PICKUP_REASONS, DELIVERY_REASONS } from '../check/checkService.ts';
 
 export interface AppOptions {
   platform: Platform;
   accounts: Accounts;
-  shops: Shops;
+  buyers: Buyers;
+  ledger: Ledger;
+  prices: PriceBook;
+  /** Paystack for naira deposits; null: deposits are off (or test naira on the local chain). */
+  paystack: Paystack | null;
   staticDir?: string;
   secureCookies?: boolean;     // true behind HTTPS
-  /**
-   * Other sites allowed to call this server (CORS), e.g. the app on DeWEB: ['https://1-2-433.tapekit.org']. They sign
-   * in with a bearer token (returned by /api/auth/verify) instead of the cookie: browsers block third-party cookies,
-   * and a header is never sent by the browser on its own, so other pages cannot act for a signed-in person.
-   */
+  /** Other sites allowed to call this server (CORS), e.g. the app on DeWEB. They sign in with a bearer token. */
   allowedOrigins?: string[];
-  /** whsec_... from registering this server's /api/webhooks/sendrelay with Sendrelay; webhooks are refused without it. */
+  /** whsec_... from registering /api/webhooks/sendrelay with Sendrelay; webhooks are refused without it. */
   sendrelayWebhookSecret?: string;
   log?: (line: string) => void;
 }
 
-const vaultReadAbi = parseAbi([
-  'function locked() view returns (uint256)', 'function weeklyBudget() view returns (uint256)', 'function spentThisWeek() view returns (uint256)',
-  'function limit() view returns (uint256)',
-  'function pendingSupplierStatus(bytes32) view returns (uint8)', 'function supplierEffectiveAt(bytes32) view returns (uint256)',
-  'function applySupplier(bytes32)',
-]);
 const STATUS_NAME = Object.fromEntries(Object.entries(STATUS).map(([k, v]) => [v, k])) as Record<number, string>;
 const MAX_BODY = 8 * 1024 * 1024;
 const COOKIE = 'sr_session';
@@ -52,62 +48,45 @@ type Ctx = { user: User | null; token: string | undefined; body: any; ip: string
 type Handler = (c: Ctx, res: ServerResponse) => Promise<unknown>;
 
 export function createApp(o: AppOptions): Server {
-  const { platform: p, accounts, shops } = o;
+  const { platform: p, accounts, buyers, ledger, paystack } = o;
   const log = o.log ?? (() => {});
-  const lastCheck = new Map<string, CheckResult>();         // `${shopId}:${orderId}`
+  const lastCheck = new Map<string, CheckResult>();
   const codeRequests = new Map<string, number[]>();         // per-IP limit on SMS sends
-  const naira = (x: bigint) => p.money.toNaira(x);
 
-  const need = (c: Ctx, role?: Role): User => {
-    if (!c.user) throw new AuthError(401, 'Sign in first.');
-    if (role && c.user.role !== role) throw new AuthError(403, `This needs a ${role} account.`);
-    return c.user;
+  const need = (c: Ctx): User => { if (!c.user) throw new AuthError(401, 'Sign in first.'); return c.user; };
+  const signedIn = (res: ServerResponse, r: { user: User; token: string }) => {
+    res.setHeader('Set-Cookie', cookie(r.token, 30 * 24 * 3600, o.secureCookies));
+    log(`signed in: user ${r.user.id} (${r.user.phone ? 'phone' : 'wallet'})`);
+    return { user: r.user, token: r.token };   // the token is for apps on another origin (DeWEB): `Authorization: Bearer`
   };
-  const ownerShop = (c: Ctx): ShopRuntime => {
-    const u = need(c, 'owner');
-    const shop = shops.forOwner(u.id);
-    if (!shop) throw new AuthError(409, 'Set up your shop first.');
-    return shops.runtime(shop);
-  };
-  /** A job the signed-in rider is booked on. */
-  const riderJob = (c: Ctx): { rt: ShopRuntime; job: Job } => {
-    const u = need(c, 'rider');
-    const shop = shops.all().find((s) => s.id === Number(c.m[1]));
-    const rt = shop && shops.runtime(shop);
-    const job = rt?.jobs.get(c.m[2]);
-    if (!rt || !job || !u.address || job.rider.toLowerCase() !== u.address.toLowerCase()) throw new AuthError(404, 'No such job for you.');
-    return { rt, job };
+  const money = (userId: number) => { const b = ledger.balance(userId); return { availableNaira: toNaira(b.availableKobo), heldNaira: toNaira(b.heldKobo) }; };
+  const wrap = async <T>(f: () => Promise<T> | T): Promise<T> => {
+    try { return await f(); }
+    catch (e) { if (e instanceof LedgerError || e instanceof PaystackError) throw new AuthError(e.status, e.message); throw e; }
   };
 
-  async function orderView(rt: ShopRuntime, job: Job) {
-    const r = await p.pub.readContract({ address: rt.shop.vault, abi: checkAbi, functionName: 'orders', args: [BigInt(job.orderId)] });
+  function orderView(userId: number, orderId: string) {
+    const rt = buyers.runtime(userId), job = rt.jobs.get(orderId), r = buyers.orders.get(orderId);
+    if (!job || !r || r.user_id !== userId) return null;
     return {
-      ...job, shopId: rt.shop.id, vault: rt.shop.vault,
-      status: STATUS_NAME[r[8]] ?? 'Unknown', ordered: r[3], unitPriceNaira: naira(r[6]), riderFeeNaira: naira(r[7]),
-      pickup: { atSupplier: r[10], riderCounted: r[11], riderCount: r[12], aiCounted: r[13], aiCount: r[14], damage: r[15], picked: r[16] },
-      delivery: { atShop: r[17], arrivedAt: Number(r[18]), aiCounted: r[19], delivered: r[20], damage: r[21], ownerOk: r[22], ownerIssue: r[23] },
-      lastCheck: lastCheck.get(`${rt.shop.id}:${job.orderId}`) ?? null,
+      ...job, money: 'naira' as const, self: r.rider.toLowerCase() === SELF_HANDLER.toLowerCase(),
+      status: STATUS_NAME[r.status] ?? 'Unknown', ordered: r.ordered, unitPriceNaira: toNaira(r.unit_price), riderFeeNaira: toNaira(r.rider_fee),
+      pickup: { atSupplier: !!r.at_supplier, riderCounted: !!r.rider_counted, riderCount: r.rider_count, aiCounted: !!r.ai_counted, aiCount: r.ai_count, damage: !!r.pickup_damage, picked: r.picked },
+      delivery: { atShop: !!r.at_shop, arrivedAt: r.arrived_at, aiCounted: !!r.ai_delivered, delivered: r.delivered, damage: !!r.delivery_damage, ownerOk: !!r.owner_ok, ownerIssue: !!r.owner_issue },
+      evidence: JSON.parse(r.evidence), lastCheck: lastCheck.get(`${userId}:${orderId}`) ?? null,
     };
   }
-  /**
-   * Finish supplier approvals the owner queued once their 24 h wait is over. applySupplier only carries out what the
-   * owner's key already decided (status and payout address), and anyone may call it, so the deployer pays this gas
-   * instead of asking the owner to sign a second time. Best effort: a failure leaves the approval pending.
-   */
-  async function applyDueSuppliers(rt: ShopRuntime) {
-    const now = (await p.pub.getBlock()).timestamp;
-    for (const s of loadSuppliers()) {
-      const key = supplierKey(s.id);
-      const at = await p.pub.readContract({ address: rt.shop.vault, abi: vaultReadAbi, functionName: 'supplierEffectiveAt', args: [key] });
-      if (at === 0n || at > now) continue;
-      try {
-        const hash = await p.deployer.writeContract({ address: rt.shop.vault, abi: vaultReadAbi, functionName: 'applySupplier', args: [key] });
-        await p.pub.waitForTransactionReceipt({ hash });
-        log(`shop ${rt.shop.id}: supplier ${s.id} approval applied (${hash})`);
-      } catch (e) { log(`shop ${rt.shop.id}: could not apply ${s.id}: ${(e as Error).message.split('\n')[0]}`); }
-    }
-  }
-  const stageOf = (b: any) => (b?.stage === 'delivery' ? 'delivery' : b?.stage === 'pickup' ? 'pickup' : null);
+  const myOrder = (c: Ctx) => {
+    const u = need(c), r = buyers.orders.get(c.m[1]);
+    if (!r || r.user_id !== u.id) throw new AuthError(404, 'No such order.');
+    return { u, r, rt: buyers.runtime(u.id) };
+  };
+  const remember = (userId: number, orderId: string, r: { outcome: string; qty: number; reason: number; tx: string }, stage: 'pickup' | 'delivery') => {
+    const message = (stage === 'pickup' ? PICKUP_REASONS : DELIVERY_REASONS)[r.outcome === 'short' ? 4 : r.reason] ?? '';
+    const v = { status: 'settled', outcome: r.outcome, qty: r.qty, reason: r.reason, message } as unknown as CheckResult;
+    lastCheck.set(`${userId}:${orderId}`, v);
+    return v;
+  };
 
   const routes: [string, RegExp, Handler][] = [
     // ---------------------------------------------------------------- sign-in
@@ -118,182 +97,122 @@ export function createApp(o: AppOptions): Server {
       await accounts.requestCode(String(c.body?.phone ?? ''));
       return { sent: true };
     }],
-    ['POST', /^\/api\/auth\/verify$/, async (c, res) => {
-      const role = 'owner';   // shop owners only: no rider accounts (logistics companies or the owner collect goods)
-      const { user, token } = accounts.verifyCode(String(c.body?.phone ?? ''), String(c.body?.code ?? ''), role);
-      res.setHeader('Set-Cookie', cookie(token, 30 * 24 * 3600, o.secureCookies));
-      log(`signed in: user ${user.id} (${user.role})`);
-      return { user, token };   // for apps on another origin (DeWEB), which send it as `Authorization: Bearer`
-    }],
+    ['POST', /^\/api\/auth\/verify$/, async (c, res) => signedIn(res, accounts.verifyCode(String(c.body?.phone ?? ''), String(c.body?.code ?? '')))],
+    ['GET', /^\/api\/auth\/wallet-message$/, async (c) => accounts.walletChallenge(c.url.searchParams.get('address') ?? '')],
+    ['POST', /^\/api\/auth\/wallet$/, async (c, res) => signedIn(res, await accounts.verifyWallet(String(c.body?.message ?? ''), String(c.body?.signature ?? '0x') as Hex))],
     ['POST', /^\/api\/auth\/logout$/, async (c, res) => {
       if (c.token) accounts.signOut(c.token);
       res.setHeader('Set-Cookie', cookie('', 0, o.secureCookies));
       return { ok: true };
     }],
 
-    // ---------------------------------------------------------------- the signed-in person
+    // ---------------------------------------------------------------- me
     ['GET', /^\/api\/config$/, async () => ({
       chainId: p.chain.id, network: p.name, token: p.token, tokenSymbol: p.tokenSymbol, explorerTx: p.explorerTx,
-      photoCheck: shops.photoCheckOn, testMoney: !!p.faucet, devTime: !!p.advanceTime,
+      naira: { paystack: !!paystack, test: paystack?.test ?? true, testCredit: !paystack && !!p.faucet },
+      logistics: p.carriers.map((x) => ({ id: x.id, name: x.name, api: !!x.connector })),
     })],
-    ['GET', /^\/api\/me$/, async (c) => {
-      if (!c.user) return { user: null };
-      return {
-        user: c.user,
-        shop: c.user.role === 'owner' ? shops.forOwner(c.user.id) : null,
-        rider: c.user.role === 'rider' ? shops.rider(c.user.id) : null,
-        hasBackup: !!accounts.backup(c.user),
-      };
-    }],
-    ['GET', /^\/api\/me\/link-message$/, async (c) => {
+    ['GET', /^\/api\/me$/, async (c) => (c.user ? { user: c.user, naira: money(c.user.id) } : { user: null })],
+    ['POST', /^\/api\/me\/profile$/, async (c) => ({ user: accounts.setProfile(need(c), c.body ?? {}) })],
+    ['POST', /^\/api\/me\/avatar$/, async (c) => {
       const u = need(c);
-      const address = c.url.searchParams.get('address') ?? '';
-      if (!/^0x[0-9a-fA-F]{40}$/.test(address)) throw new AuthError(400, 'address must be a 0x address');
-      return { message: linkMessage(u.id, address as Address) };
+      if (typeof c.body?.data !== 'string') throw new AuthError(400, 'Send the picture as base64.');
+      return { user: accounts.setAvatar(u, Buffer.from(c.body.data, 'base64'), String(c.body?.mediaType ?? '')) };
     }],
-    ['POST', /^\/api\/me\/key$/, async (c) => {
+    ['POST', /^\/api\/me\/phone$/, async (c) => ({ user: accounts.addPhone(need(c), String(c.body?.phone ?? ''), String(c.body?.code ?? '')) })],
+    ['POST', /^\/api\/me\/wallet$/, async (c) => ({ user: await accounts.addWallet(need(c), String(c.body?.message ?? ''), String(c.body?.signature ?? '0x') as Hex) })],
+    /** Coins in the connected wallet on X Layer (read from the chain; StockRun never holds them). */
+    ['GET', /^\/api\/me\/coins$/, async (c) => {
       const u = need(c);
-      return { user: await accounts.linkAddress(u, c.body?.address as Address, c.body?.signature as Hex) };
-    }],
-    ['GET', /^\/api\/me\/backup$/, async (c) => ({ backup: accounts.backup(need(c)) })],
-    ['POST', /^\/api\/me\/backup$/, async (c) => { accounts.saveBackup(need(c), c.body ?? {}); return { ok: true }; }],
-    ['POST', /^\/api\/me\/gas$/, async (c) => shops.ensureGas(need(c))],
-    /** Token amount (base units, as a string) for a naira amount, at the server's rate. The phone signs that amount. */
-    ['GET', /^\/api\/money\/to-token$/, async (c) => {
-      need(c);
-      const n = Number(c.url.searchParams.get('naira'));
-      if (!Number.isInteger(n) || n < 1 || n > 100_000_000) throw new AuthError(400, 'naira must be a whole number from 1 to 100,000,000');
-      return { naira: n, amount: p.money.toToken(n).toString(), symbol: p.tokenSymbol };
-    }],
-    ['POST', /^\/api\/me\/test-money$/, async (c) => {
-      const u = need(c);
-      if (!p.faucet) throw new AuthError(404, 'Test money only exists on the test network.');
-      if (!u.address) throw new AuthError(409, 'Set up the key on your phone first.');
-      await p.faucet(u.address);
-      return { ok: true };
-    }],
-
-    // ---------------------------------------------------------------- owner
-    ['POST', /^\/api\/shop$/, async (c) => {
-      const shop = await shops.create(need(c, 'owner'), c.body ?? {});
-      log(`shop ${shop.id} "${shop.name}" created, vault ${shop.vault}`);
-      return { shop };
-    }],
-    ['GET', /^\/api\/shop\/money$/, async (c) => {
-      const rt = ownerShop(c), v = rt.shop.vault, read = (functionName: 'locked' | 'weeklyBudget' | 'spentThisWeek' | 'limit') =>
-        p.pub.readContract({ address: v, abi: vaultReadAbi, functionName });
-      const [vaultBal, walletBal, locked, budget, spent, limit] = await Promise.all([
-        p.pub.readContract({ address: p.token, abi: tokenAbi, functionName: 'balanceOf', args: [v] }),
-        p.pub.readContract({ address: p.token, abi: tokenAbi, functionName: 'balanceOf', args: [need(c).address!] }),
-        read('locked'), read('weeklyBudget'), read('spentThisWeek'), read('limit'),
+      if (!u.wallet) return { wallet: null };
+      const [okb, token] = await Promise.all([
+        p.pub.getBalance({ address: u.wallet }),
+        p.pub.readContract({ address: p.token, abi: tokenAbi, functionName: 'balanceOf', args: [u.wallet] }),
       ]);
-      const unitNaira = (x: bigint) => naira(x);
-      return {
-        vault: v, token: p.token, network: p.name,
-        vaultNaira: naira(vaultBal), lockedNaira: naira(locked),
-        availableNaira: Math.max(0, naira(vaultBal) - naira(locked)),
-        walletNaira: naira(walletBal), weeklyBudgetNaira: unitNaira(budget), spentThisWeekNaira: unitNaira(spent), limitNaira: unitNaira(limit),
-      };
+      return { wallet: u.wallet, network: p.name, okb: formatEther(okb), token: { symbol: p.tokenSymbol, amount: p.money.toNaira(token) === 0 ? '0' : String(Number(token) / 1e6), naira: p.money.toNaira(token) } };
     }],
-    ['POST', /^\/api\/orders$/, async (c) => {
-      const rt = ownerShop(c);
-      const text = typeof c.body?.text === 'string' ? c.body.text.trim() : '';
-      if (!text || text.length > 2000) throw new AuthError(400, 'Send the order as text (up to 2,000 characters).');
-      await applyDueSuppliers(rt).catch(() => {});
-      const report = await handleOrder(text, rt.agent, { delivery: c.body?.delivery === 'self' ? 'self' : 'logistics' });
-      await shops.dispatcher.bookPending(rt.dispatch).catch((e) => log(`booking: ${(e as Error).message}`));
-      return { message: report.message, problems: report.problems };
+    ['GET', /^\/api\/users\/(\d+)$/, async (c) => {
+      const prof = accounts.publicProfile(Number(c.m[1]));
+      if (!prof) throw new AuthError(404, 'No such user.');
+      return prof;
     }],
+
+    // ---------------------------------------------------------------- naira
+    ['POST', /^\/api\/naira\/deposit$/, async (c) => {
+      const u = need(c);
+      if (!paystack) throw new AuthError(503, 'Naira deposits are not switched on yet on this server.');
+      return wrap(() => paystack.start(u.id, kobo(Number(c.body?.amountNaira)), String(c.body?.email ?? '').trim()));
+    }],
+    ['POST', /^\/api\/naira\/confirm$/, async (c) => {
+      const u = need(c);
+      if (!paystack) throw new AuthError(503, 'Naira deposits are not switched on yet on this server.');
+      const r = await wrap(() => paystack.confirm(String(c.body?.reference ?? ''), u.id));
+      return { ...r, amountNaira: toNaira(r.amountKobo), naira: money(u.id) };
+    }],
+    ['GET', /^\/api\/naira\/history$/, async (c) => ledger.history(need(c).id).map((m) => ({ ...m, amountNaira: toNaira(m.amountKobo) }))],
+    /** Local test chain only: test naira, clearly labelled. Never on X Layer. */
+    ['POST', /^\/api\/dev\/naira$/, async (c) => {
+      const u = need(c);
+      if (paystack || !p.faucet) throw new AuthError(404, 'Test naira only exists on the local test network.');
+      const n = Math.round(Number(c.body?.amountNaira));
+      if (!(n >= 100 && n <= 5_000_000)) throw new AuthError(400, 'From ₦100 to ₦5,000,000.');
+      ledger.deposit(u.id, `test-${u.id}-${Date.now()}`, kobo(n));
+      return { naira: money(u.id) };
+    }],
+
+    // ---------------------------------------------------------------- requests and orders
+    ['POST', /^\/api\/requests$/, async (c) => wrap(() => buyers.request(need(c), c.body ?? {}))],
+    ['GET', /^\/api\/requests$/, async (c) => buyers.requests(need(c).id)],
     ['GET', /^\/api\/orders$/, async (c) => {
-      const rt = ownerShop(c);
-      await shops.dispatcher.bookPending(rt.dispatch).catch(() => {});   // e.g. an ask-owner order the owner just approved
-      return Promise.all(rt.jobs.all().sort((a, b) => b.createdAt - a.createdAt).map((j) => orderView(rt, j)));
+      const u = need(c), rt = buyers.runtime(u.id);
+      await buyers.dispatcher.bookPending(rt.dispatch).catch(() => {});   // e.g. an order the buyer just approved
+      return rt.jobs.all().sort((a, b) => b.createdAt - a.createdAt).map((j) => orderView(u.id, j.orderId)).filter(Boolean);
     }],
-    ['POST', /^\/api\/orders\/(\d+)\/settle$/, async (c) => {
-      const rt = ownerShop(c), stage = stageOf(c.body);
-      if (!stage) throw new AuthError(400, 'stage must be pickup or delivery.');
-      if (!rt.jobs.get(c.m[1])) throw new AuthError(404, 'No such order in your shop.');
-      try { const r = await rt.settler.settle(BigInt(c.m[1]), stage); lastCheck.set(`${rt.shop.id}:${c.m[1]}`, r as CheckResult); return r; }
-      catch { throw new AuthError(409, 'Not ready to settle yet.'); }
+    ['POST', /^\/api\/orders\/(\d+)\/approve$/, async (c) => {
+      const { u, rt } = myOrder(c);
+      const r = await wrap(() => buyers.orders.approve(u.id, Number(c.m[1])));
+      await buyers.dispatcher.bookPending(rt.dispatch).catch(() => {});
+      return { result: r.status, reason: 'reason' in r ? RESTOCK_REASONS[r.reason] ?? '' : '' };
     }],
-    /** The owner's count at the door for a logistics delivery (the check service attests it; it decides the fee). */
+    /** Self-pickup: the buyer's count at the seller pays the seller (PickupCheck decides). */
+    ['POST', /^\/api\/orders\/(\d+)\/collect$/, async (c) => {
+      const { u, r } = myOrder(c);
+      if (r.rider.toLowerCase() !== SELF_HANDLER.toLowerCase()) throw new AuthError(409, 'A logistics company is collecting this order.');
+      const n = Number(c.body?.count);
+      try { buyers.orders.handlerPickup(SELF_HANDLER, r.id, true, n); } catch (e) { throw new AuthError(409, (e as Error).message); }
+      const s = await wrap(() => buyers.runtime(u.id).naira.settlePickup(c.m[1]));
+      return remember(u.id, c.m[1], s, 'pickup');
+    }],
+    /** Logistics delivery: the buyer's count at the door decides the fee (DeliveryCheck). */
     ['POST', /^\/api\/orders\/(\d+)\/received$/, async (c) => {
-      const rt = ownerShop(c);
-      if (!rt.jobs.get(c.m[1])) throw new AuthError(404, 'No such order in your shop.');
-      try { return await shops.dispatcher.ownerCount(rt.dispatch, c.m[1], Number(c.body?.count)); }
+      const { u, rt } = myOrder(c);
+      try { return await buyers.dispatcher.ownerCount(rt.dispatch, c.m[1], Number(c.body?.count)); }
       catch (e) { throw new AuthError(409, (e as Error).message); }
+      finally { void u; }
     }],
+
+    // ---------------------------------------------------------------- the map
+    /** Verified sellers near a point, with their latest prices. Public: anyone can look before signing in. */
     ['GET', /^\/api\/map$/, async (c) => {
-      const rt = ownerShop(c), shop = rt.agent.shop;
-      await applyDueSuppliers(rt).catch(() => {});
-      const read = (functionName: 'pendingSupplierStatus' | 'supplierEffectiveAt', key: Hex) =>
-        p.pub.readContract({ address: rt.shop.vault, abi: vaultReadAbi, functionName, args: [key] });
-      const suppliers = await Promise.all(loadSuppliers().map(async (s) => ({
-        id: s.id, key: supplierKey(s.id), name: s.name, market: s.market, lat: s.lat, lng: s.lng, simulated: s.simulated,
-        status: Number(await rt.vault.supplierStatus(supplierKey(s.id))),
-        // A queued approval: the status it will take and when (unix seconds, chain time); null when nothing is queued.
-        pending: await (async () => {
-          const at = await read('supplierEffectiveAt', supplierKey(s.id));
-          return at === 0n ? null : { status: Number(await read('pendingSupplierStatus', supplierKey(s.id))), effectiveAt: Number(at) };
-        })(),
-        km: Math.round(haversineKm(shop, s) * 10) / 10,
-        prices: s.stocks.map((st) => {
-          const latest = rt.agent.prices?.latest(s.id, st.item);
-          return latest ? { item: st.item, priceNaira: latest.unitPriceNaira, source: latest.source, age: ageText(latest.at) }
-            : { item: st.item, priceNaira: st.listPriceNaira, source: 'catalogue', age: null };
-        }),
-      })));
-      return { shop, supplierPayout: p.supplierPayout, suppliers: suppliers.filter((s) => s.status !== 3) };
-    }],
-
-    // ---------------------------------------------------------------- rider
-    ['POST', /^\/api\/rider\/profile$/, async (c) => ({ rider: await shops.setRider(need(c, 'rider'), c.body ?? {}) })],
-    ['GET', /^\/api\/rider\/jobs$/, async (c) => {
-      const u = need(c, 'rider');
-      if (!u.address) return [];
-      const views = [];
-      for (const shop of shops.all()) {
-        const rt = shops.runtime(shop);
-        for (const j of rt.jobs.forRider(u.address)) views.push(await orderView(rt, j));
-      }
-      return views.sort((a, b) => b.createdAt - a.createdAt);
-    }],
-    ['POST', /^\/api\/jobs\/(\d+)\/(\d+)\/photo$/, async (c) => {
-      const { rt, job } = riderJob(c), stage = stageOf(c.body);
-      if (!rt.check) throw new AuthError(503, 'Photo check is off on this server.');
-      if (!stage) throw new AuthError(400, 'stage must be pickup or delivery');
-      if (typeof c.body?.data !== 'string') throw new AuthError(400, 'data must be the photo as base64');
-      const photo = { data: Buffer.from(c.body.data, 'base64'), mediaType: c.body.mediaType as MediaType };
-      const r = await (stage === 'pickup' ? rt.check.pickup(BigInt(job.orderId), photo) : rt.check.delivery(BigInt(job.orderId), photo));
-      lastCheck.set(`${rt.shop.id}:${job.orderId}`, r);
-      log(`photo ${stage} shop ${rt.shop.id} #${job.orderId}: ${r.status}`);
-      return r;
-    }],
-    ['POST', /^\/api\/jobs\/(\d+)\/(\d+)\/confirm-count$/, async (c) => {
-      const { rt, job } = riderJob(c), stage = stageOf(c.body);
-      if (!rt.check || !stage) throw new AuthError(400, 'stage must be pickup or delivery');
-      const r = await rt.check.confirmShort(BigInt(job.orderId), stage);
-      lastCheck.set(`${rt.shop.id}:${job.orderId}`, r);
-      return r;
-    }],
-    ['POST', /^\/api\/jobs\/(\d+)\/(\d+)\/settle$/, async (c) => {
-      const { rt, job } = riderJob(c), stage = stageOf(c.body);
-      if (!rt.check || !stage) throw new AuthError(400, 'stage must be pickup or delivery');
-      try { const r = await rt.check.settle(BigInt(job.orderId), stage); lastCheck.set(`${rt.shop.id}:${job.orderId}`, r as CheckResult); return r; }
-      catch { throw new AuthError(409, 'Not ready to settle yet: both the photo check and your step are needed.'); }
-    }],
-
-    // ---------------------------------------------------------------- test network only
-    ['POST', /^\/api\/dev\/advance-day$/, async (c) => {
-      need(c);
-      if (!p.advanceTime) throw new AuthError(404, 'Not available on this network.');
-      await p.advanceTime(86_400);
-      return { ok: true };
+      const lat = Number(c.url.searchParams.get('lat')), lng = Number(c.url.searchParams.get('lng'));
+      const radius = Math.min(100, Math.max(1, Number(c.url.searchParams.get('radius') ?? 25)));
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) throw new AuthError(400, 'lat and lng are needed.');
+      const sellers = loadSuppliers().map((s) => ({ s, km: haversineKm({ lat, lng }, s) })).filter((x) => x.km <= radius).sort((a, b) => a.km - b.km).slice(0, 50);
+      return {
+        center: { lat, lng }, radiusKm: radius,
+        sellers: sellers.map(({ s, km }) => ({
+          id: s.id, key: supplierKey(s.id), name: s.name, market: s.market, lat: s.lat, lng: s.lng, simulated: s.simulated, verified: buyers.sellerStatus(supplierKey(s.id)) === 1,
+          km: Math.round(km * 10) / 10,
+          prices: s.stocks.map((st) => {
+            const latest = o.prices.latest(s.id, st.item);
+            return latest ? { item: st.item, priceNaira: latest.unitPriceNaira, source: latest.source, age: ageText(latest.at) } : { item: st.item, priceNaira: st.listPriceNaira, source: 'catalogue', age: null };
+          }),
+        })),
+      };
     }],
   ];
 
-  // Sendrelay status webhooks: signature checked on the raw body; each event once; the task is then re-read from
-  // Sendrelay (the authoritative state) and applied. Answered at once, processed after (Sendrelay waits 10 s at most).
+  // Sendrelay status webhooks: signature checked on the raw body; each event once; the task is re-read from Sendrelay.
   const seenEvents = new Set<string>();
   async function sendrelayWebhook(req: IncomingMessage, res: ServerResponse) {
     if (!o.sendrelayWebhookSecret) return send(res, 404, { error: 'not found' });
@@ -304,11 +223,21 @@ export function createApp(o: AppOptions): Server {
     send(res, 200, { ok: true });
     if (seenEvents.has(ev.id)) return;
     seenEvents.add(ev.id);
-    const entry = shops.dispatcher.entries.find((e) => e.id === 'sendrelay');
-    const shopsNow = shops.dispatchShops(), found = shops.dispatcher.find(shopsNow, ev.data.taskId);
+    const entry = buyers.dispatcher.entries.find((e) => e.id === 'sendrelay');
+    const found = buyers.dispatcher.find(buyers.dispatchSets(), ev.data.taskId);
     if (!entry?.connector || !found) return;
-    try { await shops.dispatcher.apply(found.shop, found.orderId, await entry.connector.get(ev.data.taskId)); }
+    try { await buyers.dispatcher.apply(found.shop, found.orderId, await entry.connector.get(ev.data.taskId)); }
     catch (e) { log(`sendrelay ${ev.type} for order ${found.orderId}: ${(e as Error).message}`); }
+  }
+  // Paystack webhooks: signature checked on the raw body, then the payment is verified with Paystack before crediting.
+  async function paystackWebhook(req: IncomingMessage, res: ServerResponse) {
+    if (!paystack) return send(res, 404, { error: 'not found' });
+    const raw = await readBody(req);
+    let ev;
+    try { ev = paystack.verifyWebhook(raw, req.headers['x-paystack-signature'] as string | undefined); }
+    catch { return send(res, 401, { error: 'bad signature' }); }
+    send(res, 200, { ok: true });
+    if (ev.event === 'charge.success' && ev.reference) await paystack.confirm(ev.reference).catch((e) => log(`paystack ${ev.reference}: ${(e as Error).message}`));
   }
 
   return createServer(async (req, res) => {
@@ -328,6 +257,14 @@ export function createApp(o: AppOptions): Server {
     const ip = (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0].trim() || req.socket.remoteAddress || '?';
     try {
       if (url.pathname === '/api/webhooks/sendrelay' && req.method === 'POST') return await sendrelayWebhook(req, res);
+      if (url.pathname === '/api/webhooks/paystack' && req.method === 'POST') return await paystackWebhook(req, res);
+      const avatar = /^\/api\/users\/(\d+)\/avatar$/.exec(url.pathname);
+      if (avatar && req.method === 'GET') {
+        const a = accounts.avatar(Number(avatar[1]));
+        if (!a) return send(res, 404, { error: 'no picture' });
+        res.writeHead(200, { 'Content-Type': a.type, 'Cache-Control': 'public, max-age=300', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'" });
+        return res.end(a.data);
+      }
       if (req.method === 'POST' && !String(req.headers['content-type'] ?? '').startsWith('application/json'))
         throw new AuthError(415, 'Send JSON.');
       if (url.pathname === '/rpc' && req.method === 'POST') {

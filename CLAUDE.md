@@ -1,24 +1,28 @@
 # StockRun — project context for Claude Code
 
 ## What we are building
-StockRun is an AI restocking agent for small shops in Lagos, built for the X Layer × TapeOut "Build X" hackathon
+StockRun is an AI buying agent on a map, for anyone in Nigeria, built for the X Layer × TapeOut "Build X" hackathon
 (deadline: 2026-12-07 23:59 UTC = 00:59 Lagos time on Dec 8; we target submission on Dec 6).
 
-A shop owner sends an order ("20 cartons of Indomie, 10 bags of rice, within 5 km"). The agent finds suppliers on
-a map and negotiates on WhatsApp. The owner chooses to collect the goods themselves or to send a verified logistics
-company (Sendrelay first), and the supplier is paid **only after that handler has checked the goods at pickup**.
-Every payment decision is made by a TapeOut circuit on X Layer, never by the AI. There are no rider bonds.
+A person signs in with a phone number or a wallet, deposits naira (Paystack) or uses the coins in their wallet, and
+types what they want with a budget ("20 cartons of Indomie, under ₦300,000, deliver to Ikeja"). The agent finds sellers
+and producers on the map, negotiates with them on WhatsApp, and pays the seller **only after the logistics company (or
+the buyer collecting it) has the goods**. Every payment decision is made by a TapeOut circuit on X Layer, never by the AI.
+People have a profile (username, picture). There are no shops, no riders and no bonds.
 
 ## The non-negotiable design rules
 1. **The AI never moves money.** The agent key can only propose orders and submit evidence.
-2. **The vault builds every circuit input itself** from contract storage and signed evidence — never from the caller.
-3. **Only trusted handlers collect goods:** the owner (self-pickup) or a logistics company the owner approved. PickupCheck
-   pays the supplier on the handler's count (a photo count can only lower it). With a logistics company, DeliveryCheck
-   pays its fee when the owner confirms, or withholds the fee for the owner if goods arrive short; the shortfall is
-   claimed off-chain from the company (insurance/dispute). Self-pickup has no delivery step and no fee. No bonds.
-4. **No deposits to suppliers.** Supplier is paid at pickup, after verification, in naira via an off-ramp partner.
+2. **Every payment decision is a TapeOut circuit's.** Inputs are built from stored state and signed evidence, never
+   from the caller. Coins: the user's vault on X Layer builds the inputs and moves the money. Naira: the server builds
+   the same inputs from the ledger, calls the same circuit's `eval` on X Layer, and applies only what it returns.
+3. **Only trusted handlers collect goods:** the buyer (self-pickup) or a verified logistics company. The seller is paid
+   at pickup on the handler's confirmation; delivery decides the logistics fee (paid, or held back if goods are short).
+4. **No deposits to sellers.** Sellers are paid at pickup, after verification, in naira via StockRun's payout account.
 5. **If a circuit call fails, the order holds.** Never pay by default.
-6. The owner's approval clears "ask owner" rules but never "reject" rules.
+6. The buyer's approval clears "ask owner" rules but never "reject" rules.
+7. **Honesty about where money is.** Naira deposits are held by StockRun in a ledger (integer kobo, every movement
+   recorded, a deposit credited once per Paystack reference and only after Paystack verifies it). The app never calls
+   naira balances "on-chain". On-chain claims carry a transaction hash.
 
 ## Repo layout
 - `docs/` — plan, circuit specs, TapeOut notes, WhatsApp notes. **Read `docs/CIRCUITS.md` before touching circuits or the vault.**

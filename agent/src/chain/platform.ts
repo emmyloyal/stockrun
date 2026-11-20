@@ -2,7 +2,7 @@
 // and on X Layer mainnet against the taped-out circuits.
 import { existsSync, readFileSync } from 'node:fs';
 import {
-  createPublicClient, createTestClient, createWalletClient, getAddress, http, isAddress, parseAbi, parseEther,
+  createPublicClient, createTestClient, createWalletClient, getAddress, hexToBytes, http, isAddress, parseAbi, parseEther, toHex,
   type Abi, type Account, type Address, type Chain, type Hex, type PublicClient, type Transport, type WalletClient,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
@@ -81,6 +81,19 @@ export async function sendGasTopUp(p: Platform, to: Address): Promise<Hex | null
   const r = await p.pub.waitForTransactionReceipt({ hash });
   if (r.status !== 'success') throw new Error('gas top-up failed');
   return hash;
+}
+
+const evalAbi = parseAbi(['function eval(uint256 circuitId, bytes input) view returns (bytes)']);
+/**
+ * Call one of the platform's circuits (RestockGuard #1, PickupCheck #2, DeliveryCheck #3) with packed inputs, at a
+ * fixed block so the result can be re-checked. Used for naira orders, whose money is in StockRun's ledger.
+ */
+export function circuitEvaluator(p: Platform) {
+  return async (which: 'restock' | 'pickup' | 'delivery', input: Uint8Array) => {
+    const circuitId = p.circuitIds[which], block = await p.pub.getBlockNumber();
+    const out = await p.pub.readContract({ address: p.circuits, abi: evalAbi, functionName: 'eval', args: [circuitId, toHex(input)], blockNumber: block });
+    return { output: hexToBytes(out), block, circuitId };
+  };
 }
 
 // Anvil's well-known PUBLIC test keys (index 5-7), separate from the ones the single-shop demo uses.

@@ -7,7 +7,8 @@ import { parseOrder } from './tools/parseOrder.ts';
 import { searchSuppliers, supplierKey, type Candidate } from './tools/suppliers.ts';
 import { negotiate, isDeal, type SupplierChannel, type Deal } from './tools/negotiate.ts';
 import { bookRider } from './tools/riders.ts';
-import { RESTOCK_REASONS, type ProposeResult, type VaultClient } from './tools/vault.ts';
+import { RESTOCK_REASONS, type ProposeResult } from './tools/vault.ts';
+import type { ProposeTarget } from './orders/backends.ts';
 import { CATEGORIES, type OrderLine, type Rider, type Shop, type Supplier, type SupplierStatus } from './types.ts';
 import type { JobDelivery, JobStore } from './check/jobs.ts';
 import type { PriceBook } from './prices/priceBook.ts';
@@ -17,7 +18,8 @@ import type { Money } from './chain/money.ts';
 export interface AgentDeps {
   extractor: Extractor;
   channel: SupplierChannel;
-  vault: VaultClient;
+  /** Where the order's money is: the buyer's vault (coins) or StockRun's naira ledger. */
+  vault: ProposeTarget;
   /** Logistics companies that can be booked (each with its on-chain key). */
   riders: Rider[];
   /** The shop owner's key: the handler for self-pickup orders. */
@@ -108,7 +110,7 @@ export function ownerMessage(outcomes: LineOutcome[], problems: string[]): strin
   for (const o of outcomes) {
     const what = `${o.line.quantity} ${o.line.unit}(s) ${o.line.item}`;
     if (o.kind === 'no_supplier') {
-      out.push(`✗ ${what}: no approved supplier nearby.` + (o.suggestions.length ? ` Suggest approving: ${o.suggestions.map((s) => `${s.supplier.name} (${s.km.toFixed(1)} km)`).join(', ')}.` : ''));
+      out.push(`✗ ${what}: no verified seller has this near your delivery address yet.` + (o.suggestions.length ? ` Nearby but not verified by StockRun yet: ${o.suggestions.map((s) => `${s.supplier.name} (${s.km.toFixed(1)} km)`).join(', ')}.` : ''));
     } else if (o.kind === 'no_deal') {
       out.push(`✗ ${what}: no deal within your price. ${o.tried.join('; ')}.`);
     } else if (o.kind === 'no_rider') {

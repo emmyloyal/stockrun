@@ -1,41 +1,40 @@
-// Dispatch: connects logistics bookings to the vault. StockRun holds one on-chain key per logistics company (its
-// "dispatch desk"); the vault trusts that key only if the shop owner approved the company. The desk key can do two
-// things, and only when the company itself reports them:
-//   - "picked up" (Sendrelay IN_PROGRESS): riderPickup with the ordered quantity -> PickupCheck pays the supplier.
+// Dispatch: connects logistics bookings to orders. StockRun holds one on-chain key per logistics company (its
+// "dispatch desk"); orders trust that key only for verified companies. The desk can do two things, and only when the
+// company itself reports them:
+//   - "picked up" (Sendrelay IN_PROGRESS): confirm the ordered quantity -> PickupCheck pays the seller.
 //     The company's rider checked the goods against the order details we sent; that is the pickup confirmation.
-//   - "delivered" (Sendrelay COMPLETED, i.e. the rider entered the owner's delivery code): riderArrive.
-// The owner's count at the door is attested by the check service and decides the fee: paid, or held back if short.
-// Nothing here moves money directly; every payment is still the circuit's decision in the vault.
-import { parseAbi, type Address, type Hash, type PublicClient } from 'viem';
-import { checkAbi, STATUS, type CheckService } from '../check/checkService.ts';
+//   - "delivered" (Sendrelay COMPLETED, i.e. the rider entered the buyer's delivery code): mark arrival.
+// The buyer's count at the door decides the fee: paid, or held back if short. Nothing here moves money directly:
+// every payment is a circuit's decision, in the buyer's vault (coins) or the naira ledger (orders/backends.ts).
+import type { Address } from 'viem';
+import { STATUS } from '../check/checkService.ts';
 import type { Job, JobDelivery, JobStore } from '../check/jobs.ts';
-import type { Money } from '../chain/money.ts';
 import type { Wallet } from '../chain/platform.ts';
+import type { OrderBackend } from '../orders/backends.ts';
 import { compareQuotes, type BookingUpdate, type Carrier, type CarrierQuote, type DeliveryJob, type DeliveryState } from './carrier.ts';
 
 export interface CarrierEntry {
   id: string;
   name: string;
-  /** The company's dispatch-desk key (held by StockRun). The vault trusts it only if the owner approved the company. */
+  /** The company's dispatch-desk key (held by StockRun). Orders trust it only for verified companies. */
   wallet: Wallet;
   /** The company's booking API, or null for the simulated company in the local demo. */
   connector: Carrier | null;
 }
 
-/** One shop's side of dispatch: its vault, its jobs and its settler. */
-export interface DispatchShop { vault: Address; jobs: JobStore; settler: CheckService }
+/** One set of orders the dispatcher moves along: where their money is, and their off-chain details. */
+export interface DispatchShop { backend: OrderBackend; jobs: JobStore }
 
 const TERMINAL: DeliveryState[] = ['delivered', 'failed', 'cancelled'];
-const handlerAbi = parseAbi(['function riderPickup(uint256 id, bool atSupplier, uint8 riderCount)', 'function riderArrive(uint256 id, bool atShop)']);
 
 export class Dispatcher {
-  private pub: PublicClient; private money: Money; private log: (l: string) => void;
+  private log: (l: string) => void;
   readonly entries: CarrierEntry[];
-  constructor(o: { pub: PublicClient; money: Money; entries: CarrierEntry[]; log?: (l: string) => void }) {
-    this.pub = o.pub; this.money = o.money; this.entries = o.entries; this.log = o.log ?? (() => {});
+  constructor(o: { entries: CarrierEntry[]; log?: (l: string) => void }) {
+    this.entries = o.entries; this.log = o.log ?? (() => {});
   }
 
-  /** Booking-capable companies the vault trusts, quoted for this job, cheapest first. */
+  /** Booking-capable companies the order's money trusts, quoted for this job, cheapest first. */
   async quote(job: DeliveryJob, trusted: (a: Address) => Promise<boolean>): Promise<{ entry: CarrierEntry; quote: CarrierQuote } | null> {
     const usable: CarrierEntry[] = [];
     for (const e of this.entries) if (e.connector && await trusted(e.wallet.account.address)) usable.push(e);
@@ -47,24 +46,21 @@ export class Dispatcher {
   }
 
   private entry(d: JobDelivery) { return this.entries.find((e) => e.id === d.carrier); }
-  private async order(vault: Address, id: string) {
-    return this.pub.readContract({ address: vault, abi: checkAbi, functionName: 'orders', args: [BigInt(id)] });
-  }
 
-  /** Book every job whose money is locked but has no booking yet (new orders, and ask-owner orders once approved). */
+  /** Book every job whose money is locked but has no booking yet (new orders, and ask orders once approved). */
   async bookPending(s: DispatchShop): Promise<void> {
     for (const j of s.jobs.all()) {
       if (!j.logistics || j.logistics.bookingId || j.logistics.error?.startsWith('Booking refused')) continue;
-      const o = await this.order(s.vault, j.orderId);
-      if (Number(o[8]) !== STATUS.Locked) continue;
-      await this.book(s, j, this.money.toNaira(o[7])).catch((e) => {
+      const o = await s.backend.order(j.orderId).catch(() => null);
+      if (!o || o.status !== STATUS.Locked) continue;
+      await this.book(s, j, o.feeNaira).catch((e) => {
         s.jobs.updateDelivery(j.orderId, { error: `Booking failed: ${(e as Error).message}` });
         this.log(`order ${j.orderId}: booking failed: ${(e as Error).message}`);
       });
     }
   }
 
-  /** Book at no more than the fee locked in the vault. An expired quote is refreshed; a dearer one is refused. */
+  /** Book at no more than the fee locked for delivery. An expired quote is refreshed; a dearer one is refused. */
   private async book(s: DispatchShop, j: Job, lockedFeeNaira: number) {
     const d = j.logistics!, e = this.entry(d);
     if (!e?.connector) return;
@@ -83,7 +79,7 @@ export class Dispatcher {
     this.log(`order ${j.orderId}: booked ${d.carrierName} ${b.bookingId}${b.test ? ' (test mode)' : ''}`);
   }
 
-  /** Apply a company's status to the vault. Safe to call repeatedly with the same update. */
+  /** Apply a company's status to the order. Safe to call repeatedly with the same update. */
   async apply(s: DispatchShop, orderId: string, u: BookingUpdate): Promise<void> {
     const j = s.jobs.get(orderId), d = j?.logistics, e = d && this.entry(d);
     if (!j || !d || !e || d.bookingId !== u.bookingId) return;
@@ -92,30 +88,30 @@ export class Dispatcher {
 
     const pickedUp = u.state === 'picked_up' || u.state === 'at_dropoff' || u.state === 'delivered';
     if (pickedUp && !d.pickupSigned) {
-      const o = await this.order(s.vault, orderId);
-      if (Number(o[8]) === STATUS.Locked) {
-        await this.sign(e, s.vault, 'riderPickup', [BigInt(orderId), true, Number(o[3])]);
-        const r = await s.settler.settle(BigInt(orderId), 'pickup');
-        this.log(`order ${orderId}: ${d.carrierName} picked up; pickup ${r.outcome} ${r.qty} (${r.settleTx})`);
+      const o = await s.backend.order(orderId);
+      if (o.status === STATUS.Locked) {
+        await s.backend.handlerPickup(e.wallet, orderId, o.ordered);
+        const r = await s.backend.settlePickup(orderId);
+        this.log(`order ${orderId}: ${d.carrierName} picked up; pickup ${r.outcome} ${r.qty} (${r.tx})`);
       }
       s.jobs.updateDelivery(orderId, { pickupSigned: true });
     }
     if (u.state === 'delivered' && !s.jobs.get(orderId)!.logistics!.arriveSigned) {
-      await this.sign(e, s.vault, 'riderArrive', [BigInt(orderId), true]);
+      await s.backend.handlerArrive(e.wallet, orderId);
       s.jobs.updateDelivery(orderId, { arriveSigned: true });
-      this.log(`order ${orderId}: ${d.carrierName} delivered (owner's code entered)`);
+      this.log(`order ${orderId}: ${d.carrierName} delivered (buyer's code entered)`);
       await this.settleDelivery(s, orderId);
     }
   }
 
-  /** The owner's count at the door, attested by the check service; then settle if the company has arrived. */
-  async ownerCount(s: DispatchShop, orderId: string, count: number): Promise<{ attestTx: Hash }> {
+  /** The buyer's count at the door; then settle if the company has arrived. */
+  async ownerCount(s: DispatchShop, orderId: string, count: number): Promise<{ attestTx: string }> {
     const j = s.jobs.get(orderId);
     if (!j?.logistics) throw new Error('This order is not with a logistics company.');
-    const o = await this.order(s.vault, orderId);
-    if (Number(o[8]) !== STATUS.PickedUp) throw new Error('The goods are not on their way yet.');
-    if (!Number.isInteger(count) || count < 0 || count > Number(o[16])) throw new Error(`Count from 0 to ${o[16]} (what was picked up).`);
-    const attestTx = await s.settler.attestCount(BigInt(orderId), 'delivery', count);
+    const o = await s.backend.order(orderId);
+    if (o.status !== STATUS.PickedUp) throw new Error('The goods are not on their way yet.');
+    if (!Number.isInteger(count) || count < 0 || count > o.picked) throw new Error(`Count from 0 to ${o.picked} (what was picked up).`);
+    const attestTx = await s.backend.deliveredCount(orderId, count);
     s.jobs.updateDelivery(orderId, { ownerCount: count });
     await this.settleDelivery(s, orderId);
     return { attestTx };
@@ -124,13 +120,13 @@ export class Dispatcher {
   private async settleDelivery(s: DispatchShop, orderId: string) {
     const d = s.jobs.get(orderId)?.logistics;
     if (!d?.arriveSigned || d.ownerCount === undefined) return;
-    const r = await s.settler.settle(BigInt(orderId), 'delivery').catch((e) => { this.log(`order ${orderId}: delivery settle: ${(e as Error).message}`); return null; });
-    if (r) this.log(`order ${orderId}: delivery ${r.outcome} (${r.settleTx})`);
+    const r = await s.backend.settleDelivery(orderId).catch((e) => { this.log(`order ${orderId}: delivery settle: ${(e as Error).message}`); return null; });
+    if (r) this.log(`order ${orderId}: delivery ${r.outcome} (${r.tx})`);
   }
 
   /** Check every open booking with its company (for when status webhooks cannot reach this server). */
-  async poll(shops: DispatchShop[]): Promise<void> {
-    for (const s of shops) {
+  async poll(sets: DispatchShop[]): Promise<void> {
+    for (const s of sets) {
       await this.bookPending(s);
       for (const j of s.jobs.all()) {
         const d = j.logistics, e = d && this.entry(d);
@@ -144,17 +140,9 @@ export class Dispatcher {
     }
   }
 
-  /** Find the shop and order a company's booking belongs to. */
-  find(shops: DispatchShop[], bookingId: string): { shop: DispatchShop; orderId: string } | null {
-    for (const shop of shops) for (const j of shop.jobs.all()) if (j.logistics?.bookingId === bookingId) return { shop, orderId: j.orderId };
+  /** Find the order a company's booking belongs to. */
+  find(sets: DispatchShop[], bookingId: string): { shop: DispatchShop; orderId: string } | null {
+    for (const shop of sets) for (const j of shop.jobs.all()) if (j.logistics?.bookingId === bookingId) return { shop, orderId: j.orderId };
     return null;
-  }
-
-  private async sign(e: CarrierEntry, vault: Address, functionName: 'riderPickup' | 'riderArrive', args: readonly unknown[]) {
-    const { request } = await this.pub.simulateContract({ address: vault, abi: handlerAbi, functionName, args: args as never, account: e.wallet.account });
-    const hash = await e.wallet.writeContract(request as never);
-    const r = await this.pub.waitForTransactionReceipt({ hash });
-    if (r.status !== 'success') throw new Error(`${functionName} failed`);
-    return hash;
   }
 }

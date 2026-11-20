@@ -1,0 +1,90 @@
+// Paystack naira deposits (https://paystack.com/docs/api/transaction). Server side only; the secret key never reaches
+// a browser. Test keys (sk_test_...) move no money.
+//
+// Flow: the app asks for a deposit -> we create a reference tied to that person and Paystack gives a checkout link ->
+// they pay -> Paystack sends them back (and calls our webhook) -> we ask Paystack to verify the reference and credit
+// the ledger once, only if Paystack says it succeeded, in NGN, for the amount we asked, for that person.
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import type { DatabaseSync } from 'node:sqlite';
+import type { Ledger } from './ledger.ts';
+
+const API = 'https://api.paystack.co';
+export const MIN_DEPOSIT_KOBO = 100_00;          // ₦100
+export const MAX_DEPOSIT_KOBO = 5_000_000_00;    // ₦5,000,000 per deposit
+
+export class PaystackError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) { super(message); this.name = 'PaystackError'; this.status = status; }
+}
+
+export function migratePaystack(db: DatabaseSync) {
+  db.exec(`CREATE TABLE IF NOT EXISTS deposits (
+    reference TEXT PRIMARY KEY, user_id INTEGER NOT NULL, amount_kobo INTEGER NOT NULL, status TEXT NOT NULL,
+    created_at INTEGER NOT NULL, verified_at INTEGER)`);
+}
+
+export interface PaystackOptions { secretKey: string; callbackUrl: string; fetch?: typeof fetch }
+
+export class Paystack {
+  readonly test: boolean;
+  private key: string; private callbackUrl: string; private fetch: typeof fetch;
+  private db: DatabaseSync; private ledger: Ledger;
+  constructor(db: DatabaseSync, ledger: Ledger, o: PaystackOptions) {
+    if (!/^sk_(test|live)_[A-Za-z0-9]+$/.test(o.secretKey)) throw new Error('PAYSTACK_SECRET_KEY does not look like a Paystack secret key (sk_test_... or sk_live_...)');
+    this.key = o.secretKey; this.test = o.secretKey.startsWith('sk_test_'); this.callbackUrl = o.callbackUrl;
+    this.fetch = o.fetch ?? fetch; this.db = db; this.ledger = ledger;
+    migratePaystack(db);
+  }
+
+  private async call<T>(method: string, path: string, body?: unknown): Promise<T> {
+    const r = await this.fetch(API + path, { method, headers: { Authorization: `Bearer ${this.key}`, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(20_000) });
+    const j = await r.json().catch(() => ({})) as { status?: boolean; message?: string; data?: T };
+    if (!r.ok || !j.status) throw new PaystackError(r.status === 200 ? 502 : r.status, `Paystack: ${j.message ?? `HTTP ${r.status}`}`);
+    return j.data as T;
+  }
+
+  /** Start a deposit: a reference only this person can complete, and Paystack's checkout link. */
+  async start(userId: number, amountKobo: number, email: string): Promise<{ reference: string; checkoutUrl: string }> {
+    if (!Number.isSafeInteger(amountKobo) || amountKobo < MIN_DEPOSIT_KOBO || amountKobo > MAX_DEPOSIT_KOBO) throw new PaystackError(400, 'Deposit between ₦100 and ₦5,000,000.');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) throw new PaystackError(400, 'Enter your email: Paystack sends the receipt there.');
+    const reference = `sr_${userId}_${randomBytes(9).toString('hex')}`;
+    this.db.prepare('INSERT INTO deposits (reference, user_id, amount_kobo, status, created_at) VALUES (?, ?, ?, ?, ?)').run(reference, userId, amountKobo, 'started', Date.now());
+    const d = await this.call<{ authorization_url: string }>('POST', '/transaction/initialize', {
+      email, amount: amountKobo, currency: 'NGN', reference, callback_url: this.callbackUrl,
+      metadata: { userId, purpose: 'StockRun naira balance' },
+    });
+    return { reference, checkoutUrl: d.authorization_url };
+  }
+
+  /**
+   * Verify with Paystack and credit the ledger once. Only references we issued, to the person who started them,
+   * successful, in NGN, for the amount we asked. Safe to call any number of times (redirect, webhook, retries).
+   */
+  async confirm(reference: string, userId?: number): Promise<{ status: 'credited' | 'already' | 'pending' | 'failed'; amountKobo: number }> {
+    const dep = this.db.prepare('SELECT user_id, amount_kobo, status FROM deposits WHERE reference = ?').get(reference) as unknown as { user_id: number; amount_kobo: number; status: string } | undefined;
+    if (!dep || (userId !== undefined && dep.user_id !== userId)) throw new PaystackError(404, 'No such deposit.');
+    if (dep.status === 'credited') return { status: 'already', amountKobo: dep.amount_kobo };
+    const d = await this.call<{ status: string; amount: number; currency: string; reference: string; metadata?: { userId?: number | string } }>('GET', `/transaction/verify/${encodeURIComponent(reference)}`);
+    if (d.reference !== reference) throw new PaystackError(502, 'Paystack answered for a different payment.');
+    if (d.status !== 'success') {
+      if (['failed', 'abandoned', 'reversed'].includes(d.status)) this.db.prepare('UPDATE deposits SET status = ? WHERE reference = ?').run(d.status, reference);
+      return { status: ['failed', 'abandoned', 'reversed'].includes(d.status) ? 'failed' : 'pending', amountKobo: dep.amount_kobo };
+    }
+    if (d.currency !== 'NGN' || d.amount !== dep.amount_kobo || Number(d.metadata?.userId) !== dep.user_id) {
+      this.db.prepare('UPDATE deposits SET status = ? WHERE reference = ?').run('mismatch', reference);
+      throw new PaystackError(409, 'This payment does not match the deposit we started. StockRun will check it by hand.');
+    }
+    const fresh = this.ledger.deposit(dep.user_id, reference, dep.amount_kobo);
+    this.db.prepare('UPDATE deposits SET status = ?, verified_at = ? WHERE reference = ?').run('credited', Date.now(), reference);
+    return { status: fresh ? 'credited' : 'already', amountKobo: dep.amount_kobo };
+  }
+
+  /** Paystack webhook signature: HMAC-SHA512 of the raw body with the secret key, hex, in x-paystack-signature. */
+  verifyWebhook(rawBody: Buffer, signature: string | undefined): { event: string; reference?: string } {
+    const want = createHmac('sha512', this.key).update(rawBody).digest();
+    const got = Buffer.from(String(signature ?? ''), 'hex');
+    if (got.length !== want.length || !timingSafeEqual(got, want)) throw new PaystackError(401, 'bad signature');
+    const j = JSON.parse(rawBody.toString('utf8')) as { event?: string; data?: { reference?: string } };
+    return { event: String(j.event), reference: j.data?.reference };
+  }
+}

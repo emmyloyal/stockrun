@@ -1,27 +1,39 @@
-// Accounts for real shop owners and riders: sign in with a phone number and a one-time SMS code.
+// Accounts: anyone signs in with a phone number (one-time SMS code) or a wallet (signs a one-time message).
+// Each person has a profile: a unique username, a display name and a picture.
 //
-// Keys: each person's signing key is created ON THEIR PHONE. The server only learns the address, after the phone proves
-// it holds the key by signing a message. For recovery the phone uploads its key encrypted with a PIN the server never
-// sees; the server stores only that ciphertext and hands it back after a fresh SMS sign-in.
+// Phone accounts spend naira held in StockRun's ledger; they need no key. Wallet accounts spend coins from their own
+// vault on X Layer, signed by their wallet. A wallet account can add a phone number later (and the other way round),
+// so one person is one account.
 //
 // Codes are 6 digits, stored as an HMAC (never in plain text), valid for 10 minutes, 5 guesses each, and limited to
-// 1 per minute and 5 per hour per phone. Session tokens are random and stored only as a SHA-256 hash.
+// 1 per minute and 5 per hour per phone. Wallet messages carry a random nonce, are valid for 10 minutes and work once.
+// Session tokens are random and stored only as a SHA-256 hash.
 import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import { createRequire } from 'node:module';
 import type { DatabaseSync as DB } from 'node:sqlite';
 // Loaded through require: the test bundler does not know the newer `node:sqlite` built-in. Types still come from Node.
 const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
 type DatabaseSync = DB;
-import { getAddress, verifyMessage, type Address, type Hex } from 'viem';
+import { getAddress, isAddress, verifyMessage, type Address, type Hex } from 'viem';
 
-export type Role = 'owner' | 'rider';
-export interface User { id: number; phone: string; role: Role; address: Address | null; createdAt: number }
+export interface User {
+  id: number;
+  phone: string | null;
+  wallet: Address | null;
+  username: string | null;
+  displayName: string | null;
+  hasAvatar: boolean;
+  createdAt: number;
+}
 export interface SmsSender { send(phone: string, text: string): Promise<void> }
 
 export const CODE_TTL_MS = 10 * 60_000;
 export const MAX_GUESSES = 5;
 export const SESSION_TTL_MS = 30 * 24 * 3600_000;
+export const WALLET_MSG_TTL_MS = 10 * 60_000;
+export const AVATAR_MAX_BYTES = 300_000;
 const RESEND_GAP_MS = 60_000, HOURLY_LIMIT = 5;
+const AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
 export class AuthError extends Error {
   readonly status: number;
@@ -38,31 +50,37 @@ export function normalisePhone(input: string): string {
   throw new AuthError(400, 'Enter a phone number like 0803 123 4567.');
 }
 
-export const linkMessage = (userId: number, address: Address) =>
-  `StockRun: link this phone's key ${address.toLowerCase()} to account ${userId}.`;
+/** The message a wallet signs to sign in. Plain words, so the person sees exactly what they sign. */
+export const walletMessage = (address: Address, nonce: string, issuedAt: number) =>
+  `Sign in to StockRun\n\nWallet: ${address}\nNonce: ${nonce}\nIssued: ${new Date(issuedAt).toISOString()}\n\n` +
+  `This only signs you in. It costs nothing and moves no money.`;
 
 export function openDb(file = ':memory:'): DatabaseSync {
   const db = new DatabaseSync(file);
   db.exec(`
     PRAGMA journal_mode = WAL;
     CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY, phone TEXT NOT NULL UNIQUE, role TEXT NOT NULL CHECK (role IN ('owner','rider')),
-      address TEXT UNIQUE, created_at INTEGER NOT NULL);
+      id INTEGER PRIMARY KEY, phone TEXT UNIQUE, wallet TEXT UNIQUE, username TEXT UNIQUE COLLATE NOCASE,
+      display_name TEXT, avatar BLOB, avatar_type TEXT, created_at INTEGER NOT NULL,
+      CHECK (phone IS NOT NULL OR wallet IS NOT NULL));
     CREATE TABLE IF NOT EXISTS codes (
       id INTEGER PRIMARY KEY, phone TEXT NOT NULL, code_mac TEXT NOT NULL, expires_at INTEGER NOT NULL,
       guesses INTEGER NOT NULL DEFAULT 0, used INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS codes_phone ON codes(phone, created_at);
+    CREATE TABLE IF NOT EXISTS wallet_nonces (
+      nonce TEXT PRIMARY KEY, address TEXT NOT NULL, issued_at INTEGER NOT NULL, used INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE IF NOT EXISTS sessions (
       token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), expires_at INTEGER NOT NULL);
-    CREATE TABLE IF NOT EXISTS key_backups (
-      user_id INTEGER PRIMARY KEY REFERENCES users(id), ciphertext TEXT NOT NULL, salt TEXT NOT NULL, iv TEXT NOT NULL,
-      kdf TEXT NOT NULL, updated_at INTEGER NOT NULL);
   `);
   return db;
 }
 
-interface UserRow { id: number; phone: string; role: Role; address: string | null; created_at: number }
-const toUser = (r: UserRow): User => ({ id: r.id, phone: r.phone, role: r.role, address: r.address ? getAddress(r.address) : null, createdAt: r.created_at });
+interface UserRow { id: number; phone: string | null; wallet: string | null; username: string | null; display_name: string | null; has_avatar: number; created_at: number }
+const USER_COLS = 'id, phone, wallet, username, display_name, (avatar IS NOT NULL) AS has_avatar, created_at';
+const toUser = (r: UserRow): User => ({
+  id: r.id, phone: r.phone, wallet: r.wallet ? getAddress(r.wallet) : null, username: r.username,
+  displayName: r.display_name, hasAvatar: !!r.has_avatar, createdAt: r.created_at,
+});
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 
 export class Accounts {
@@ -76,7 +94,18 @@ export class Accounts {
   }
 
   private mac(phone: string, code: string) { return createHmac('sha256', this.secret).update(`${phone}:${code}`).digest('hex'); }
+  private byId(id: number): User { return toUser(this.db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(id) as unknown as UserRow); }
+  private find(col: 'phone' | 'wallet', v: string): User | null {
+    const r = this.db.prepare(`SELECT ${USER_COLS} FROM users WHERE ${col} = ?`).get(v) as unknown as UserRow | undefined;
+    return r ? toUser(r) : null;
+  }
+  private startSession(user: User) {
+    const token = randomBytes(32).toString('base64url');
+    this.db.prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)').run(sha256(token), user.id, this.now() + SESSION_TTL_MS);
+    return { user, token };
+  }
 
+  // ---------------------------------------------------------------- phone
   /** Send a sign-in code. Says nothing about whether the number has an account. */
   async requestCode(phoneInput: string): Promise<{ phone: string }> {
     const phone = normalisePhone(phoneInput), t = this.now();
@@ -90,8 +119,8 @@ export class Accounts {
     return { phone };
   }
 
-  /** Check a code; on success create the account if needed (with the chosen role) and start a session. */
-  verifyCode(phoneInput: string, code: string, role: Role = 'owner'): { user: User; token: string } {
+  /** Check a code (one guess). Returns the normalised phone on success. */
+  private checkCode(phoneInput: string, code: string): string {
     const phone = normalisePhone(phoneInput), t = this.now();
     const row = this.db.prepare('SELECT id, code_mac, expires_at, guesses FROM codes WHERE phone = ? AND used = 0 ORDER BY created_at DESC LIMIT 1').get(phone) as unknown as
       { id: number; code_mac: string; expires_at: number; guesses: number } | undefined;
@@ -101,51 +130,124 @@ export class Accounts {
     const given = Buffer.from(this.mac(phone, String(code).trim()), 'hex'), want = Buffer.from(row.code_mac, 'hex');
     if (!timingSafeEqual(given, want)) throw new AuthError(400, 'Wrong code. Check the SMS and try again.');
     this.db.prepare('UPDATE codes SET used = 1 WHERE id = ?').run(row.id);
-
-    let u = this.db.prepare('SELECT * FROM users WHERE phone = ?').get(phone) as unknown as UserRow | undefined;
-    if (!u) {
-      if (role !== 'owner' && role !== 'rider') throw new AuthError(400, 'role must be owner or rider');
-      this.db.prepare('INSERT INTO users (phone, role, created_at) VALUES (?, ?, ?)').run(phone, role, t);
-      u = this.db.prepare('SELECT * FROM users WHERE phone = ?').get(phone) as unknown as UserRow;
-    }
-    const token = randomBytes(32).toString('base64url');
-    this.db.prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)').run(sha256(token), u.id, t + SESSION_TTL_MS);
-    return { user: toUser(u), token };
+    return phone;
   }
 
+  /** Sign in with a code; the account is created on first sign-in. */
+  verifyCode(phoneInput: string, code: string): { user: User; token: string } {
+    const phone = this.checkCode(phoneInput, code);
+    let u = this.find('phone', phone);
+    if (!u) {
+      const id = Number(this.db.prepare('INSERT INTO users (phone, created_at) VALUES (?, ?)').run(phone, this.now()).lastInsertRowid);
+      u = this.byId(id);
+    }
+    return this.startSession(u);
+  }
+
+  /** A signed-in wallet account adds a phone number (proved with a code). */
+  addPhone(user: User, phoneInput: string, code: string): User {
+    if (user.phone) throw new AuthError(409, 'This account already has a phone number.');
+    const phone = this.checkCode(phoneInput, code);
+    if (this.find('phone', phone)) throw new AuthError(409, 'That number already has its own StockRun account.');
+    this.db.prepare('UPDATE users SET phone = ? WHERE id = ?').run(phone, user.id);
+    return this.byId(user.id);
+  }
+
+  // ---------------------------------------------------------------- wallet
+  /** A fresh message for this wallet to sign. */
+  walletChallenge(addressInput: string): { message: string } {
+    if (!isAddress(addressInput)) throw new AuthError(400, 'That is not a wallet address.');
+    const address = getAddress(addressInput), nonce = randomBytes(16).toString('hex'), t = this.now();
+    this.db.prepare('INSERT INTO wallet_nonces (nonce, address, issued_at) VALUES (?, ?, ?)').run(nonce, address.toLowerCase(), t);
+    return { message: walletMessage(address, nonce, t) };
+  }
+
+  /** Check a signed challenge: our nonce, this wallet, fresh, unused, and signed by the wallet. Returns the address. */
+  private async checkWallet(message: string, signature: Hex): Promise<Address> {
+    const m = /^Sign in to StockRun\n\nWallet: (0x[0-9a-fA-F]{40})\nNonce: ([0-9a-f]{32})\n/.exec(String(message));
+    if (!m) throw new AuthError(400, 'That is not a StockRun sign-in message.');
+    const address = getAddress(m[1]), t = this.now();
+    const row = this.db.prepare('SELECT address, issued_at, used FROM wallet_nonces WHERE nonce = ?').get(m[2]) as unknown as { address: string; issued_at: number; used: number } | undefined;
+    if (!row || row.used || row.address !== address.toLowerCase() || row.issued_at + WALLET_MSG_TTL_MS < t || message !== walletMessage(address, m[2], row.issued_at))
+      throw new AuthError(400, 'That sign-in message has expired. Try again.');
+    const ok = await verifyMessage({ address, message, signature }).catch(() => false);
+    if (!ok) throw new AuthError(400, 'The signature does not match this wallet.');
+    this.db.prepare('UPDATE wallet_nonces SET used = 1 WHERE nonce = ?').run(m[2]);
+    return address;
+  }
+
+  /** Sign in with a wallet; the account is created on first sign-in. */
+  async verifyWallet(message: string, signature: Hex): Promise<{ user: User; token: string }> {
+    const address = await this.checkWallet(message, signature);
+    let u = this.find('wallet', address.toLowerCase());
+    if (!u) {
+      const id = Number(this.db.prepare('INSERT INTO users (wallet, created_at) VALUES (?, ?)').run(address.toLowerCase(), this.now()).lastInsertRowid);
+      u = this.byId(id);
+    }
+    return this.startSession(u);
+  }
+
+  /** A signed-in phone account connects a wallet (proved with a signature). */
+  async addWallet(user: User, message: string, signature: Hex): Promise<User> {
+    if (user.wallet) throw new AuthError(409, 'This account already has a wallet.');
+    const address = await this.checkWallet(message, signature);
+    if (this.find('wallet', address.toLowerCase())) throw new AuthError(409, 'That wallet already has its own StockRun account.');
+    this.db.prepare('UPDATE users SET wallet = ? WHERE id = ?').run(address.toLowerCase(), user.id);
+    return this.byId(user.id);
+  }
+
+  // ---------------------------------------------------------------- sessions
   /** The signed-in user for a session token, or null. */
   session(token: string | undefined): User | null {
     if (!token) return null;
-    const r = this.db.prepare('SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?').get(sha256(token), this.now()) as unknown as UserRow | undefined;
+    const r = this.db.prepare(`SELECT u.id, u.phone, u.wallet, u.username, u.display_name, (u.avatar IS NOT NULL) AS has_avatar, u.created_at
+      FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?`)
+      .get(sha256(token), this.now()) as unknown as UserRow | undefined;
     return r ? toUser(r) : null;
   }
-
   signOut(token: string): void { this.db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(sha256(token)); }
 
-  /** Link the phone's key to the account, once. The phone must prove it holds the key. */
-  async linkAddress(user: User, address: Address, signature: Hex): Promise<User> {
-    if (user.address) {
-      if (user.address.toLowerCase() === address.toLowerCase()) return user;
-      throw new AuthError(409, 'This account already has a key. Restore it from your backup instead of making a new one.');
+  // ---------------------------------------------------------------- profile
+  /** Username: 3-20 letters, digits or _, unique (case-insensitive). Display name: up to 40 characters. */
+  setProfile(user: User, input: { username?: unknown; displayName?: unknown }): User {
+    if (input.username !== undefined) {
+      const u = String(input.username).trim();
+      if (!/^[A-Za-z0-9_]{3,20}$/.test(u)) throw new AuthError(400, 'Usernames are 3 to 20 letters, numbers or _.');
+      const taken = this.db.prepare('SELECT id FROM users WHERE username = ? AND id <> ?').get(u, user.id);
+      if (taken) throw new AuthError(409, 'That username is taken.');
+      this.db.prepare('UPDATE users SET username = ? WHERE id = ?').run(u, user.id);
     }
-    const ok = await verifyMessage({ address, message: linkMessage(user.id, address), signature }).catch(() => false);
-    if (!ok) throw new AuthError(400, 'The signature does not match this key.');
-    try { this.db.prepare('UPDATE users SET address = ? WHERE id = ?').run(address.toLowerCase(), user.id); }
-    catch { throw new AuthError(409, 'This key is already linked to another account.'); }
-    return { ...user, address: getAddress(address) };
+    if (input.displayName !== undefined) {
+      const n = String(input.displayName).trim().replace(/\s+/g, ' ');
+      if (n.length > 40) throw new AuthError(400, 'Keep your name under 40 characters.');
+      this.db.prepare('UPDATE users SET display_name = ? WHERE id = ?').run(n || null, user.id);
+    }
+    return this.byId(user.id);
   }
 
-  /** Store the phone's PIN-encrypted key backup (the server cannot decrypt it). */
-  saveBackup(user: User, b: { ciphertext: string; salt: string; iv: string; kdf: string }): void {
-    if (!user.address) throw new AuthError(409, 'Link your key before backing it up.');
-    for (const [k, v] of Object.entries(b)) if (typeof v !== 'string' || v.length > 4096) throw new AuthError(400, `bad backup field ${k}`);
-    this.db.prepare(`INSERT INTO key_backups (user_id, ciphertext, salt, iv, kdf, updated_at) VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT(user_id) DO UPDATE SET ciphertext = excluded.ciphertext, salt = excluded.salt, iv = excluded.iv, kdf = excluded.kdf, updated_at = excluded.updated_at`)
-      .run(user.id, b.ciphertext, b.salt, b.iv, b.kdf, this.now());
+  /** Profile picture: JPEG, PNG or WebP, at most 300 KB (the app shrinks photos first). Checked by its first bytes. */
+  setAvatar(user: User, data: Buffer, type: string): User {
+    if (!AVATAR_TYPES.includes(type)) throw new AuthError(400, 'Use a JPEG, PNG or WebP picture.');
+    if (data.length < 8 || data.length > AVATAR_MAX_BYTES) throw new AuthError(413, 'That picture is too big: keep it under 300 KB.');
+    const magic = data.subarray(0, 12).toString('hex');
+    const real = magic.startsWith('ffd8ff') ? 'image/jpeg' : magic.startsWith('89504e47') ? 'image/png'
+      : magic.startsWith('52494646') && magic.slice(16, 24) === '57454250' ? 'image/webp' : null;
+    if (real !== type) throw new AuthError(400, 'That file is not the picture it says it is.');
+    this.db.prepare('UPDATE users SET avatar = ?, avatar_type = ? WHERE id = ?').run(data, type, user.id);
+    return this.byId(user.id);
   }
 
-  backup(user: User): { ciphertext: string; salt: string; iv: string; kdf: string } | null {
-    return (this.db.prepare('SELECT ciphertext, salt, iv, kdf FROM key_backups WHERE user_id = ?').get(user.id) as unknown as { ciphertext: string; salt: string; iv: string; kdf: string } | undefined) ?? null;
+  avatar(userId: number): { data: Buffer; type: string } | null {
+    const r = this.db.prepare('SELECT avatar, avatar_type FROM users WHERE id = ? AND avatar IS NOT NULL').get(userId) as unknown as { avatar: Uint8Array; avatar_type: string } | undefined;
+    return r ? { data: Buffer.from(r.avatar), type: r.avatar_type } : null;
+  }
+
+  /** Public view of a user (for showing a profile): never the phone number or session data. */
+  publicProfile(userId: number): { id: number; username: string | null; displayName: string | null; hasAvatar: boolean } | null {
+    const r = this.db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`).get(userId) as unknown as UserRow | undefined;
+    if (!r) return null;
+    const u = toUser(r);
+    return { id: u.id, username: u.username, displayName: u.displayName, hasAvatar: u.hasAvatar };
   }
 }
 

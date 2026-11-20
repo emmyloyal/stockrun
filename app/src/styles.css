@@ -124,3 +124,14 @@ button.card:hover { border-color: var(--ink); }
 .addr { font-family: var(--mono); font-size: 0.78rem; word-break: break-all; }
 .choice-group { border: 0; padding: 0; margin: 0; gap: 8px; }
 .demo-bar.live { background: var(--ink); color: var(--bg); }
+
+/* Accounts, tabs, profile */
+.tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--line); }
+.tabs button { flex: 1; background: none; border: 0; border-bottom: 3px solid transparent; padding: 10px 6px; font-weight: 600; color: var(--muted); cursor: pointer; }
+.tabs button.on { color: var(--ink); border-bottom-color: var(--danfo); }
+.avatar { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; background: var(--line); display: inline-flex; align-items: center; justify-content: center; font-weight: 700; color: var(--ink); }
+.avatar.big { width: 72px; height: 72px; font-size: 1.6rem; }
+.stack.tight { gap: 0; }
+.balance { font-family: var(--mono); font-weight: 700; font-size: 1.05rem; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 6px 12px; }
+.trail ul { margin: 6px 0 0; padding-left: 18px; }
+.trail code { font-size: 0.7rem; word-break: break-all; }

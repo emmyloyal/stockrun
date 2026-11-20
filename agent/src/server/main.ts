@@ -11,14 +11,16 @@ import { fileURLToPath } from 'node:url';
 import { formatEther } from 'viem';
 import { createApp } from './app.ts';
 import { Accounts, openDb } from '../accounts/accounts.ts';
-import { Shops } from '../accounts/shops.ts';
+import { Buyers } from '../buyers/buyers.ts';
+import { Ledger } from '../money/ledger.ts';
+import { Paystack } from '../money/paystack.ts';
+import { NairaOrders } from '../orders/nairaOrders.ts';
 import { smsFromEnv } from '../accounts/sms.ts';
-import { envValue, localPlatform, xlayerPlatform, type Platform } from '../chain/platform.ts';
+import { circuitEvaluator, envValue, localPlatform, xlayerPlatform, type Platform } from '../chain/platform.ts';
 import { startLocalChain } from '../sim/localChain.ts';
 import { defaultExtractor, model } from '../llm.ts';
 import { RuleExtractor } from '../rules.ts';
 import { BotChannel } from '../sim/bots.ts';
-import { GeminiPhotoCounter } from '../check/photoCount.ts';
 import { PriceBook } from '../prices/priceBook.ts';
 
 const envFile = new URL('../../../.env', import.meta.url);
@@ -44,23 +46,27 @@ const secret = envValue(env, 'SERVER_SECRET') ?? (network === 'local' ? 'local-o
 if (!secret || secret.length < 32) throw new Error('Set SERVER_SECRET in .env (32+ random characters). It protects sign-in codes.');
 const { sms, kind: smsKind } = smsFromEnv(env, network === 'local');
 
-// Local: a fresh database each run (the chain is fresh too). X Layer: a file, because shops point at real vaults.
+// Local: a fresh database each run (the chain is fresh too). X Layer: a file (accounts, naira ledger, orders).
 const dbFile = network === 'local' ? ':memory:' : envValue(env, 'DB_FILE') ?? fileURLToPath(new URL('../../data/stockrun.db', import.meta.url));
 if (dbFile !== ':memory:') mkdirSync(dirname(dbFile), { recursive: true });
 const db = openDb(dbFile);
-const counter = envValue(env, 'GEMINI_API_KEY') ? new GeminiPhotoCounter() : null;
 const extractor = defaultExtractor(new RuleExtractor());
 const accounts = new Accounts(db, sms, secret);
-// Every supplier in data/suppliers.json is a simulated bot today; real suppliers will come in over WhatsApp.
 const log = (l: string) => console.log(`[server] ${l}`);
-const shops = new Shops(db, p, {
-  extractor, channel: new BotChannel(), counter, prices: new PriceBook(), log,
-  dataDir: network === 'local' ? null : dirname(dbFile),
-});
+const ledger = new Ledger(db);
+const prices = new PriceBook();
+// Naira orders: the ledger holds the money; circuits #1-#3 decide every payment through eval on the platform's chain.
+let buyers: Buyers;
+const orders = new NairaOrders({ db, ledger, evalCircuit: circuitEvaluator(p), supplierStatus: (k) => buyers.sellerStatus(k), carriers: () => buyers.carrierKeys() });
+// Every seller in data/suppliers.json is a simulated bot today; real sellers will come in over WhatsApp.
+buyers = new Buyers(db, p, ledger, orders, { extractor, channel: new BotChannel(), prices, log, dataDir: network === 'local' ? null : dirname(dbFile) });
+const paystackKey = envValue(env, 'PAYSTACK_SECRET_KEY');
+const publicUrl = envValue(env, 'PUBLIC_URL') ?? `http://localhost:${port}`;
+const paystack = paystackKey ? new Paystack(db, ledger, { secretKey: paystackKey, callbackUrl: `${publicUrl}/?deposit=done` }) : null;
 
 const staticDir = fileURLToPath(new URL('../../../app/dist/', import.meta.url));
 const server = createApp({
-  platform: p, accounts, shops, staticDir: existsSync(staticDir) ? staticDir : undefined,
+  platform: p, accounts, buyers, ledger, prices, paystack, staticDir: existsSync(staticDir) ? staticDir : undefined,
   secureCookies: envValue(env, 'SECURE_COOKIES') === '1', log,
   sendrelayWebhookSecret: envValue(env, 'SENDRELAY_WEBHOOK_SECRET'),
   // e.g. ALLOWED_ORIGINS=https://1-2-433.tapekit.org (the app on DeWEB), comma-separated
@@ -70,7 +76,7 @@ const server = createApp({
 let polling = false;
 const poll = setInterval(async () => {
   if (polling) return; polling = true;
-  try { await shops.dispatcher.poll(shops.dispatchShops()); } catch (e) { log(`dispatch poll: ${(e as Error).message}`); } finally { polling = false; }
+  try { await buyers.dispatcher.poll(buyers.dispatchSets()); } catch (e) { log(`dispatch poll: ${(e as Error).message}`); } finally { polling = false; }
 }, 20_000);
 server.on('error', (e: NodeJS.ErrnoException) => {
   console.error(e.code === 'EADDRINUSE' ? `Port ${port} is already in use. Stop the other server or set APP_PORT.` : `Server error: ${e.message}`);
@@ -79,8 +85,9 @@ server.on('error', (e: NodeJS.ErrnoException) => {
 server.listen(port, async () => {
   console.log(`StockRun on http://localhost:${port}  (${network === 'xlayer' ? 'X LAYER MAINNET, real money' : 'local test chain, test money'})`);
   console.log(`Deployer ${p.deployer.account.address}: ${formatEther(await p.pub.getBalance({ address: p.deployer.account.address }))} OKB/ETH for vaults and gas top-ups`);
-  console.log(`SMS: ${smsKind}. Reader: ${extractor instanceof RuleExtractor ? 'rule-based' : `Gemini (${model()})`}. Photo check: ${counter ? 'on' : 'OFF (set GEMINI_API_KEY)'}`);
-  console.log(`Database: ${dbFile}. Suppliers: simulated bots.`);
+  console.log(`SMS: ${smsKind}. Reader: ${extractor instanceof RuleExtractor ? 'rule-based' : `Gemini (${model()})`}.`);
+  console.log(`Naira: ${paystack ? `Paystack (${paystack.test ? 'TEST mode, no real money' : 'LIVE'}), held by StockRun in a ledger` : network === 'local' ? 'test naira button (local only)' : 'deposits OFF (set PAYSTACK_SECRET_KEY)'}`);
+  console.log(`Database: ${dbFile}. Sellers: simulated bots.`);
   console.log(`Logistics: ${p.carriers.map((c) => `${c.name}${c.connector ? '' : ' (no booking API)'}`).join(', ') || 'none (self-pickup only)'}`);
   if (!existsSync(staticDir)) console.log('App not built yet: run `npm install && npm run build` in app/, then restart.');
 });

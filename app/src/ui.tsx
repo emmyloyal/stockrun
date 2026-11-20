@@ -1,11 +1,11 @@
-import { short, txUrl, type CheckResult, type Order } from './lib';
+import { short, txUrl, type CheckResult, type Evidence, type Order } from './lib';
 
 const STATUS: Record<Order['status'], [string, string]> = {
   None: ['Unknown', 'muted'],
-  AwaitingOwner: ['Needs owner OK', 'ask'],
-  Locked: ['In escrow · pickup next', 'info'],
+  AwaitingOwner: ['Needs your OK', 'ask'],
+  Locked: ['Money locked · pickup next', 'info'],
   PickedUp: ['Picked up · on the way', 'info'],
-  Delivered: ['Delivered', 'ok'],
+  Delivered: ['Done', 'ok'],
   Refunded: ['Refunded', 'muted'],
 };
 
@@ -14,36 +14,43 @@ export function StatusPill({ o }: { o: Order }) {
   return <span className={`pill ${tone}`}>{label}</span>;
 }
 
-/** Circuit decisions in plain words, with the transactions that carry them (local chain in the demo). */
+/** A circuit's decision in plain words. */
 export function Outcome({ r }: { r: CheckResult }) {
-  const tone = r.status === 'retake' || r.status === 'error' ? 'no'
-    : r.outcome === 'paid' || r.outcome === 'rider_paid' ? 'ok'
-    : r.outcome === 'held' || r.status === 'waiting_rider' ? 'ask' : 'ask';
-  const title = r.status === 'mismatch' ? `Photo shows ${r.aiCount} of ${r.expected}`
-    : r.status === 'retake' ? 'Take the photo again'
-    : r.status === 'error' ? 'Not done'
-    : r.status === 'waiting_rider' ? `Photo counted ${r.aiCount}. Waiting for the rider's count`
-    : r.outcome === 'paid' ? `PickupCheck: supplier paid for all ${r.qty}`
-    : r.outcome === 'paid_part' ? `PickupCheck: supplier paid for ${r.qty} (short supply)`
-    : r.outcome === 'short' ? `DeliveryCheck: ${r.qty} short, delivery fee held back for you`
+  const tone = r.outcome === 'paid' || r.outcome === 'rider_paid' ? 'ok' : r.status === 'error' ? 'no' : 'ask';
+  const title = r.outcome === 'paid' ? `PickupCheck: seller paid for all ${r.qty}`
+    : r.outcome === 'paid_part' ? `PickupCheck: seller paid for ${r.qty}; the rest of your money came back`
+    : r.outcome === 'short' ? `DeliveryCheck: ${r.qty} short, delivery fee given back to you`
     : r.outcome === 'rider_paid' ? 'DeliveryCheck: logistics company paid'
-    : 'Circuit says: hold';
+    : r.status === 'error' ? 'Not done' : 'The circuit says: hold';
   return (
     <div className={`outcome ${tone}`} role="status">
       <strong>{title}</strong>
-      <p>{r.message}</p>
-      {r.aiCount !== undefined && r.status === 'settled' && <p className="fine">Photo count: {r.aiCount}{r.damage ? ' · damage seen' : ''}</p>}
-      {(r.attestTx || r.settleTx) && (
-        <p className="fine">{r.attestTx && <>Photo check <Tx hash={r.attestTx} /> </>}{r.settleTx && <>· circuit <Tx hash={r.settleTx} /></>}</p>
-      )}
+      {r.message && <p>{r.message}</p>}
     </div>
   );
 }
 
-/** Transaction hash: a link to the explorer on X Layer; plain text on a local chain, which has no explorer. */
+const CIRCUIT: Record<Evidence['circuit'], string> = { restock: 'RestockGuard #1', pickup: 'PickupCheck #2', delivery: 'DeliveryCheck #3' };
+
+/** Which circuit decided what, on which X Layer block: anyone can re-run the same input with eval. */
+export function CircuitTrail({ evidence, network }: { evidence: Evidence[]; network: string }) {
+  if (!evidence.length) return null;
+  return (
+    <details className="trail">
+      <summary className="fine">Decided by TapeOut circuits{network === 'xlayer' ? ' on X Layer' : ' (local test chain)'}</summary>
+      <ul>
+        {evidence.map((e, i) => (
+          <li key={i} className="fine">{CIRCUIT[e.circuit]} at block {Number(e.block).toLocaleString()}: input <code>{e.input}</code> → output <code>{e.output}</code></li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
+/** Transaction hash: a link to the explorer on X Layer; plain text otherwise. */
 export function Tx({ hash }: { hash: string }) {
   const url = txUrl(hash);
   return url
     ? <a className="tx" href={url} target="_blank" rel="noreferrer" title={hash}>{short(hash)}</a>
-    : <code className="tx" title={`${hash} (local test chain)`}>{short(hash)}</code>;
+    : <code className="tx" title={hash}>{short(hash)}</code>;
 }

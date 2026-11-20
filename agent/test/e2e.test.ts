@@ -65,7 +65,7 @@ describe.skipIf(!localChainAvailable())('agent end to end on a local chain', () 
   it('unapproved suppliers are suggested to the owner, never used', async () => {
     const report = await handleOrder('3 cartons of spaghetti within 5 km', deps); // only Blessing (unknown) stocks it
     expect(report.outcomes[0].kind).toBe('no_supplier');
-    expect(report.message).toMatch(/Suggest approving: Blessing Wholesale \(demo\)/);
+    expect(report.message).toMatch(/Nearby but not verified by StockRun yet: Blessing Wholesale \(demo\)/);
   });
 
   it('over budget: RestockGuard rejects and nothing is stored', async () => {
