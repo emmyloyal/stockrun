@@ -65,7 +65,7 @@ describe.skipIf(!localChainAvailable())('multi-shop app server', () => {
     sms = new ConsoleSms();
     const accounts = new Accounts(db, sms, 'x'.repeat(40));
     const shops = new Shops(db, p, { extractor: new RuleExtractor(), channel: new BotChannel(), counter, prices: new PriceBook() });
-    server = createApp({ platform: p, accounts, shops });
+    server = createApp({ platform: p, accounts, shops, allowedOrigins: ['https://1-2-433.tapekit.org'] });
     await new Promise<void>((r) => server.listen(0, r));
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   }, 60_000);
@@ -154,5 +154,26 @@ describe.skipIf(!localChainAvailable())('multi-shop app server', () => {
     expect((await chioma.call('/api/money/to-token?naira=1.5')).status).toBe(400);
     expect((await person('0809 777 7777').call('/api/money/to-token?naira=100')).status).toBe(401);
     expect((await chioma.call('/api/config')).json).toMatchObject({ network: 'local', explorerTx: null, tokenSymbol: 'TEST' });
+  }, 60_000);
+
+  it('the app on DeWEB: CORS only for the listed site, and sign-in by bearer token instead of the cookie', async () => {
+    const site = 'https://1-2-433.tapekit.org';
+    const pre = await fetch(`${base}/api/me`, { method: 'OPTIONS', headers: { Origin: site, 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'authorization,content-type' } });
+    expect(pre.status).toBe(204);
+    expect(pre.headers.get('access-control-allow-origin')).toBe(site);
+    expect(pre.headers.get('access-control-allow-headers')).toMatch(/Authorization/);
+    const other = await fetch(`${base}/api/me`, { headers: { Origin: 'https://evil.example' } });
+    expect(other.headers.get('access-control-allow-origin')).toBeNull();
+
+    const phone = '0809 888 8888';
+    await (async () => { const l = console.log; console.log = () => {}; try { await fetch(`${base}/api/auth/code`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: site }, body: JSON.stringify({ phone }) }); } finally { console.log = l; } })();
+    const code = sms.sent.filter((m) => m.phone.endsWith('8098888888')).at(-1)!.text.match(/(\d{6})/)![1];
+    const v = await (await fetch(`${base}/api/auth/verify`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: site }, body: JSON.stringify({ phone, code, role: 'owner' }) })).json() as any;
+    expect(v.token).toMatch(/^[A-Za-z0-9_-]{20,}$/);
+    const me = await (await fetch(`${base}/api/me`, { headers: { Origin: site, Authorization: `Bearer ${v.token}` } })).json() as any;
+    expect(me.user.phone).toBe('+2348098888888');
+    const rpc = await fetch(`${base}/rpc`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: site, Authorization: `Bearer ${v.token}` }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_blockNumber', params: [] }) });
+    expect(rpc.status).toBe(200);
+    expect((await (await fetch(`${base}/api/me`, { headers: { Authorization: 'Bearer not-a-real-token-at-all-000' } })).json() as any).user).toBeNull();
   }, 60_000);
 });

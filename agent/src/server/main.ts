@@ -63,6 +63,8 @@ const server = createApp({
   platform: p, accounts, shops, staticDir: existsSync(staticDir) ? staticDir : undefined,
   secureCookies: envValue(env, 'SECURE_COOKIES') === '1', log,
   sendrelayWebhookSecret: envValue(env, 'SENDRELAY_WEBHOOK_SECRET'),
+  // e.g. ALLOWED_ORIGINS=https://1-2-433.tapekit.org (the app on DeWEB), comma-separated
+  allowedOrigins: (envValue(env, 'ALLOWED_ORIGINS') ?? '').split(',').map((s) => s.trim()).filter(Boolean),
 });
 // Check open deliveries with each company every 20 s, so the vault keeps up even when webhooks cannot reach us.
 let polling = false;

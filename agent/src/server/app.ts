@@ -25,6 +25,12 @@ export interface AppOptions {
   shops: Shops;
   staticDir?: string;
   secureCookies?: boolean;     // true behind HTTPS
+  /**
+   * Other sites allowed to call this server (CORS), e.g. the app on DeWEB: ['https://1-2-433.tapekit.org']. They sign
+   * in with a bearer token (returned by /api/auth/verify) instead of the cookie: browsers block third-party cookies,
+   * and a header is never sent by the browser on its own, so other pages cannot act for a signed-in person.
+   */
+  allowedOrigins?: string[];
   /** whsec_... from registering this server's /api/webhooks/sendrelay with Sendrelay; webhooks are refused without it. */
   sendrelayWebhookSecret?: string;
   log?: (line: string) => void;
@@ -117,7 +123,7 @@ export function createApp(o: AppOptions): Server {
       const { user, token } = accounts.verifyCode(String(c.body?.phone ?? ''), String(c.body?.code ?? ''), role);
       res.setHeader('Set-Cookie', cookie(token, 30 * 24 * 3600, o.secureCookies));
       log(`signed in: user ${user.id} (${user.role})`);
-      return { user };
+      return { user, token };   // for apps on another origin (DeWEB), which send it as `Authorization: Bearer`
     }],
     ['POST', /^\/api\/auth\/logout$/, async (c, res) => {
       if (c.token) accounts.signOut(c.token);
@@ -307,7 +313,17 @@ export function createApp(o: AppOptions): Server {
 
   return createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
-    const token = readCookie(req.headers.cookie, COOKIE);
+    const origin = req.headers.origin;
+    if (origin && o.allowedOrigins?.includes(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST');
+      res.setHeader('Access-Control-Max-Age', '600');
+      if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+    }
+    const bearer = /^Bearer ([A-Za-z0-9_-]{20,})$/.exec(String(req.headers.authorization ?? ''))?.[1];
+    const token = bearer ?? readCookie(req.headers.cookie, COOKIE);
     const user = accounts.session(token);
     const ip = (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0].trim() || req.socket.remoteAddress || '?';
     try {

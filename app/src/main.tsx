@@ -1,6 +1,6 @@
 import { StrictMode, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { api, isServer, load, save, setExplorer, signer, type AnyConfig, type Config } from './lib';
+import { api, isServer, load, loadServerAddress, save, setExplorer, signer, type AnyConfig, type Config } from './lib';
 import { AccountApp } from './Account';
 import { Owner } from './Owner';
 import { Rider } from './Rider';
@@ -16,7 +16,7 @@ function App() {
     return fromLink === 'owner' || fromLink === 'rider' ? fromLink : load<Role | null>('stockrun.role', null);
   });
   useEffect(() => {
-    (api.config() as Promise<AnyConfig>).then((c) => { setExplorer(isServer(c) ? c.explorerTx : null); setAny(c); })
+    loadServerAddress().then(() => api.config() as Promise<AnyConfig>).then((c) => { setExplorer(isServer(c) ? c.explorerTx : null); setAny(c); })
       .catch((e) => setError(`Cannot reach the StockRun server: ${e.message}`));
   }, []);
   const cfg: Config | null = any && !isServer(any) ? any : null;

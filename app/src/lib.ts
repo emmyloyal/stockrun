@@ -51,8 +51,29 @@ export interface ShopMoney {
   weeklyBudgetNaira: number; spentThisWeekNaira: number; limitNaira: number;
 }
 
+// ---------------------------------------------------------------- where the server is
+// Served by the StockRun server itself: same origin, session cookie. Hosted elsewhere (DeWEB): `stockrun-config.json`
+// next to index.html names the server, and the session travels as a bearer token kept on this phone.
+let API = '';
+const TOKEN_KEY = 'stockrun.session';
+const sessionToken = () => { try { return localStorage.getItem(TOKEN_KEY); } catch { return null; } };
+const setSessionToken = (t: string | null) => { try { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); } catch { /* private mode */ } };
+const authHeaders = (): Record<string, string> => { const t = API ? sessionToken() : null; return t ? { Authorization: `Bearer ${t}` } : {}; };
+
+/** Read `stockrun-config.json` if this copy of the app has one (DeWEB). Call once before anything else. */
+export async function loadServerAddress(): Promise<void> {
+  try {
+    const r = await fetch('stockrun-config.json', { cache: 'no-store' });
+    if (!r.ok || !String(r.headers.get('content-type')).includes('json')) return;
+    const c = await r.json() as { api?: unknown };
+    if (typeof c.api === 'string' && /^https:\/\/[^/]+$/.test(c.api)) API = c.api;
+  } catch { /* no config: same origin */ }
+}
+
 async function call<T>(path: string, body?: unknown): Promise<T> {
-  const r = await fetch(path, body === undefined ? { credentials: 'same-origin' } : { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const r = await fetch(API + path, body === undefined
+    ? { credentials: API ? 'omit' : 'same-origin', headers: authHeaders() }
+    : { method: 'POST', credentials: API ? 'omit' : 'same-origin', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify(body) });
   const json = await r.json().catch(() => ({ error: `Server error ${r.status}` }));
   if (!r.ok) throw new Error(json.error ?? `Server error ${r.status}`);
   return json as T;
@@ -73,8 +94,12 @@ export const server = {
   config: () => call<ServerConfig>('/api/config'),
   me: () => call<Me>('/api/me'),
   requestCode: (phone: string) => call<{ sent: true }>('/api/auth/code', { phone }),
-  verify: (phone: string, code: string, role: 'owner' | 'rider') => call<{ user: User }>('/api/auth/verify', { phone, code, role }),
-  logout: () => call<{ ok: true }>('/api/auth/logout', {}),
+  verify: async (phone: string, code: string, role: 'owner' | 'rider') => {
+    const r = await call<{ user: User; token?: string }>('/api/auth/verify', { phone, code, role });
+    if (r.token) setSessionToken(r.token);
+    return r;
+  },
+  logout: async () => { try { return await call<{ ok: true }>('/api/auth/logout', {}); } finally { setSessionToken(null); } },
   linkMessage: (address: Address) => call<{ message: string }>(`/api/me/link-message?address=${address}`),
   linkKey: (address: Address, signature: Hex) => call<{ user: User }>('/api/me/key', { address, signature }),
   backup: () => call<{ backup: Backup | null }>('/api/me/backup'),
@@ -100,7 +125,7 @@ const erc20Abi = parseAbi([
   'function approve(address spender, uint256 amount) returns (bool)',
   'function allowance(address owner, address spender) view returns (uint256)',
 ]);
-const transport = () => http(new URL('/rpc', location.origin).href, { timeout: 60_000 });
+const transport = () => http(API ? `${API}/rpc` : new URL('/rpc', location.origin).href, { timeout: 60_000, fetchOptions: { headers: authHeaders() } });
 
 // X Layer fee rule, the same as the server's (agent/src/chain/platform.ts): tip 0.001 gwei, at most 1.25 x base fee + tip,
 // set as viem's last step so no node suggestion overrides it, and nothing is sent if the base fee is above 0.5 gwei.
