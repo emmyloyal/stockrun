@@ -12,7 +12,9 @@ export const OSM_SHOP_TYPES = ['supermarket', 'convenience', 'wholesale', 'gener
 export const GROCERY_TYPES = ['supermarket', 'convenience', 'wholesale', 'general', 'variety_store', 'food', 'grocery'];
 
 const UA = 'StockRun/1.0 (AI buying agent prototype; +https://stockrun.onrender.com)';
-const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+// Tried in order; each gets OVERPASS_TIMEOUT_MS, and all of them together at most OVERPASS_BUDGET_MS, then Nominatim.
+const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+const OVERPASS_TIMEOUT_MS = 12_000, OVERPASS_BUDGET_MS = 20_000;
 
 interface OsmTags { name?: string; shop?: string; phone?: string; 'contact:phone'?: string; 'contact:whatsapp'?: string; mobile?: string; 'contact:mobile'?: string;
   'addr:street'?: string; 'addr:housenumber'?: string; 'addr:suburb'?: string; 'addr:city'?: string; disused?: string; [k: string]: string | undefined }
@@ -32,7 +34,9 @@ export class OsmSearch {
   async search(types: string[], near: { lat: number; lng: number }, radiusM = 15_000): Promise<Listing[]> {
     const shopTypes = [...new Set(types.filter((t) => (OSM_SHOP_TYPES as readonly string[]).includes(t)))].slice(0, 8);
     if (!shopTypes.length) return [];
+    const until = Date.now() + OVERPASS_BUDGET_MS;
     for (const url of OVERPASS) {
+      if (Date.now() >= until) break;
       const r = await this.overpass(url, shopTypes, near, Math.min(radiusM, 30_000)).catch(() => null);
       if (r) return r;
     }
@@ -43,7 +47,7 @@ export class OsmSearch {
     const around = `(around:${Math.round(radiusM)},${near.lat},${near.lng})`;
     const re = `^(${types.join('|')})$`;
     const q = `[out:json][timeout:25];(${['phone', 'contact:phone', 'contact:whatsapp', 'mobile'].map((k) => `nwr${around}["shop"~"${re}"]["${k}"];`).join('')});out tags center 150;`;
-    const r = await this.fetch(url, { method: 'POST', headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ data: q }), signal: AbortSignal.timeout(30_000) });
+    const r = await this.fetch(url, { method: 'POST', headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ data: q }), signal: AbortSignal.timeout(OVERPASS_TIMEOUT_MS) });
     if (!r.ok) return null;
     const j = await r.json() as { elements?: { type: string; id: number; lat?: number; lon?: number; center?: { lat: number; lon: number }; tags?: OsmTags }[] };
     return (j.elements ?? []).flatMap((e): Listing[] => {
