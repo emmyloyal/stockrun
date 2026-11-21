@@ -16,6 +16,8 @@ import { BotChannel } from '../src/sim/bots.ts';
 import { PriceBook } from '../src/prices/priceBook.ts';
 import { Ledger } from '../src/money/ledger.ts';
 import { NairaOrders } from '../src/orders/nairaOrders.ts';
+import { foundTable } from '../src/discovery/hunt.ts';
+import { SELLER_APPROVAL_DELAY_MS } from '../src/buyers/buyers.ts';
 
 const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(200, 9)]).toString('base64');
 const MILE12 = { lat: 6.6045, lng: 3.3891, address: '12 Ikorodu Road, Ketu, Lagos' };
@@ -23,6 +25,9 @@ const SITE = 'https://1-2-433.tapekit.org';
 
 describe.skipIf(!localChainAvailable())('StockRun server', () => {
   let chain: LocalChain; let p: Platform; let server: Server; let base: string; let ledger: Ledger;
+  let clock = Date.now();
+  let hunt: { db: ReturnType<typeof openDb>; places: null; osm: null; web: null; generate: null };
+  let db: ReturnType<typeof openDb>;
   const mail = new ConsoleEmail();
 
   function person() {
@@ -45,12 +50,13 @@ describe.skipIf(!localChainAvailable())('StockRun server', () => {
   beforeAll(async () => {
     chain = await startLocalChain();
     p = localPlatform(chain);
-    const db = openDb();
+    db = openDb();
     ledger = new Ledger(db);
     let buyers: Buyers;
-    const orders = new NairaOrders({ db, ledger, evalCircuit: circuitEvaluator(p), supplierStatus: (k) => buyers.sellerStatus(k), carriers: () => buyers.carrierKeys() });
-    buyers = new Buyers(db, p, ledger, orders, { extractor: new RuleExtractor(), channel: new BotChannel(), prices: new PriceBook() });
-    server = createApp({ platform: p, accounts: new Accounts(db, new ConsoleSms(), 'x'.repeat(40), Date.now, null, mail), buyers, ledger, prices: new PriceBook(), paystack: null, allowedOrigins: [SITE], log: (l) => process.env.DEBUG_SERVER && console.error(l) });
+    const orders = new NairaOrders({ db, ledger, evalCircuit: circuitEvaluator(p), supplierStatus: (k, u) => buyers.sellerStatus(k, u), carriers: () => buyers.carrierKeys() });
+    buyers = new Buyers(db, p, ledger, orders, { extractor: new RuleExtractor(), channel: new BotChannel(), prices: new PriceBook(), foundDb: db, now: () => clock });
+    hunt = { db, places: null, osm: null, web: null, generate: null };
+    server = createApp({ hunt, platform: p, accounts: new Accounts(db, new ConsoleSms(), 'x'.repeat(40), Date.now, null, mail), buyers, ledger, prices: new PriceBook(), paystack: null, allowedOrigins: [SITE], log: (l) => process.env.DEBUG_SERVER && console.error(l) });
     await new Promise<void>((r) => server.listen(0, r));
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   }, 60_000);
@@ -145,4 +151,57 @@ describe.skipIf(!localChainAvailable())('StockRun server', () => {
     const me = await (await fetch(`${base}/api/me`, { headers: { Origin: SITE, Authorization: `Bearer ${v.json.token}` } })).json() as any;
     expect(me.user.email).toBe('fio@example.com');
   }, 60_000);
+
+  it('records a WhatsApp deal with a found seller: a day to join the list, then RestockGuard, then pay at pickup', async () => {
+    foundTable(db);
+    const add = db.prepare("INSERT INTO found_sellers (id, name, address, lat, lng, phone, source, source_url, found_at, kind) VALUES (?, ?, ?, ?, ?, ?, 'osm', 'https://www.openstreetmap.org/node/1', 0, 'supermarket')");
+    add.run('found-00000000000000a1', 'Agora Marketplace', 'Egbe, Lagos', 6.6050, 3.3900, '+2349079579400');      // ~1 km from Mile 12 pin
+    add.run('found-00000000000000b2', 'Far Away Store', 'Lekki, Lagos', 6.4400, 3.5300, '+2348111621102');         // ~24 km away
+    const gbenga = person(); await gbenga.email('gbenga@example.com');
+    await gbenga.call('/api/dev/naira', { amountNaira: 200_000 });
+    const deal = { sellerId: 'found-00000000000000a1', item: 'Indomie carton', quantity: 4, unit: 'carton', unitPriceNaira: 14_000, category: 'staples', delivery: 'self', place: MILE12 };
+
+    const first = await gbenga.call('/api/deals', deal);
+    expect(first.status).toBe(409);
+    expect(first.json.error).toMatch(/Add Agora Marketplace to your sellers first/);
+
+    const added = (await gbenga.call('/api/my-sellers/found-00000000000000a1', {})).json;
+    expect(added).toMatchObject({ status: 0, pendingStatus: 1 });
+    expect(added.effectiveAt - clock).toBe(SELLER_APPROVAL_DELAY_MS);
+    const early = await gbenga.call('/api/deals', deal);
+    expect(early.status).toBe(409);
+    expect(early.json.error).toMatch(/joins your sellers at .* Record the deal then/);
+    expect((await gbenga.call('/api/orders')).json).toEqual([]);
+
+    clock += SELLER_APPROVAL_DELAY_MS;                                                    // a day later
+    expect((await gbenga.call('/api/my-sellers/found-00000000000000a1')).json).toMatchObject({ status: 1, pendingStatus: null });
+    const r = (await gbenga.call('/api/deals', deal)).json;
+    expect(r).toMatchObject({ status: 'locked' });
+    expect(r.message).toMatch(/RestockGuard approved it; the money is locked/);
+    let [o] = (await gbenga.call('/api/orders')).json;
+    expect(o).toMatchObject({ status: 'Locked', ordered: 4, unitPriceNaira: 14_000, self: true, item: 'Indomie carton' });
+    expect(o.supplier.name).toMatch(/^Agora Marketplace/);
+    expect(o.evidence[0]).toMatchObject({ circuit: 'restock' });
+    expect((await gbenga.call('/api/me')).json.naira).toEqual({ availableNaira: 200_000 - 56_000, heldNaira: 56_000 });
+
+    // At pickup the buyer counts 3 good cartons: PickupCheck pays the seller for 3, the 4th comes back.
+    expect((await gbenga.call(`/api/orders/${o.orderId}/collect`, { count: 3 })).json).toMatchObject({ status: 'settled', outcome: 'paid_part', qty: 3 });
+    [o] = (await gbenga.call('/api/orders')).json;
+    expect(o.status).toBe('Delivered');
+    expect((await gbenga.call('/api/me')).json.naira).toEqual({ availableNaira: 200_000 - 42_000, heldNaira: 0 });
+    expect(ledger.check().ok).toBe(true);
+
+    // Far away (over 10 km): RestockGuard asks the buyer first.
+    await gbenga.call('/api/my-sellers/found-00000000000000b2', {});
+    clock += SELLER_APPROVAL_DELAY_MS;
+    const far = (await gbenga.call('/api/deals', { ...deal, sellerId: 'found-00000000000000b2', quantity: 1 })).json;
+    expect(far).toMatchObject({ status: 'ask_owner', reason: 5 });
+
+    // Blocking is immediate; another buyer's list is separate.
+    expect((await gbenga.call('/api/my-sellers/found-00000000000000a1/block', {})).json.status).toBe(3);
+    expect((await gbenga.call('/api/deals', deal)).json.error).toMatch(/blocked/);
+    const other = person(); await other.email('other@example.com');
+    expect((await other.call('/api/my-sellers/found-00000000000000a1')).json.status).toBe(0);
+    expect((await other.call('/api/deals', { ...deal })).status).toBe(409);
+  }, 120_000);
 });

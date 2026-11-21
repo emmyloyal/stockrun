@@ -50,8 +50,9 @@ export type SettleOutcome =
 
 export class NairaOrders {
   private db: DatabaseSync; private ledger: Ledger; private evalCircuit: EvalCircuit;
-  private supplierStatusOf: (key: Hash) => number; private carriers: () => Address[]; private now: () => number;
-  constructor(o: { db: DatabaseSync; ledger: Ledger; evalCircuit: EvalCircuit; supplierStatus: (key: Hash) => number; carriers: () => Address[]; now?: () => number }) {
+  /** The seller's status in THIS buyer's list (RestockGuard's `sup` input). */
+  private supplierStatusOf: (key: Hash, userId: number) => number; private carriers: () => Address[]; private now: () => number;
+  constructor(o: { db: DatabaseSync; ledger: Ledger; evalCircuit: EvalCircuit; supplierStatus: (key: Hash, userId: number) => number; carriers: () => Address[]; now?: () => number }) {
     this.db = o.db; this.ledger = o.ledger; this.evalCircuit = o.evalCircuit; this.supplierStatusOf = o.supplierStatus;
     this.carriers = o.carriers; this.now = o.now ?? Date.now;
     migrateNairaOrders(o.db);
@@ -104,7 +105,7 @@ export class NairaOrders {
     const totalUnits = this.units(amount, true);
     if (totalUnits > 255) return { status: 'too_large' };
     const input = packRestock({ total: totalUnits, budget: this.units(remaining, false), limit: this.units(o.budget, false),
-      sup: this.supplierStatusOf(o.supplier_key as Hash), cat: o.cat, dist: o.dist, ownerOk });
+      sup: this.supplierStatusOf(o.supplier_key as Hash, o.user_id), cat: o.cat, dist: o.dist, ownerOk });
     const [decision, reason] = await this.decide(o, 'restock', input, RESTOCK_OUT);
     const tx = `ledger:${id}` as Hash;
     if (decision === 0) return { status: 'rejected', reason };

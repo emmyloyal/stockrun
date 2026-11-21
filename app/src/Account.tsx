@@ -6,7 +6,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import {
   avatarUrl, currentPosition, hasWallet, load, naira, preparePhoto, save, server, short, signWithWallet, whatsappLink,
-  type Coins, type Config, type FoundSeller, type HuntResult, type Me, type PlaceHit, type SellerHit, type Movement, type Order, type Place, type RequestRecord, type Seller, type User,
+  type Category, type Coins, type Config, type DealResult, type FoundSeller, type HuntResult, type Me, type MySeller, type PlaceHit, type SellerHit, type Movement, type Order, type Place, type RequestRecord, type Seller, type User,
 } from './lib';
 import { CircuitTrail, Outcome, StatusPill } from './ui';
 
@@ -130,6 +130,8 @@ function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me:
   const markers = useRef(new Map<string, L.CircleMarker>());
   const [draft, setDraft] = useState<{ id: string; name: string; phone: string; message: string; ai: boolean } | null>(null);
   const contactPanel = useRef<HTMLDivElement>(null);
+  const [deal, setDeal] = useState<{ id: string; name: string; seller: MySeller | null; item: string; quantity: string; unit: string; price: string; category: Category; result: DealResult | null } | null>(null);
+  const dealPanel = useRef<HTMLDivElement>(null);
   const [reply, setReply] = useState('');
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
@@ -168,7 +170,7 @@ function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me:
     }
     for (const f of shown.values()) {
       markers.current.set(f.id, L.circleMarker([f.lat, f.lng], { radius: 9, color: '#C2410C', weight: 3, fillOpacity: 0.85, fillColor: '#F97316' })
-        .bindPopup(`<div class="pop"><strong>${esc(f.name)}</strong><span>${f.kind ? `${esc(f.kind.replace(/_/g, ' '))} · ` : ''}${f.km} km · WhatsApp ${esc(f.phone)}</span><span>Found on ${SOURCE[f.source]} · not confirmed by StockRun</span>${f.sourceUrl ? `<a href="${esc(f.sourceUrl)}" target="_blank" rel="noreferrer">Where we found it</a>` : ''}${f.source === 'osm' ? '<span class="fine">© OpenStreetMap contributors</span>' : ''}<button type="button" class="wa-btn" data-seller="${esc(f.id)}">Message on WhatsApp</button></div>`).addTo(g));
+        .bindPopup(`<div class="pop"><strong>${esc(f.name)}</strong><span>${f.kind ? `${esc(f.kind.replace(/_/g, ' '))} · ` : ''}${f.km} km · WhatsApp ${esc(f.phone)}</span><span>Found on ${SOURCE[f.source]} · not confirmed by StockRun</span>${f.sourceUrl ? `<a href="${esc(f.sourceUrl)}" target="_blank" rel="noreferrer">Where we found it</a>` : ''}${f.source === 'osm' ? '<span class="fine">© OpenStreetMap contributors</span>' : ''}<button type="button" class="wa-btn" data-seller="${esc(f.id)}">Message on WhatsApp</button><button type="button" class="deal-btn" data-deal="${esc(f.id)}" data-name="${esc(f.name)}">Record the deal</button></div>`).addTo(g));
     }
     if (pinned) L.circleMarker([place.lat, place.lng], { radius: 10, color: '#141B2E', weight: 3, fillColor: '#F4C20D', fillOpacity: 1 }).bindTooltip('Deliver here').addTo(g);
     if (picked) markers.current.get(picked.id)?.openPopup();
@@ -197,11 +199,28 @@ function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me:
   });
   const contactRef = useRef(contactSeller);
   contactRef.current = contactSeller;
+  /** Record a deal agreed on WhatsApp: it becomes an order that RestockGuard decides, paid to the seller at pickup. */
+  const openDeal = (id: string, name: string) => run(setBusy, setError, 'Checking your sellers…', async () => {
+    const seller = await server.mySeller(id);
+    setDeal({ id, name, seller, item: '', quantity: '1', unit: 'carton', price: '', category: 'staples', result: null });
+    setTimeout(() => dealPanel.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
+  });
+  const dealRef = useRef(openDeal);
+  dealRef.current = openDeal;
+  const addToMySellers = () => deal && run(setBusy, setError, 'Adding the seller…', async () => { const seller = await server.addSeller(deal.id); setDeal({ ...deal, seller }); });
+  const submitDeal = () => deal && run(setBusy, setError, 'RestockGuard is checking your deal…', async () => {
+    const result = await server.recordDeal({ sellerId: deal.id, item: deal.item.trim(), quantity: Number(deal.quantity), unit: deal.unit.trim(), unitPriceNaira: Number(deal.price.replace(/\D/g, '')),
+      category: deal.category, delivery, place, contactPhone: contact || undefined });
+    setDeal({ ...deal, result });
+  });
+  const lagosTime = (t: number) => new Date(t).toLocaleString('en-NG', { timeZone: 'Africa/Lagos', weekday: 'short', hour: '2-digit', minute: '2-digit' });
   useEffect(() => {
     const box = el.current; if (!box) return;
     const onClick = (e: MouseEvent) => {
       const b = (e.target as HTMLElement).closest<HTMLElement>('.wa-btn');
       if (b?.dataset.seller) { e.preventDefault(); map.current?.closePopup(); contactRef.current(b.dataset.seller); }
+      const d = (e.target as HTMLElement).closest<HTMLElement>('.deal-btn');
+      if (d?.dataset.deal) { e.preventDefault(); map.current?.closePopup(); dealRef.current(d.dataset.deal, d.dataset.name ?? 'this seller'); }
     };
     box.addEventListener('click', onClick);
     return () => box.removeEventListener('click', onClick);
@@ -268,8 +287,41 @@ function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me:
               <textarea rows={4} value={draft.message} maxLength={600} onChange={(e) => setDraft({ ...draft, message: e.target.value })} />
             </label>
             <a className="btn wa" href={whatsappLink(draft.phone, draft.message)} target="_blank" rel="noreferrer">Open WhatsApp chat</a>
+            <button className="btn ghost" onClick={() => openDeal(draft.id, draft.name)}>Agreed a price? Record the deal</button>
             <p className="fine">WhatsApp opens on your phone with this message typed in; you send it and chat with the seller yourself. StockRun does not see the chat. This seller was found on a public map and is not checked by StockRun, so agree the price and see the goods before you pay.</p>
             <button className="link" onClick={() => setDraft(null)}>Close</button>
+          </div>
+        )}
+        {deal && (
+          <div ref={dealPanel} className="stack note deal">
+            <p><strong>Record your deal with {deal.name}</strong></p>
+            {!deal.seller || deal.seller.status === 0 ? (
+              deal.seller?.pendingStatus ? (
+                <p className="warn">{deal.name} joins your sellers on {lagosTime(deal.seller.effectiveAt!)}. A new seller waits a day before money can be locked for them, so nobody who gets into your account can pay a seller of their own straight away.</p>
+              ) : (
+                <div className="stack tight">
+                  <p className="warn">{deal.name} is not on your sellers list. RestockGuard only lets money go to sellers on your list.</p>
+                  <button className="btn ghost" disabled={!!busy} onClick={addToMySellers}>Add to my sellers (ready in 24 hours)</button>
+                </div>
+              )
+            ) : deal.seller.status === 3 ? <p className="alert">You blocked this seller.</p> : <p className="ok">✓ {deal.name} is on your sellers list.</p>}
+            <label className="field"><span>What you agreed to buy</span><input value={deal.item} maxLength={80} placeholder="Indomie noodles (40 x 70g)" onChange={(e) => setDeal({ ...deal, item: e.target.value })} /></label>
+            <div className="row wrap">
+              <label className="field"><span>How many</span><input type="number" min={1} max={255} value={deal.quantity} onChange={(e) => setDeal({ ...deal, quantity: e.target.value })} /></label>
+              <label className="field"><span>Unit</span><input value={deal.unit} maxLength={20} placeholder="carton" onChange={(e) => setDeal({ ...deal, unit: e.target.value })} /></label>
+              <label className="field"><span>Price per {deal.unit || 'unit'} (₦)</span><input className="money" inputMode="numeric" placeholder="14,000" value={Number(deal.price.replace(/\D/g, '')) ? Number(deal.price.replace(/\D/g, '')).toLocaleString('en-NG') : ''} onChange={(e) => setDeal({ ...deal, price: e.target.value })} /></label>
+            </div>
+            <label className="field"><span>Kind of goods</span>
+              <select value={deal.category} onChange={(e) => setDeal({ ...deal, category: e.target.value as Category })}>
+                {CATEGORY_LABELS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </select>
+            </label>
+            {Number(deal.price.replace(/\D/g, '')) > 0 && Number(deal.quantity) > 0 && <p className="fine">Total {naira(Number(deal.price.replace(/\D/g, '')) * Number(deal.quantity))}{delivery === 'logistics' ? ' plus delivery' : ', you collect it'} · your balance {naira(available)}</p>}
+            <button className="btn primary" disabled={!!busy || deal.seller?.status !== 1 || deal.item.trim().length < 2 || !(Number(deal.quantity) >= 1) || !(Number(deal.price.replace(/\D/g, '')) >= 1) || !pinned} onClick={submitDeal}>Record deal and lock the money</button>
+            <p className="fine">RestockGuard, a circuit on X Layer, decides whether the money locks. {deal.name} is paid from it only at pickup, for the number of good {deal.unit || 'unit'}s counted ({delivery === 'self' ? 'by you' : 'by the logistics company'}). Uses the pickup or delivery choice below.</p>
+            {deal.result && <pre className="reply">{deal.result.message}</pre>}
+            {deal.result && (deal.result.status === 'locked' || deal.result.status === 'ask_owner') && <button className="btn ghost" onClick={onAsked}>See it in Orders</button>}
+            <button className="link" onClick={() => setDeal(null)}>Close</button>
           </div>
         )}
         <div className="row wrap">
@@ -280,7 +332,7 @@ function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me:
           <div className="stack note">
             <button className="btn ghost" disabled={!!busy || text.trim().length < 3 || !pinned} onClick={findReal}>Find real sellers with AI</button>
             <p className="fine">The AI searches maps and the web near your pin and keeps only sellers whose WhatsApp number it can prove from the source. They are not checked by StockRun.</p>
-            {hunt && <FoundList hunt={hunt} onContact={(id) => contactSeller(id)} />}
+            {hunt && <FoundList hunt={hunt} onContact={(id) => contactSeller(id)} onDeal={openDeal} />}
           </div>
         )}
         <fieldset className="stack choice-group">
@@ -302,7 +354,12 @@ function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me:
 }
 const SOURCE = { maps: 'Google Maps', osm: 'OpenStreetMap', web: 'the web' } as const;
 const SOURCE_FROM = { maps: 'its Google Maps listing', osm: 'its OpenStreetMap entry', web: 'a web page' } as const;
-function FoundList({ hunt, onContact }: { hunt: HuntResult; onContact: (id: string) => void }) {
+const CATEGORY_LABELS: [Category, string][] = [
+  ['staples', 'Food staples (rice, noodles, flour, garri)'], ['drinks', 'Drinks (water, soft drinks, malt)'], ['cooking', 'Cooking (oil, tomato paste, sugar)'],
+  ['toiletries', 'Toiletries (soap, detergent)'], ['snacks', 'Snacks and biscuits'], ['household', 'Household (batteries, candles, bags)'],
+  ['restricted', 'Alcohol or cigarettes (always needs your OK)'], ['highValue', 'Phones, electronics, anything else (always needs your OK)'],
+];
+function FoundList({ hunt, onContact, onDeal }: { hunt: HuntResult; onContact: (id: string) => void; onDeal: (id: string, name: string) => void }) {
   if (!hunt.sellers.length) return <p className="muted">No seller with a WhatsApp number turned up near your pin ({hunt.checked} checked). Try other words, or move the pin.</p>;
   return (
     <ul className="cards">
@@ -311,7 +368,7 @@ function FoundList({ hunt, onContact }: { hunt: HuntResult; onContact: (id: stri
           <span className="row between"><strong>{f.name}</strong><span className="pill found">found by AI</span></span>
           <span className="fine">{f.km} km · {f.address}</span>
           <span className="fine">WhatsApp {f.phone} · from {SOURCE_FROM[f.source]}{f.sourceUrl && <> · <a href={f.sourceUrl} target="_blank" rel="noreferrer">source</a></>}</span>
-          <button className="btn wa small" onClick={() => onContact(f.id)}>Message on WhatsApp</button>
+          <span className="row wrap"><button className="btn wa small" onClick={() => onContact(f.id)}>Message on WhatsApp</button><button className="btn ghost small" onClick={() => onDeal(f.id, f.name)}>Record the deal</button></span>
         </li>
       ))}
     </ul>

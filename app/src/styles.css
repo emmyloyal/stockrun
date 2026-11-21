@@ -174,3 +174,9 @@ button.card:hover { border-color: var(--ink); }
 .btn.wa.small { min-height: 38px; padding: 6px 12px; justify-self: start; }
 .pop .wa-btn { margin-top: 6px; display: block; width: 100%; min-height: 34px; border: 0; border-radius: 8px; background: #1F9D55; color: #fff; font-weight: 600; cursor: pointer; }
 .contact textarea { width: 100%; }
+
+/* Record the deal */
+.pop .deal-btn { margin-top: 6px; display: block; width: 100%; min-height: 34px; border: 1.5px solid var(--ink); border-radius: 8px; background: var(--surface); color: var(--ink); font-weight: 600; cursor: pointer; }
+.btn.small { min-height: 38px; padding: 6px 12px; }
+.deal select { width: 100%; min-height: 44px; padding: 8px 10px; border-radius: 9px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: inherit; }
+.deal .field input[type=number] { max-width: 110px; }

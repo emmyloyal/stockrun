@@ -226,6 +226,14 @@ export function createApp(o: AppOptions): Server {
       };
     }],
 
+    // ---------------------------------------------------------------- the buyer's sellers and recorded deals
+    ['GET', /^\/api\/my-sellers\/(found-[0-9a-f]{16})$/, async (c) => buyers.sellerFor(need(c).id, c.m[1])],
+    /** Add a found seller to the buyer's list: orders with them can go through a day later (like the vault). */
+    ['POST', /^\/api\/my-sellers\/(found-[0-9a-f]{16})$/, async (c) => buyers.addSeller(need(c).id, c.m[1])],
+    ['POST', /^\/api\/my-sellers\/(found-[0-9a-f]{16})\/block$/, async (c) => buyers.blockSeller(need(c).id, c.m[1])],
+    /** A deal the buyer agreed with a found seller becomes an order: RestockGuard decides, the seller is paid at pickup. */
+    ['POST', /^\/api\/deals$/, async (c) => buyers.recordDeal(need(c), c.body ?? {})],
+
     // ---------------------------------------------------------------- the map
     /** The AI writes the buyer's WhatsApp message to a found seller; the buyer sends it from their own WhatsApp. */
     ['POST', /^\/api\/sellers\/(found-[0-9a-f]{16})\/message$/, async (c) => {

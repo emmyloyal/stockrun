@@ -13,7 +13,10 @@ import type { Extractor } from '../llm.ts';
 import type { SupplierChannel } from '../tools/negotiate.ts';
 import type { PriceBook } from '../prices/priceBook.ts';
 import { loadSuppliers, supplierKey } from '../tools/suppliers.ts';
-import type { OrderLine, Rider, Supplier } from '../types.ts';
+import { CATEGORIES, distBucket, type Category, type OrderLine, type Rider, type Supplier } from '../types.ts';
+import { RESTOCK_REASONS } from '../tools/vault.ts';
+import { foundSeller } from '../discovery/hunt.ts';
+import { haversineKm } from '../tools/suppliers.ts';
 import { Dispatcher, type DispatchShop } from '../logistics/dispatch.ts';
 import type { DeliveryJob } from '../logistics/carrier.ts';
 import type { Ledger } from '../money/ledger.ts';
@@ -33,10 +36,18 @@ export interface RequestRecord { id: number; text: string; budgetNaira: number; 
 
 export interface BuyerServices {
   extractor: Extractor; channel: SupplierChannel; prices: PriceBook;
+  /** Where found sellers live (the hunt's database), for recording deals with them. */
+  foundDb?: DatabaseSync | null;
   /** Where each buyer's order details are saved (null: memory only, for tests and the local chain). */
   dataDir?: string | null;
   log?: (line: string) => void;
 }
+/** A seller the buyer adds waits this long before orders with them can lock money (the vault's DELAY). Blocking is immediate. */
+export const SELLER_APPROVAL_DELAY_MS = 24 * 3600_000;
+export interface MySeller { sellerId: string; key: Hash; status: 0 | 1 | 3; pendingStatus: 1 | null; effectiveAt: number | null; addedAt: number }
+export interface DealInput { sellerId: string; item: string; quantity: number; unit: string; unitPriceNaira: number; category: Category; delivery: DeliveryChoice; place: Place; contactPhone?: string }
+export type DealResult = { status: 'locked' | 'ask_owner' | 'rejected' | 'too_large' | 'circuit_failed' | 'no_rider'; orderId?: string; reason?: number; message: string };
+
 export interface BuyerRuntime { jobs: JobStore; naira: NairaBackend; dispatch: DispatchShop }
 
 export function validateRequest(i: Partial<RequestInput> & { place?: Partial<Place> }): RequestInput {
@@ -58,16 +69,126 @@ export class Buyers {
   private runtimes = new Map<number, BuyerRuntime>();
   private verified = new Set<string>(loadSuppliers().map((s) => supplierKey(s.id).toLowerCase()));
 
-  constructor(db: DatabaseSync, p: Platform, ledger: Ledger, orders: NairaOrders, services: BuyerServices) {
+  private now: () => number;
+  constructor(db: DatabaseSync, p: Platform, ledger: Ledger, orders: NairaOrders, services: BuyerServices & { now?: () => number }) {
+    this.now = services.now ?? Date.now;
     this.db = db; this.p = p; this.ledger = ledger; this.orders = orders; this.services = services;
     this.dispatcher = new Dispatcher({ entries: p.carriers, log: services.log });
     db.exec(`CREATE TABLE IF NOT EXISTS requests (
       id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, text TEXT NOT NULL, budget_naira INTEGER NOT NULL,
       lat REAL NOT NULL, lng REAL NOT NULL, address TEXT NOT NULL, delivery TEXT NOT NULL, message TEXT NOT NULL, created_at INTEGER NOT NULL)`);
+    db.exec(`CREATE TABLE IF NOT EXISTS buyer_sellers (
+      user_id INTEGER NOT NULL, seller_key TEXT NOT NULL, seller_id TEXT NOT NULL, status INTEGER NOT NULL DEFAULT 0,
+      pending_status INTEGER, effective_at INTEGER, added_at INTEGER NOT NULL, PRIMARY KEY (user_id, seller_key))`);
   }
 
-  /** Sellers StockRun has verified (status 1 in RestockGuard's terms); anyone else is rejected by the circuit. */
-  sellerStatus = (key: Hash) => (this.verified.has(key.toLowerCase()) ? 1 : 0);
+  /**
+   * A seller's status for RestockGuard: 1 for sellers StockRun verified (the demo sellers), otherwise what this buyer set
+   * in their own list. An approval the buyer queued takes effect only after SELLER_APPROVAL_DELAY_MS; blocked is 3.
+   */
+  sellerStatus = (key: Hash, userId?: number): number => {
+    if (userId !== undefined) {
+      const r = this.sellerRow(userId, key);
+      if (r?.status === 3) return 3;
+      if (r && r.pending_status !== null && r.effective_at !== null && r.effective_at <= this.now()) {
+        this.db.prepare('UPDATE buyer_sellers SET status = pending_status, pending_status = NULL, effective_at = NULL WHERE user_id = ? AND seller_key = ?').run(userId, key.toLowerCase());
+        return r.pending_status;
+      }
+      if (r?.status === 1) return 1;
+    }
+    return this.verified.has(key.toLowerCase()) ? 1 : 0;
+  };
+  private sellerRow(userId: number, key: Hash) {
+    return this.db.prepare('SELECT * FROM buyer_sellers WHERE user_id = ? AND seller_key = ?').get(userId, key.toLowerCase()) as unknown as
+      { seller_id: string; seller_key: string; status: number; pending_status: number | null; effective_at: number | null; added_at: number } | undefined;
+  }
+  private mine(userId: number, sellerId: string): MySeller {
+    const key = supplierKey(sellerId);
+    const status = this.sellerStatus(key, userId), r = this.sellerRow(userId, key);
+    return { sellerId, key, status: (status === 3 ? 3 : status >= 1 ? 1 : 0), pendingStatus: r?.pending_status === 1 ? 1 : null, effectiveAt: r?.effective_at ?? null, addedAt: r?.added_at ?? 0 };
+  }
+
+  /** The buyer adds a seller they found to their list. Like the vault, the approval waits a day; adding twice changes nothing. */
+  addSeller(userId: number, sellerId: string): MySeller {
+    const s = this.services.foundDb ? foundSeller(this.services.foundDb, sellerId) : null;
+    if (!s) throw new AuthError(404, 'That seller is not on the map any more.');
+    const cur = this.mine(userId, sellerId);
+    if (cur.status === 1 || cur.pendingStatus === 1) return cur;
+    const t = this.now();
+    this.db.prepare(`INSERT INTO buyer_sellers (user_id, seller_key, seller_id, status, pending_status, effective_at, added_at) VALUES (?, ?, ?, 0, 1, ?, ?)
+      ON CONFLICT(user_id, seller_key) DO UPDATE SET pending_status = 1, effective_at = excluded.effective_at`).run(userId, cur.key.toLowerCase(), sellerId, t + SELLER_APPROVAL_DELAY_MS, t);
+    return this.mine(userId, sellerId);
+  }
+  /** Blocking is immediate (and cancels a queued approval). */
+  blockSeller(userId: number, sellerId: string): MySeller {
+    const key = supplierKey(sellerId).toLowerCase();
+    this.db.prepare(`INSERT INTO buyer_sellers (user_id, seller_key, seller_id, status, added_at) VALUES (?, ?, ?, 3, ?)
+      ON CONFLICT(user_id, seller_key) DO UPDATE SET status = 3, pending_status = NULL, effective_at = NULL`).run(userId, key, sellerId, this.now());
+    return this.mine(userId, sellerId);
+  }
+  sellerFor(userId: number, sellerId: string): MySeller { return this.mine(userId, sellerId); }
+
+  /**
+   * The buyer records a deal they agreed with a found seller (on WhatsApp). It becomes an order exactly like the
+   * agent's: RestockGuard decides from the buyer's list, balance, the kind of goods and the distance; the seller is
+   * paid only at pickup for what the handler counts. Budget and auto-approve limit are the buyer's available balance.
+   */
+  async recordDeal(user: User, raw: Partial<DealInput>): Promise<DealResult> {
+    const foundDb = this.services.foundDb;
+    const s = foundDb && typeof raw.sellerId === 'string' ? foundSeller(foundDb, raw.sellerId) : null;
+    if (!s) throw new AuthError(404, 'That seller is not on the map any more.');
+    const item = String(raw.item ?? '').trim().replace(/\s+/g, ' '), unit = String(raw.unit ?? '').trim().toLowerCase() || 'unit';
+    const quantity = Number(raw.quantity), price = Number(raw.unitPriceNaira);
+    if (item.length < 2 || item.length > 80) throw new AuthError(400, 'Say what you agreed to buy (up to 80 characters).');
+    if (!/^[a-z ]{2,20}$/.test(unit)) throw new AuthError(400, 'The unit is a word like carton, bag or piece.');
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 255) throw new AuthError(400, 'Quantity is a whole number from 1 to 255.');
+    if (!Number.isInteger(price) || price < 1 || price * quantity > MAX_BUDGET_NAIRA) throw new AuthError(400, `Price per ${unit} in whole naira; the total can be up to ₦${MAX_BUDGET_NAIRA.toLocaleString('en-NG')}.`);
+    if (!raw.category || !(raw.category in CATEGORIES)) throw new AuthError(400, 'Choose what kind of goods these are.');
+    const lat = Number(raw.place?.lat), lng = Number(raw.place?.lng), address = String(raw.place?.address ?? '').trim();
+    if (!IN_NIGERIA(lat, lng) || address.length < 3) throw new AuthError(400, 'Put your delivery pin and address on the map first.');
+    const delivery: DeliveryChoice = raw.delivery === 'self' ? 'self' : 'logistics';
+    let contactPhone = user.phone ?? undefined;
+    if (raw.contactPhone) { try { contactPhone = normalisePhone(String(raw.contactPhone)); } catch { throw new AuthError(400, 'Enter the rider contact number like 0803 123 4567.'); } }
+    if (delivery === 'logistics' && !contactPhone) throw new AuthError(400, 'Add a phone number so the logistics rider can reach you, or collect it yourself.');
+
+    const mine = this.mine(user.id, s.id);
+    if (mine.status === 3) throw new AuthError(409, 'You blocked this seller.');
+    if (mine.status === 0) {
+      throw new AuthError(409, mine.pendingStatus
+        ? `${s.name} joins your sellers at ${new Date(mine.effectiveAt!).toLocaleString('en-NG', { timeZone: 'Africa/Lagos', dateStyle: 'medium', timeStyle: 'short' })} (a day after you added them, to protect you if someone gets into your account). Record the deal then.`
+        : `Add ${s.name} to your sellers first. It takes a day before orders with a new seller can go through.`);
+    }
+    const available = this.ledger.balance(user.id).availableKobo;
+    if (available < kobo(price * quantity)) throw new AuthError(409, 'Your balance is too low for this deal. Deposit naira first.');
+
+    const rt = this.runtime(user.id);
+    rt.naira.budgetKobo = available;
+    const supplier: Supplier = { id: s.id, name: s.name, market: s.address || 'Lagos', lat: s.lat, lng: s.lng, whatsapp: s.phone, simulated: false, stocks: [] };
+    const line: OrderLine = { item, quantity, unit, category: raw.category, maxUnitPriceNaira: price };
+    const place = { lat, lng, address };
+    const i: RequestInput = { text: `${quantity} ${unit} ${item}`, budgetNaira: Math.round(available / 100), place, delivery, contactPhone };
+    const booked = delivery === 'self'
+      ? { rider: { id: 'self', name: 'you (self-pickup)', address: SELF_HANDLER, lat, lng } as Rider, feeNaira: 0, delivery: undefined }
+      : await this.quoteDelivery(user, i, contactPhone ?? '', supplier, line, price * quantity, (a) => rt.naira.trustedHandler(a)).catch(() => null);
+    if (!booked) return { status: 'no_rider', message: 'No logistics company can take this order right now. Choose "I\'ll collect it" instead.' };
+
+    const km = haversineKm(place, s);
+    const result = await rt.naira.propose({ supplierKey: supplierKey(s.id), ordered: quantity, unitPrice: BigInt(price) * 100n,
+      cat: CATEGORIES[raw.category], dist: distBucket(km), rider: booked.rider.address, riderFee: BigInt(booked.feeNaira) * 100n });
+    if (result.status === 'locked' || result.status === 'ask_owner') {
+      rt.jobs.add({ orderId: String(result.orderId), item, unit, quantity, rider: booked.rider.address,
+        supplier: { name: `${s.name}, ${s.address || 'Lagos'}`, lat: s.lat, lng: s.lng }, shop: { name: address, lat, lng }, createdAt: this.now(),
+        ...(booked.delivery ? { logistics: booked.delivery } : {}) });
+      if (delivery === 'logistics') await this.dispatcher.bookPending(rt.dispatch).catch((e) => this.services.log?.(`booking: ${(e as Error).message}`));
+    }
+    const ngn = (n: number) => `₦${n.toLocaleString('en-NG')}`;
+    const what = `${quantity} ${unit}(s) of ${item} from ${s.name} at ${ngn(price)} each (${ngn(price * quantity)}${booked.feeNaira ? ` + ${ngn(booked.feeNaira)} delivery` : ', you collect it'})`;
+    if (result.status === 'locked') return { status: 'locked', orderId: String(result.orderId), message: `✓ ${what}. RestockGuard approved it; the money is locked. ${s.name} is paid only when ${delivery === 'self' ? 'you count the goods at pickup' : 'the logistics company checks the goods at pickup'}.` };
+    if (result.status === 'ask_owner') return { status: 'ask_owner', orderId: String(result.orderId), reason: result.reason, message: `? ${what}. RestockGuard wants your OK because ${RESTOCK_REASONS[result.reason] ?? `reason ${result.reason}`}. Approve it in Orders.` };
+    if (result.status === 'rejected') return { status: 'rejected', reason: result.reason, message: `✗ ${what}. RestockGuard rejected it: ${RESTOCK_REASONS[result.reason] ?? `reason ${result.reason}`}. Nothing was charged.` };
+    if (result.status === 'too_large') return { status: 'too_large', message: `✗ ${what}. Too large for one order; split it.` };
+    return { status: 'circuit_failed', message: `✗ ${what}. The circuit check failed, so nothing was locked or charged. Try again.` };
+  }
   /** Logistics companies' desk keys: the only handlers (besides the buyer) a naira order accepts. */
   carrierKeys = (): Address[] => this.p.carriers.map((c) => c.wallet.account.address);
 
@@ -76,7 +197,7 @@ export class Buyers {
     if (have) return have;
     const dir = this.services.dataDir;
     const jobs = new JobStore(dir ? join(dir, `jobs-user${userId}.json`) : null);
-    const naira = new NairaBackend(this.orders, userId, this.sellerStatus);
+    const naira = new NairaBackend(this.orders, userId, (k) => this.sellerStatus(k, userId));
     const rt = { jobs, naira, dispatch: { backend: naira, jobs } };
     this.runtimes.set(userId, rt);
     return rt;

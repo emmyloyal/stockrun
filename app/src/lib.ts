@@ -41,6 +41,9 @@ export interface RequestRecord { id: number; text: string; budgetNaira: number; 
 export interface FoundSeller { id: string; name: string; kind?: string | null; address: string; lat: number; lng: number; phone: string; source: 'maps' | 'osm' | 'web'; sourceUrl: string | null; km: number }
 export interface SellerHit { id: string; name: string; kind: string | null; address: string; lat: number; lng: number; phone: string | null; source: 'maps' | 'osm' | 'web' | 'demo'; sourceUrl: string | null; km: number; demo: boolean }
 export interface PlaceHit { name: string; address: string; lat: number; lng: number; kind: string }
+export interface MySeller { sellerId: string; status: 0 | 1 | 3; pendingStatus: 1 | null; effectiveAt: number | null; addedAt: number }
+export type Category = 'staples' | 'drinks' | 'cooking' | 'toiletries' | 'snacks' | 'household' | 'restricted' | 'highValue';
+export interface DealResult { status: 'locked' | 'ask_owner' | 'rejected' | 'too_large' | 'circuit_failed' | 'no_rider'; orderId?: string; reason?: number; message: string }
 export interface HuntResult { searches: string[]; checked: number; dropped: number; sellers: FoundSeller[] }
 export interface Seller {
   id: string; name: string; market: string; lat: number; lng: number; simulated: boolean; verified: boolean; km: number;
@@ -85,6 +88,11 @@ export const server = {
   search: (q: string, near?: { lat: number; lng: number }) => call<{ sellers: SellerHit[]; places: PlaceHit[] }>(`/api/search?${new URLSearchParams({ q, ...(near ? { lat: String(near.lat), lng: String(near.lng) } : {}) })}`),
   messageDraft: (sellerId: string, text: string, place: Place, delivery: 'self' | 'logistics') =>
     call<{ seller: { id: string; name: string; phone: string }; message: string; ai: boolean; whatsappUrl: string }>(`/api/sellers/${sellerId}/message`, { text, place, delivery }),
+  mySeller: (id: string) => call<MySeller>(`/api/my-sellers/${id}`),
+  addSeller: (id: string) => call<MySeller>(`/api/my-sellers/${id}`, {}),
+  blockSeller: (id: string) => call<MySeller>(`/api/my-sellers/${id}/block`, {}),
+  recordDeal: (d: { sellerId: string; item: string; quantity: number; unit: string; unitPriceNaira: number; category: Category; delivery: 'self' | 'logistics'; place: Place; contactPhone?: string }) =>
+    call<DealResult>('/api/deals', d),
   hunt: (text: string, place: Place) => call<HuntResult>('/api/hunt', { text, place }),
   emailCode: (email: string) => call<{ sent: true }>('/api/auth/email-code', { email }),
   emailVerify: (email: string, code: string) => signedIn(call('/api/auth/email-verify', { email, code })),
