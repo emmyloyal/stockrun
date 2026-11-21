@@ -46,8 +46,6 @@ export interface AppOptions {
   allowedOrigins?: string[];
   /** The AI seller hunt (Google Maps + web search); absent or with neither search: off. */
   hunt?: Omit<HuntDeps, 'db'> & { db: HuntDeps['db']; perUserDaily?: number; siteDaily?: number };
-  /** How close (metres) the buyer's phone must be to the seller to confirm a self-pickup. Default 300. */
-  pickupRadiusM?: number;
   /** Seller payouts and the admin page; `admins` are the email accounts allowed in (ADMIN_EMAILS). */
   payouts?: Payouts | null;
   /** Businesses that register their store (monthly fee, admin approval); absent: off. */
@@ -235,16 +233,12 @@ export function createApp(o: AppOptions): Server {
       const { u, r } = myOrder(c);
       if (r.rider.toLowerCase() !== SELF_HANDLER.toLowerCase()) throw new AuthError(409, 'A logistics company is collecting this order.');
       const n = Number(c.body?.count);
-      // "At the seller" is the phone's location, checked here: within the radius (plus GPS accuracy, capped) of the
-      // seller's map point. No location or too far: PickupCheck is told so and holds the money; the buyer can retry.
-      const job = buyers.runtime(u.id).jobs.get(c.m[1]);
-      const lat = Number(c.body?.lat), lng = Number(c.body?.lng), accuracy = Math.min(200, Math.max(0, Number(c.body?.accuracy) || 0));
-      const metres = job && Number.isFinite(lat) && Number.isFinite(lng) ? Math.round(haversineKm({ lat, lng }, job.supplier) * 1000) : null;
-      const atSupplier = metres !== null && metres <= (o.pickupRadiusM ?? 300) + accuracy;
-      try { buyers.orders.handlerPickup(SELF_HANDLER, r.id, atSupplier, n); } catch (e) { throw new AuthError(409, (e as Error).message); }
+      // PickupCheck's `atSupplier` input is the handover: for self-pickup it is the buyer's own signed-in confirmation
+      // that they (or someone they sent) have the goods. There is no location rule: the buyer decides.
+      try { buyers.orders.handlerPickup(SELF_HANDLER, r.id, true, n); } catch (e) { throw new AuthError(409, (e as Error).message); }
       const s = await wrap(() => buyers.runtime(u.id).naira.settlePickup(c.m[1]));
       sweepPayouts();
-      return { ...remember(u.id, c.m[1], s, 'pickup'), location: { atSupplier, metres } };
+      return remember(u.id, c.m[1], s, 'pickup');
     }],
     /** Logistics delivery: the buyer's count at the door decides the fee (DeliveryCheck). */
     ['POST', /^\/api\/orders\/(\d+)\/received$/, async (c) => {

@@ -34,7 +34,7 @@ Decides how much the supplier is paid at pickup.
 
 | Bits | Name | Meaning |
 | --- | --- | --- |
-| 1 | `atSupplier` | Rider's signed GPS inside supplier geofence |
+| 1 | `atSupplier` | Handover confirmed by the handler. Self-pickup: the signed-in buyer confirms they (or someone they sent) have the goods; no location rule. Logistics: the company's signed pickup report |
 | 8 | `ordered` | Units ordered |
 | 8 | `aiCount` | Units counted by AI in a pickup photo (check service). With no photo the vault passes `riderCount`, so the handler's count stands |
 | 8 | `riderCount` | Units confirmed by the handler (owner or logistics company) |

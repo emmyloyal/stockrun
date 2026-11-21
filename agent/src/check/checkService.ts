@@ -27,7 +27,7 @@ export const STATUS = { None: 0, AwaitingOwner: 1, Locked: 2, PickedUp: 3, Deliv
 /** Reason codes in plain words (app/README.md). */
 export const PICKUP_REASONS: Record<number, string> = {
   0: 'All goods counted. The seller\'s payment for all of them is approved.',
-  1: 'Not at the seller, so nothing was approved. Confirm again when you are at the shop with the goods.',
+  1: 'The goods were not confirmed as collected, so nothing was approved.',
   2: 'This shop no longer trusts that logistics company. Nothing was paid.',
   3: 'Damaged goods. The supplier should replace them.',
   4: 'No goods counted.',

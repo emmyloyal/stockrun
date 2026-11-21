@@ -486,16 +486,12 @@ function Orders({ cfg, onChange }: { cfg: Config; onChange: () => void }) {
                     const n = Number(counts[`p${o.orderId}`] ?? o.ordered);
                     return (
                       <div className="stack note">
-                        <p><strong>Confirm {n} {o.unit}{n === 1 ? '' : 's'} from {o.supplier.name}?</strong> This approves {naira(n * o.unitPriceNaira)} for the seller and cannot be undone. Your phone's location is checked: you must be at the shop.</p>
+                        <p><strong>Confirm {n} {o.unit}{n === 1 ? '' : 's'} from {o.supplier.name}?</strong> This approves {naira(n * o.unitPriceNaira)} for the seller and cannot be undone. Only confirm once you, or the person you sent, have the goods.</p>
                         <div className="row wrap">
-                          <button className="btn primary" disabled={!!busy} onClick={() => act('Checking your location and the count…', async () => {
-                            const at = await currentPosition().catch(() => null);
-                            const r = await server.collect(o.orderId, count(`p${o.orderId}`, o.ordered), at ?? undefined);
+                          <button className="btn primary" disabled={!!busy} onClick={() => act('Checking the count…', async () => {
+                            await server.collect(o.orderId, count(`p${o.orderId}`, o.ordered));
                             setConfirming(null);
-                            if (r.location && !r.location.atSupplier) throw new Error(at
-                              ? `Your phone is ${r.location.metres !== null ? `${(r.location.metres / 1000).toFixed(1)} km` : 'too far'} from ${o.supplier.name}, so nothing was approved. Confirm again at the shop.`
-                              : 'We could not read your location, so nothing was approved. Allow location for this site and confirm again at the shop.');
-                          })}>Yes, I have them: approve payment</button>
+                          })}>Yes, the goods are collected: approve payment</button>
                           <button className="link" onClick={() => setConfirming(null)}>Not yet</button>
                         </div>
                       </div>

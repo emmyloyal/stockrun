@@ -17,9 +17,9 @@ naira through Paystack **test mode**, so no real money moves).
    with the seller. StockRun sends no messages itself.
 5. **Record the deal:** enter what you agreed. **RestockGuard** (circuit #1) decides: lock the money, ask you first
    (far away, alcohol, electronics) or reject it with nothing charged.
-6. **Collect:** at the shop, with the goods in your hands, confirm the count. Your phone's location must be within
-   ~300 m of the shop. **PickupCheck** (circuit #2) approves the seller's payment for what you counted; the rest comes
-   back to you.
+6. **Collect:** once you, or someone you sent, have the goods, confirm the count in the app. There is no location
+   rule: your confirmation is the handover. **PickupCheck** (circuit #2) approves the seller's payment for what you
+   counted; the rest comes back to you.
 7. **Seller paid:** StockRun pays the seller's bank through Paystack Transfers, automatically once an admin has
    approved the account (sellers add it from a link you forward). Delivery by a logistics company is decided by
    **DeliveryCheck** (circuit #3).

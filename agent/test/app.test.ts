@@ -114,10 +114,8 @@ describe.skipIf(!localChainAvailable())('StockRun server', () => {
     expect(o.evidence[0]).toMatchObject({ circuit: 'restock', circuitId: '1' });
     expect((await chi.call('/api/me')).json.naira.heldNaira).toBe(5 * o.unitPriceNaira);
 
-    const away = (await chi.call(`/api/orders/${o.orderId}/collect`, { count: 4, lat: 6.4300, lng: 3.4200, accuracy: 20 })).json;   // from Victoria Island
-    expect(away).toMatchObject({ outcome: 'held', reason: 1, location: { atSupplier: false } });
-    expect((await chi.call('/api/me')).json.naira.heldNaira).toBe(5 * o.unitPriceNaira);                                    // nothing moved
-    const done = (await chi.call(`/api/orders/${o.orderId}/collect`, { count: 4, lat: o.supplier.lat + 0.001, lng: o.supplier.lng, accuracy: 30 })).json;   // ~110 m away
+    // No location rule: the buyer's confirmation is the handover (they may have sent someone), from anywhere.
+    const done = (await chi.call(`/api/orders/${o.orderId}/collect`, { count: 4, lat: 6.4300, lng: 3.4200, accuracy: 20 })).json;   // from Victoria Island
     expect(done).toMatchObject({ status: 'settled', outcome: 'paid_part', qty: 4 });
     [o] = (await chi.call('/api/orders')).json;
     expect(o).toMatchObject({ status: 'Delivered', pickup: { picked: 4 } });
@@ -182,8 +180,7 @@ describe.skipIf(!localChainAvailable())('StockRun server', () => {
     expect((await gbenga.call('/api/me')).json.naira).toEqual({ availableNaira: 200_000 - 56_000, heldNaira: 56_000 });
 
     // At pickup the buyer counts 3 good cartons: PickupCheck pays the seller for 3, the 4th comes back.
-    expect((await gbenga.call(`/api/orders/${o.orderId}/collect`, { count: 3 })).json).toMatchObject({ outcome: 'held', location: { atSupplier: false, metres: null } });   // no location: holds
-    expect((await gbenga.call(`/api/orders/${o.orderId}/collect`, { count: 3, lat: o.supplier.lat, lng: o.supplier.lng })).json).toMatchObject({ status: 'settled', outcome: 'paid_part', qty: 3 });
+    expect((await gbenga.call(`/api/orders/${o.orderId}/collect`, { count: 3 })).json).toMatchObject({ status: 'settled', outcome: 'paid_part', qty: 3 });   // no location needed
     [o] = (await gbenga.call('/api/orders')).json;
     expect(o.status).toBe('Delivered');
     expect((await gbenga.call('/api/me')).json.naira).toEqual({ availableNaira: 200_000 - 42_000, heldNaira: 0 });
@@ -213,7 +210,7 @@ describe.skipIf(!localChainAvailable())('StockRun server', () => {
     expect(p0).toMatchObject({ status: 'owed', amountNaira: 42_000, buyer: 'gbenga@example.com', bank: null });   // 3 cartons at ₦14,000
     expect(ov.totals.owedSellersNaira).toBeGreaterThanOrEqual(42_000);
     const id = p0.orderId, owedBefore = ov.totals.owedSellersNaira;
-    expect((await boss.call('/api/admin/orders')).json.find((o: any) => o.orderId === id)).toMatchObject({ status: 'Delivered', picked: 3, seller: 'Agora Marketplace', sellerPhone: '+2349079579400', buyer: 'gbenga@example.com', circuits: ['restock', 'pickup', 'pickup'] });   // the held attempt without a location is on record too
+    expect((await boss.call('/api/admin/orders')).json.find((o: any) => o.orderId === id)).toMatchObject({ status: 'Delivered', picked: 3, seller: 'Agora Marketplace', sellerPhone: '+2349079579400', buyer: 'gbenga@example.com', circuits: ['restock', 'pickup'] });
     // Which sellers buyers engaged with: the deal gbenga recorded (and the ones refused), with the seller's details.
     const contacts = ov.contacts.filter((x: any) => x.buyer.label === 'gbenga@example.com');
     expect(contacts.find((x: any) => x.action === 'recorded_deal' && x.seller.id === 'found-00000000000000a1')).toMatchObject({ seller: { name: 'Agora Marketplace', phone: '+2349079579400', kind: 'supermarket', source: 'osm' } });

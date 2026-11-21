@@ -167,8 +167,7 @@ export const server = {
   requests: () => call<RequestRecord[]>('/api/requests'),
   orders: () => call<Order[]>('/api/orders'),
   approve: (id: string) => call<{ result: string; reason: string }>(`/api/orders/${id}/approve`, {}),
-  collect: (id: string, count: number, at?: { lat: number; lng: number; accuracy: number }) =>
-    call<CheckResult & { location?: { atSupplier: boolean; metres: number | null } }>(`/api/orders/${id}/collect`, { count, ...at }),
+  collect: (id: string, count: number) => call<CheckResult>(`/api/orders/${id}/collect`, { count }),
   received: (id: string, count: number) => call<{ attestTx: string }>(`/api/orders/${id}/received`, { count }),
   map: (lat: number, lng: number, radiusKm = 25) => call<{ sellers: Seller[]; found: FoundSeller[] }>(`/api/map?lat=${lat}&lng=${lng}&radius=${radiusKm}`),
 };
