@@ -3,7 +3,7 @@
 **Tell an AI what you want to buy. It finds real sellers near you, writes your WhatsApp message, and locks your
 money until you have the goods. Every payment decision is made by a TapeOut circuit on X Layer.**
 
-Built for the X Layer × TapeOut "Build X" hackathon. Live at **https://stockrun.onrender.com** (X Layer mainnet;
+Built for the X Layer × TapeOut "Build X" hackathon. Live at **https://13-50-119-2.sslip.io** (X Layer mainnet;
 naira through Paystack **test mode**, so no real money moves).
 
 ## How it works
@@ -35,7 +35,7 @@ naira through Paystack **test mode**, so no real money moves).
 ## TapeOut and X Layer used
 - **Processor Factory, NAND transistor tokens, tapeout, `eval`:** three decision circuits, taped out on X Layer
   mainnet on 2026-11-19 and called live for every naira order.
-- **Not used:** DeWEB (the app runs on Render), TapeSend, REF (the circuits are flat netlists), circuit containers.
+- **Not used:** DeWEB (the app runs on an AWS Lightsail server), TapeSend, REF (the circuits are flat netlists), circuit containers.
 
 | Item | Value |
 | --- | --- |
@@ -54,8 +54,7 @@ AI-written WhatsApp messages · record a deal → RestockGuard → money locked 
 PickupCheck → seller's payment approved · automatic seller payouts and buyer withdrawals through Paystack (test) ·
 admin page (orders, money held, payouts, which sellers buyers contacted).
 
-**Not yet:** paying with coins through the vault · persistent hosting (Render's free plan wipes the database on
-restart, so balances and orders are lost) · real logistics bookings (Sendrelay is built, needs a live key) ·
+**Not yet:** paying with coins through the vault · real logistics bookings (Sendrelay is built, needs a live key) ·
 Google Maps sellers (built, needs billing).
 
 ## Run it
@@ -68,6 +67,11 @@ cd ../circuits && npm install && npm test        # circuit reference model
 cd ../contracts && forge build && forge test --fork-url $XLAYER_RPC   # vault, on a fork of X Layer
 ```
 `npm run serve:xlayer` runs against X Layer mainnet. Settings are documented in [`.env.example`](.env.example).
+
+**Hosting:** one AWS Lightsail server (Ubuntu 24.04, 1 GB). [`scripts/aws/setup-server.sh`](scripts/aws/setup-server.sh)
+installs Node, builds the app, runs it as a `systemd` service behind Caddy (free HTTPS on an sslip.io name) and keeps
+the database in `/var/lib/stockrun`, so it survives restarts and updates. Copy the settings to `/opt/stockrun/.env`
+first, then `sudo bash setup-server.sh <ip-with-dashes>.sslip.io`. Run it again to deploy the latest `main`.
 
 ## Repo
 `agent/` server and AI agent · `app/` web app (React, Leaflet) · `circuits/` reference model, netlists, tapeout
