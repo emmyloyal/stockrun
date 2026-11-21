@@ -89,4 +89,46 @@ export class Paystack {
     const j = JSON.parse(rawBody.toString('utf8')) as { event?: string; data?: { reference?: string } };
     return { event: String(j.event), reference: j.data?.reference };
   }
+
+  // ---------------------------------------------------------------- transfers (paying sellers, buyer withdrawals)
+  // https://paystack.com/docs/transfers/single-transfers . Money leaves StockRun's Paystack balance. Test keys move none.
+  private bankCache: { at: number; banks: { name: string; code: string }[] } | null = null;
+
+  /** Nigerian banks Paystack can pay into (cached for a day). */
+  async banks(): Promise<{ name: string; code: string }[]> {
+    if (this.bankCache && Date.now() - this.bankCache.at < 24 * 3600_000) return this.bankCache.banks;
+    const rows = await this.call<{ name: string; code: string; active?: boolean; is_deleted?: boolean; currency?: string }[]>('GET', '/bank?country=nigeria&currency=NGN&perPage=200');
+    const banks = rows.filter((b) => b.active !== false && !b.is_deleted).map((b) => ({ name: b.name, code: b.code })).sort((a, b) => a.name.localeCompare(b.name));
+    // Test mode checks only 3 real accounts a day; Paystack's test bank (code 001, any 10 digits) has no limit.
+    if (this.test && !banks.some((b) => b.code === '001')) banks.unshift({ name: 'Paystack test bank (test mode only)', code: '001' });
+    this.bankCache = { at: Date.now(), banks };
+    return banks;
+  }
+
+  /** The account holder's name as the bank has it (checks the account exists). */
+  async resolveAccount(accountNumber: string, bankCode: string): Promise<string> {
+    if (!/^\d{10}$/.test(accountNumber)) throw new PaystackError(400, 'A Nigerian account number has 10 digits.');
+    if (!/^[0-9A-Za-z-]{2,10}$/.test(bankCode)) throw new PaystackError(400, 'Choose the bank.');
+    const d = await this.call<{ account_name?: string }>('GET', `/bank/resolve?account_number=${accountNumber}&bank_code=${encodeURIComponent(bankCode)}`)
+      .catch((e: PaystackError) => { throw new PaystackError(400, `That account could not be found at this bank (${e.message.replace(/^Paystack: /, '')}).`); });
+    if (!d.account_name) throw new PaystackError(400, 'That account could not be found at this bank.');
+    return d.account_name;
+  }
+
+  /** Register a bank account to pay (Paystack's "transfer recipient"). */
+  async createRecipient(name: string, accountNumber: string, bankCode: string): Promise<string> {
+    const d = await this.call<{ recipient_code: string }>('POST', '/transferrecipient', { type: 'nuban', name, account_number: accountNumber, bank_code: bankCode, currency: 'NGN' });
+    return d.recipient_code;
+  }
+
+  /**
+   * Send money from the Paystack balance. `reference` makes it idempotent: Paystack refuses a second transfer with the
+   * same reference. 'otp' means transfers need an OTP in the Paystack dashboard (turn it off for API transfers).
+   */
+  async transfer(o: { amountKobo: number; recipient: string; reference: string; reason: string }): Promise<{ status: 'success' | 'pending' | 'otp' | 'failed'; code: string | null }> {
+    if (!Number.isSafeInteger(o.amountKobo) || o.amountKobo < 100) throw new PaystackError(400, 'Transfers are whole kobo, at least ₦1.');
+    const d = await this.call<{ status?: string; transfer_code?: string }>('POST', '/transfer', { source: 'balance', amount: o.amountKobo, recipient: o.recipient, reference: o.reference, reason: o.reason.slice(0, 100), currency: 'NGN' });
+    const s = d.status === 'success' || d.status === 'otp' ? d.status : ['pending', 'received', 'queued', 'processing'].includes(String(d.status)) ? 'pending' : 'failed';
+    return { status: s, code: d.transfer_code ?? null };
+  }
 }

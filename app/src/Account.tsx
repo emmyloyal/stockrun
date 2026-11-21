@@ -10,6 +10,7 @@ import {
 } from './lib';
 import { CircuitTrail, Outcome, StatusPill } from './ui';
 import { Admin } from './Admin';
+import { WithdrawPanel } from './Banks';
 
 type Tab = 'ask' | 'orders' | 'money' | 'me' | 'admin';
 const LAGOS: [number, number] = [6.55, 3.37];
@@ -338,7 +339,16 @@ function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me:
             {deal.note && <p className="alert">{deal.note}</p>}
             <p className="fine">RestockGuard, a circuit on X Layer, decides whether the money locks. {deal.name} is paid from it only at pickup, for the number of good {deal.unit || 'unit'}s counted ({delivery === 'self' ? 'by you' : 'by the logistics company'}). Uses your pickup or delivery choice above.</p>
             {deal.result && <pre className="reply">{deal.result.message}</pre>}
-            {deal.result && (deal.result.status === 'locked' || deal.result.status === 'ask_owner') && <button className="btn ghost" onClick={onAsked}>See it in Orders</button>}
+            {deal.result && (deal.result.status === 'locked' || deal.result.status === 'ask_owner') && (
+              <div className="stack tight">
+                <button className="btn ghost" onClick={onAsked}>See it in Orders</button>
+                {cfg.sellerBankLinks && <button className="btn wa" disabled={!!busy} onClick={() => run(setBusy, setError, 'Making the link…', async () => {
+                  const l = await server.sellerBankLink(deal.id);
+                  if (l.whatsappUrl) window.open(l.whatsappUrl, '_blank', 'noopener'); else await navigator.clipboard?.writeText(l.message);
+                })}>Ask {deal.name} for their bank details</button>}
+                {cfg.sellerBankLinks && <p className="fine">Sends the seller a link on WhatsApp to add their bank account, so StockRun can pay them when you collect.</p>}
+              </div>
+            )}
             <button className="link" onClick={() => setDeal(null)}>Close</button>
           </div>
         )}
@@ -558,10 +568,11 @@ function Money({ cfg, me, onChange }: { cfg: Config; me: Me; onChange: () => voi
         {busy && !sheet && <p className="busy">{busy}</p>}
         {error && !sheet && <p className="alert">{error}</p>}
         {note && <p className="ok">{note}</p>}
+        {cfg.withdrawals && <WithdrawPanel available={me.naira?.availableNaira ?? 0} onDone={() => { onChange(); refresh(); }} />}
         {moves.length > 0 && (
           <details className="supplier-list"><summary>History</summary>
             <ul className="cards">{moves.map((m) => (
-              <li key={m.key} className="card row between"><span>{m.type === 'deposit' ? 'Deposit (Paystack)' : m.type === 'demo' ? 'Demo naira (not real money)' : m.type === 'hold' ? 'Locked for an order' : m.type === 'release' ? 'Came back to you' : m.type}</span><span className={m.amountNaira > 0 ? 'ok' : ''}>{m.amountNaira > 0 ? '+' : ''}{naira(m.amountNaira)}</span></li>
+              <li key={m.key} className="card row between"><span>{m.type === 'deposit' ? 'Deposit (Paystack)' : m.type === 'demo' ? 'Demo naira (not real money)' : m.type === 'hold' ? 'Locked for an order' : m.type === 'release' ? 'Came back to you' : m.type === 'withdraw' ? 'Withdrawn to your bank' : m.type === 'withdraw_failed' ? 'Withdrawal returned' : m.type}</span><span className={m.amountNaira > 0 ? 'ok' : ''}>{m.amountNaira > 0 ? '+' : ''}{naira(m.amountNaira)}</span></li>
             ))}</ul>
           </details>
         )}

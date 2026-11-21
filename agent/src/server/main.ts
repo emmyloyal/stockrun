@@ -22,6 +22,7 @@ import { seedOsmSellers } from '../discovery/hunt.ts';
 import { Geocoder } from '../discovery/geocode.ts';
 import { Payouts, adminList } from '../admin/payouts.ts';
 import { Activity } from '../admin/activity.ts';
+import { Withdrawals } from '../money/withdrawals.ts';
 import { loadSuppliers, supplierKey } from '../tools/suppliers.ts';
 import type { Hash } from 'viem';
 import { WebSellerSearch } from '../discovery/webSearch.ts';
@@ -102,12 +103,14 @@ const sellerOf = (key: Hash) => {
   }
   return sellerNames.get(k) ?? null;
 };
-const payouts = new Payouts({ db, ledger, sellerOf });
+// With Paystack on, approved seller payouts go out automatically (test keys move no money); buyers can withdraw.
+const payouts = new Payouts({ db, ledger, sellerOf, paystack });
+const withdrawals = paystack ? new Withdrawals(db, ledger, paystack) : null;
 const admins = adminList(envValue(env, 'ADMIN_EMAILS'));
 
 const staticDir = fileURLToPath(new URL('../../../app/dist/', import.meta.url));
 const server = createApp({
-  platform: p, accounts, buyers, ledger, prices, paystack, hunt, payouts, admins, activity: new Activity(db), geocoder: new Geocoder({ log: (l) => log(`address search: ${l}`) }), demoNaira: network === 'local' || envValue(env, 'DEMO_NAIRA') === '1',
+  platform: p, accounts, buyers, ledger, prices, paystack, hunt, payouts, admins, activity: new Activity(db), withdrawals, linkSecret: secret, publicUrl, geocoder: new Geocoder({ log: (l) => log(`address search: ${l}`) }), demoNaira: network === 'local' || envValue(env, 'DEMO_NAIRA') === '1',
   staticDir: existsSync(staticDir) ? staticDir : undefined,
   secureCookies: envValue(env, 'SECURE_COOKIES') === '1', log,
   sendrelayWebhookSecret: envValue(env, 'SENDRELAY_WEBHOOK_SECRET'),
@@ -118,7 +121,8 @@ const server = createApp({
 let polling = false;
 const poll = setInterval(async () => {
   if (polling) return; polling = true;
-  try { await buyers.dispatcher.poll(buyers.dispatchSets()); } catch (e) { log(`dispatch poll: ${(e as Error).message}`); } finally { polling = false; }
+  try { await buyers.dispatcher.poll(buyers.dispatchSets()); } catch (e) { log(`dispatch poll: ${(e as Error).message}`); }
+  try { const n = await payouts.sweep(); if (n) log(`paid ${n} seller payout(s) through Paystack`); } catch (e) { log(`payout sweep: ${(e as Error).message}`); } finally { polling = false; }
 }, 20_000);
 server.on('error', (e: NodeJS.ErrnoException) => {
   console.error(e.code === 'EADDRINUSE' ? `Port ${port} is already in use. Stop the other server or set APP_PORT.` : `Server error: ${e.message}`);

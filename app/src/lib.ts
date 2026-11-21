@@ -7,12 +7,15 @@ export interface Config {
   naira: { paystack: boolean; test: boolean; testCredit: boolean };
   logistics: { id: string; name: string; api: boolean }[];
   emailSignIn: boolean;
+  withdrawals?: boolean;
+  sellerBankLinks?: boolean;
   sellerHunt: boolean;
 }
 export interface User { id: number; phone: string | null; email: string | null; wallet: Address | null; username: string | null; displayName: string | null; hasAvatar: boolean; createdAt: number }
 export interface NairaBalance { availableNaira: number; heldNaira: number }
 export interface Me { user: User | null; naira?: NairaBalance; admin?: boolean }
-export interface Bank { bankName: string; accountNumber: string; accountName: string }
+export interface Bank { bankName: string; accountNumber: string; accountName: string; bankCode?: string | null; approved?: boolean; source?: 'admin' | 'seller' }
+export interface Withdrawal { reference: string; amountKobo: number; bankName: string; accountNumber: string; accountName: string; status: 'sending' | 'sent' | 'failed'; note: string | null; at: number }
 export interface Payout {
   orderId: number; amountNaira: number; approvedAt: number; status: 'owed' | 'held' | 'paid'; buyer: string;
   seller: { key: string; name: string; phone: string | null }; bank: Bank | null; reference: string | null; note: string | null; paidAt: number | null; paidBy: string | null;
@@ -20,6 +23,7 @@ export interface Payout {
 export interface AdminOverview {
   totals: { lockedNaira: number; buyersAvailableNaira: number; owedSellersNaira: number; owedLogisticsNaira: number; paidOutNaira: number; heldPayouts: number };
   payouts: Payout[]; log: { admin: string; action: string; orderId: number | null; detail: string; at: number }[];
+  paystackPayouts?: boolean; paystackTest?: boolean;
   contacts: Contact[];
 }
 export interface Contact {
@@ -112,6 +116,14 @@ export const server = {
   sellerOpened: (sellerId: string) => call<{ ok: true }>(`/api/sellers/${sellerId}/opened`, {}),
   adminOverview: () => call<AdminOverview>('/api/admin/overview'),
   adminOrders: () => call<AdminOrder[]>('/api/admin/orders'),
+  banks: () => call<{ name: string; code: string }[]>('/api/banks'),
+  sellerBankLink: (sellerId: string) => call<{ url: string; message: string; whatsappUrl: string | null }>(`/api/sellers/${sellerId}/bank-link`, {}),
+  sellerBankInfo: (sellerId: string, t: string) => call<{ name: string; transfers: boolean; test: boolean }>(`/api/seller-bank/${sellerId}?t=${encodeURIComponent(t)}`),
+  sellerBankSubmit: (sellerId: string, t: string, b: { bankCode: string; accountNumber: string }) => call<{ accountName: string; bankName: string }>(`/api/seller-bank/${sellerId}`, { t, ...b }),
+  withdraw: (amountNaira: number, bankCode: string, accountNumber: string) => call<Withdrawal>('/api/naira/withdraw', { amountNaira, bankCode, accountNumber }),
+  withdrawals: () => call<Withdrawal[]>('/api/naira/withdrawals'),
+  adminApproveBank: (orderId: number) => call<Payout>(`/api/admin/payouts/${orderId}/approve-bank`, {}),
+  adminPayNow: (orderId: number) => call<{ result: string; payout: Payout | null }>(`/api/admin/payouts/${orderId}/pay`, {}),
   adminBank: (orderId: number, b: Bank) => call<Payout>(`/api/admin/payouts/${orderId}/bank`, b),
   adminHold: (orderId: number, hold: boolean, note: string) => call<Payout>(`/api/admin/payouts/${orderId}/hold`, { hold, note }),
   adminPaid: (orderId: number, reference: string) => call<Payout>(`/api/admin/payouts/${orderId}/paid`, { reference }),

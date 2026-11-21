@@ -225,7 +225,7 @@ describe.skipIf(!localChainAvailable())('StockRun server', () => {
     expect((await boss.call(`/api/admin/payouts/${id}/paid`, { reference: 'TRF12345' })).json.error).toMatch(/bank account first/);
     expect((await boss.call(`/api/admin/payouts/${id}/bank`, { bankName: 'GTBank', accountNumber: '01234', accountName: 'Agora' })).status).toBe(400);
     expect((await boss.call(`/api/admin/payouts/${id}/bank`, { bankName: 'GTBank', accountNumber: '0123456789', accountName: 'Agora Marketplace Ltd' })).json.bank)
-      .toEqual({ bankName: 'GTBank', accountNumber: '0123456789', accountName: 'Agora Marketplace Ltd' });
+      .toMatchObject({ bankName: 'GTBank', accountNumber: '0123456789', accountName: 'Agora Marketplace Ltd', approved: true, source: 'admin' });
     expect((await boss.call(`/api/admin/payouts/${id}/hold`, { note: 'checking the account name' })).json.status).toBe('held');
     expect((await boss.call(`/api/admin/payouts/${id}/paid`, { reference: 'TRF12345' })).json.error).toMatch(/held/);
     expect((await boss.call(`/api/admin/payouts/${id}/hold`, { hold: false })).json.status).toBe('owed');

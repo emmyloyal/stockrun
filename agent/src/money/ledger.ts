@@ -102,6 +102,18 @@ export class Ledger {
   recordSellerPayout(orderKey: string, kobo: number, reference: string): boolean {
     return this.post(`payout:${orderKey}`, 'seller_payout', null, kobo, ['system', 'sellers'], ['system', 'paid_out'], reference);
   }
+  /** Paystack reported a seller transfer failed or reversed: the money is owed to the seller again. */
+  reverseSellerPayout(orderKey: string, kobo: number, reason: string): boolean {
+    return this.post(`payout-reversed:${orderKey}:${this.now()}`, 'seller_payout_reversed', null, kobo, ['system', 'paid_out'], ['system', 'sellers'], reason);
+  }
+  /** A buyer withdraws to their bank: the money leaves their balance before the transfer is asked for. */
+  withdraw(userId: number, reference: string, kobo: number): boolean {
+    return this.post(`withdraw:${reference}`, 'withdraw', userId, kobo, [`user:${userId}`, 'available'], ['system', 'paystack'], reference);
+  }
+  /** The withdrawal transfer failed: the money comes back to the buyer, once. */
+  withdrawFailed(userId: number, reference: string, kobo: number): boolean {
+    return this.post(`withdraw-failed:${reference}`, 'withdraw_failed', userId, kobo, ['system', 'paystack'], [`user:${userId}`, 'available'], reference);
+  }
   /** Locked money now owed to the logistics company (a circuit decided). */
   payLogistics(userId: number, key: string, kobo: number): boolean {
     return this.post(`logistics:${key}`, 'pay_logistics', userId, kobo, [`user:${userId}`, 'held'], ['system', 'logistics'], key);

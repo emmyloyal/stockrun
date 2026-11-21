@@ -23,6 +23,8 @@ import { foundNear, foundSeller, huntEnabled, huntSellers, type HuntDeps } from 
 import { Geocoder } from '../discovery/geocode.ts';
 import { AdminError, type Payouts } from '../admin/payouts.ts';
 import type { Activity } from '../admin/activity.ts';
+import type { Withdrawals } from '../money/withdrawals.ts';
+import { createHmac, timingSafeEqual as safeEqual } from 'node:crypto';
 import { draftMessage, whatsappLink } from '../discovery/draft.ts';
 import { PICKUP_REASONS, DELIVERY_REASONS } from '../check/checkService.ts';
 
@@ -46,6 +48,11 @@ export interface AppOptions {
   pickupRadiusM?: number;
   /** Seller payouts and the admin page; `admins` are the email accounts allowed in (ADMIN_EMAILS). */
   payouts?: Payouts | null;
+  /** Buyer withdrawals to their bank (Paystack Transfers); absent: off. */
+  withdrawals?: Withdrawals | null;
+  /** Signs the links sellers use to add their bank account, and builds them (PUBLIC_URL). */
+  linkSecret?: string;
+  publicUrl?: string;
   /** Which found sellers buyers messaged or dealt with (shown to admins). */
   activity?: Activity | null;
   admins?: Set<string>;
@@ -79,6 +86,12 @@ export function createApp(o: AppOptions): Server {
   /** The signed-in admin's email; anyone else gets 404, so the admin pages do not show they exist. */
   const admin = (c: Ctx): string => { const u = need(c); if (!isAdmin(u) || !o.payouts) throw new AuthError(404, 'Not found.'); return u.email!; };
   const adminTry = <T>(f: () => T): T => { try { return f(); } catch (e) { if (e instanceof AdminError) throw new AuthError(e.status, e.message); throw e; } };
+  const adminTryAsync = async <T>(f: () => Promise<T>): Promise<T> => { try { return await f(); } catch (e) { if (e instanceof AdminError || e instanceof PaystackError || e instanceof LedgerError) throw new AuthError((e as { status: number }).status, e.message); throw e; } };
+  /** The token in a seller's bank link: only someone given the link can add the bank account for that seller. */
+  const sellerToken = (sellerId: string) => createHmac('sha256', o.linkSecret ?? 'no-secret').update(`seller-bank:${sellerId}`).digest('base64url').slice(0, 22);
+  const sellerTokenOk = (sellerId: string, t: unknown) => { const a = Buffer.from(sellerToken(sellerId)), b = Buffer.from(String(t ?? '')); return !!o.linkSecret && a.length === b.length && safeEqual(a, b); };
+  /** Pay ready sellers now (after a pickup): failures stay in the admin's queue. */
+  const sweepPayouts = () => { o.payouts?.sweep().catch((e) => log(`payout sweep: ${(e as Error).message}`)); };
   const signedIn = (res: ServerResponse, r: { user: User; token: string }) => {
     res.setHeader('Set-Cookie', cookie(r.token, 365 * 24 * 3600, o.secureCookies));   // signed in for a year on this device
     log(`signed in: user ${r.user.id} (${r.user.phone ? 'phone' : r.user.email ? 'email' : 'wallet'})`);
@@ -138,6 +151,7 @@ export function createApp(o: AppOptions): Server {
       logistics: p.carriers.map((x) => ({ id: x.id, name: x.name, api: !!x.connector })),
       emailSignIn: accounts.emailSignIn,
       sellerHunt: !!o.hunt && huntEnabled(o.hunt),
+      withdrawals: !!o.withdrawals, sellerBankLinks: !!(o.linkSecret && o.publicUrl && o.payouts?.paystack),
     })],
     ['GET', /^\/api\/me$/, async (c) => (c.user ? { user: c.user, naira: money(c.user.id), admin: isAdmin(c.user) } : { user: null })],
     ['POST', /^\/api\/me\/profile$/, async (c) => ({ user: accounts.setProfile(need(c), c.body ?? {}) })],
@@ -214,6 +228,7 @@ export function createApp(o: AppOptions): Server {
       const atSupplier = metres !== null && metres <= (o.pickupRadiusM ?? 300) + accuracy;
       try { buyers.orders.handlerPickup(SELF_HANDLER, r.id, atSupplier, n); } catch (e) { throw new AuthError(409, (e as Error).message); }
       const s = await wrap(() => buyers.runtime(u.id).naira.settlePickup(c.m[1]));
+      sweepPayouts();
       return { ...remember(u.id, c.m[1], s, 'pickup'), location: { atSupplier, metres } };
     }],
     /** Logistics delivery: the buyer's count at the door decides the fee (DeliveryCheck). */
@@ -255,6 +270,41 @@ export function createApp(o: AppOptions): Server {
       };
     }],
 
+    // ---------------------------------------------------------------- banks: seller bank links, buyer withdrawals
+    ['GET', /^\/api\/banks$/, async () => {
+      if (!paystack) throw new AuthError(503, 'Bank transfers are not switched on yet.');
+      return wrap(() => paystack.banks());
+    }],
+    /** A buyer gets a link to forward to the seller, so the seller can add the bank account StockRun pays. */
+    ['POST', /^\/api\/sellers\/(found-[0-9a-f]{16})\/bank-link$/, async (c) => {
+      need(c);
+      if (!o.linkSecret || !o.publicUrl) throw new AuthError(503, 'Seller bank links are not switched on yet.');
+      const url = `${o.publicUrl.replace(/\/$/, '')}/?seller-bank=${c.m[1]}&t=${sellerToken(c.m[1])}`;
+      const s = o.hunt ? foundSeller(o.hunt.db, c.m[1]) : null;
+      const message = `Hello${s ? ` ${s.name}` : ''}, to receive payment for my StockRun order, please add your bank account here (the name is checked with your bank): ${url}`;
+      return { url, message, whatsappUrl: s ? whatsappLink(s.phone, message) : null };
+    }],
+    ['GET', /^\/api\/seller-bank\/(found-[0-9a-f]{16})$/, async (c) => {
+      if (!sellerTokenOk(c.m[1], c.url.searchParams.get('t'))) throw new AuthError(404, 'This link is not valid. Ask the buyer for a new one.');
+      const s = o.hunt ? foundSeller(o.hunt.db, c.m[1]) : null;
+      return { name: s?.name ?? 'your shop', transfers: !!o.payouts?.paystack, test: paystack?.test ?? true };
+    }],
+    ['POST', /^\/api\/seller-bank\/(found-[0-9a-f]{16})$/, async (c) => {
+      if (!sellerTokenOk(c.m[1], c.body?.t)) throw new AuthError(404, 'This link is not valid. Ask the buyer for a new one.');
+      if (!o.payouts) throw new AuthError(503, 'Not switched on yet.');
+      const t = Date.now(), hits = (codeRequests.get(`bank:${c.ip}`) ?? []).filter((x) => x > t - 3600_000);
+      if (hits.length >= 10) throw new AuthError(429, 'Too many tries. Try again in an hour.');
+      codeRequests.set(`bank:${c.ip}`, [...hits, t]);
+      return adminTryAsync(() => o.payouts!.sellerSubmitBank(c.m[1], c.body ?? {}));
+    }],
+    /** The buyer takes spendable naira out to their own bank. */
+    ['POST', /^\/api\/naira\/withdraw$/, async (c) => {
+      const u = need(c);
+      if (!o.withdrawals) throw new AuthError(503, 'Withdrawals are not switched on yet on this server.');
+      return adminTryAsync(() => o.withdrawals!.start(u.id, kobo(Number(c.body?.amountNaira)), String(c.body?.bankCode ?? ''), String(c.body?.accountNumber ?? '')));
+    }],
+    ['GET', /^\/api\/naira\/withdrawals$/, async (c) => (o.withdrawals ? o.withdrawals.forUser(need(c).id) : [])],
+
     // ---------------------------------------------------------------- admin: watch orders, send seller payouts
     ['GET', /^\/api\/admin\/overview$/, async (c) => {
       admin(c);
@@ -264,6 +314,7 @@ export function createApp(o: AppOptions): Server {
         payouts: o.payouts!.list().map((p) => ({ ...p, amountNaira: k(p.amountKobo) })),
         log: o.payouts!.recentLog(30),
         contacts: o.activity?.list(200) ?? [],
+        paystackPayouts: !!o.payouts?.paystack, paystackTest: o.payouts?.paystack?.test ?? true,
       };
     }],
     ['GET', /^\/api\/admin\/orders$/, async (c) => {
@@ -276,7 +327,15 @@ export function createApp(o: AppOptions): Server {
         seller: o.payouts!.sellerName(r.supplier_key), sellerPhone: o.payouts!.sellerPhone(r.supplier_key), buyer: o.payouts!.buyerLabel(r.user_id),
       }));
     }],
-    ['POST', /^\/api\/admin\/payouts\/(\d+)\/bank$/, async (c) => { const a = admin(c); return adminTry(() => o.payouts!.setBank(a, Number(c.m[1]), c.body ?? {})); }],
+    ['POST', /^\/api\/admin\/payouts\/(\d+)\/bank$/, async (c) => { const a = admin(c); return adminTryAsync(() => o.payouts!.setBank(a, Number(c.m[1]), c.body ?? {})); }],
+    ['POST', /^\/api\/admin\/payouts\/(\d+)\/approve-bank$/, async (c) => { const a = admin(c); return adminTry(() => o.payouts!.approveBank(a, Number(c.m[1]))); }],
+    /** Send it through Paystack now (also retries one that failed or got stuck, after the admin checked Paystack). */
+    ['POST', /^\/api\/admin\/payouts\/(\d+)\/pay$/, async (c) => {
+      admin(c);
+      if (!o.payouts!.paystack) throw new AuthError(503, 'Paystack payouts are not switched on.');
+      const r = await o.payouts!.autoPay(Number(c.m[1]));
+      return { result: r, payout: o.payouts!.list().find((p) => p.orderId === Number(c.m[1])) ?? null };
+    }],
     ['POST', /^\/api\/admin\/payouts\/(\d+)\/hold$/, async (c) => { const a = admin(c); return adminTry(() => o.payouts!.hold(a, Number(c.m[1]), c.body?.hold !== false, String(c.body?.note ?? ''))); }],
     ['POST', /^\/api\/admin\/payouts\/(\d+)\/paid$/, async (c) => { const a = admin(c); return adminTry(() => o.payouts!.markPaid(a, Number(c.m[1]), String(c.body?.reference ?? ''))); }],
 
@@ -388,6 +447,11 @@ export function createApp(o: AppOptions): Server {
     catch { return send(res, 401, { error: 'bad signature' }); }
     send(res, 200, { ok: true });
     if (ev.event === 'charge.success' && ev.reference) await paystack.confirm(ev.reference).catch((e) => log(`paystack ${ev.reference}: ${(e as Error).message}`));
+    if ((ev.event === 'transfer.failed' || ev.event === 'transfer.reversed') && ev.reference) {
+      if (o.payouts?.transferFailed(ev.reference, ev.event)) log(`seller payout ${ev.reference}: ${ev.event}, owed again`);
+      else if (o.withdrawals?.failed(ev.reference, ev.event)) log(`withdrawal ${ev.reference}: ${ev.event}, money returned`);
+    }
+    if (ev.event === 'transfer.success' && ev.reference) o.withdrawals?.succeeded(ev.reference);
   }
 
   return createServer(async (req, res) => {

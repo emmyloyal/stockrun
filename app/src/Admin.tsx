@@ -3,6 +3,7 @@
 // transfer from StockRun's account, then records the reference here (or holds the payout for review).
 import { useCallback, useEffect, useState } from 'react';
 import { naira, server, whatsappLink, type AdminOrder, type AdminOverview, type Contact, type Payout } from './lib';
+import { BankFields, useBanks } from './Banks';
 
 const when = (t: number) => new Date(t).toLocaleString('en-NG', { timeZone: 'Africa/Lagos', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 
@@ -34,6 +35,9 @@ export function Admin() {
 
       <div className="panel stack">
         <h2>Seller payouts</h2>
+        <p className="fine">{ov.paystackPayouts
+          ? `Paystack pays approved bank accounts automatically after PickupCheck approves${ov.paystackTest ? ' (test mode: no real money moves)' : ''}. Anything here under "To pay" needs you: a bank account to add or approve, or a transfer that did not go through.`
+          : 'Send each transfer from StockRun\'s bank, then record its reference.'}</p>
         <nav className="tabs" role="tablist">
           {(['owed', 'held', 'paid'] as const).map((s) => (
             <button key={s} role="tab" aria-selected={show === s} className={show === s ? 'on' : ''} onClick={() => setShow(s)}>
@@ -42,7 +46,7 @@ export function Admin() {
           ))}
         </nav>
         {list.length === 0 ? <p className="muted">Nothing here.</p> : (
-          <ul className="cards">{list.map((p) => <PayoutCard key={p.orderId} p={p} onChange={refresh} />)}</ul>
+          <ul className="cards">{list.map((p) => <PayoutCard key={p.orderId} p={p} onChange={refresh} paystack={!!ov.paystackPayouts} />)}</ul>
         )}
       </div>
 
@@ -113,7 +117,9 @@ function SellerContacts({ contacts }: { contacts: Contact[] }) {
   );
 }
 
-function PayoutCard({ p, onChange }: { p: Payout; onChange: () => void }) {
+function PayoutCard({ p, onChange, paystack }: { p: Payout; onChange: () => void; paystack: boolean }) {
+  const banks = useBanks(paystack);
+  const [pick, setPick] = useState({ bankCode: p.bank?.bankCode ?? '', accountNumber: p.bank?.accountNumber ?? '' });
   const [bank, setBank] = useState({ bankName: p.bank?.bankName ?? '', accountNumber: p.bank?.accountNumber ?? '', accountName: p.bank?.accountName ?? '' });
   const [editBank, setEditBank] = useState(!p.bank);
   const [reference, setReference] = useState('');
@@ -134,7 +140,14 @@ function PayoutCard({ p, onChange }: { p: Payout; onChange: () => void }) {
         <p className="ok">Paid {p.paidAt ? when(p.paidAt) : ''} by {p.paidBy} to {p.bank?.bankName} {p.bank?.accountNumber} ({p.bank?.accountName}) · reference <strong>{p.reference}</strong></p>
       ) : (<>
         {p.status === 'held' && <p className="warn">On hold: {p.note}</p>}
-        {editBank ? (
+        {p.note && <p className="warn">{p.note}</p>}
+        {editBank && paystack ? (
+          <div className="stack tight">
+            <span className="fine">Seller's bank account (the name comes from the bank)</span>
+            <BankFields banks={banks} bankCode={pick.bankCode} accountNumber={pick.accountNumber} onChange={setPick} />
+            <button className="btn ghost small" disabled={busy || !pick.bankCode || pick.accountNumber.length !== 10} onClick={() => act(async () => { await server.adminBank(p.orderId, { bankName: '', accountName: '', ...pick }); setEditBank(false); })}>Check and save bank account</button>
+          </div>
+        ) : editBank ? (
           <div className="stack tight">
             <span className="fine">Seller's bank account (ask the seller on WhatsApp; check the name matches the business)</span>
             <div className="row wrap">
@@ -145,11 +158,20 @@ function PayoutCard({ p, onChange }: { p: Payout; onChange: () => void }) {
             <button className="btn ghost small" disabled={busy} onClick={() => act(async () => { await server.adminBank(p.orderId, bank); setEditBank(false); })}>Save bank account</button>
           </div>
         ) : (
-          <p className="fine">Pay to: <strong>{p.bank?.bankName} {p.bank?.accountNumber}</strong> ({p.bank?.accountName}) · <button className="link" onClick={() => setEditBank(true)}>change</button></p>
+          <p className="fine">Pay to: <strong>{p.bank?.bankName} {p.bank?.accountNumber}</strong> ({p.bank?.accountName}){p.bank?.source === 'seller' ? ' · added by the seller' : ''} · <button className="link" onClick={() => setEditBank(true)}>change</button></p>
+        )}
+        {p.bank && !p.bank.approved && !editBank && (
+          <div className="stack tight">
+            <p className="warn">The seller added this account. Check that "{p.bank.accountName}" is {p.seller.name} or its owner before approving: payouts go there automatically after that.</p>
+            <button className="btn primary small" disabled={busy} onClick={() => act(() => server.adminApproveBank(p.orderId))}>Approve this account</button>
+          </div>
+        )}
+        {paystack && p.status === 'owed' && p.bank?.approved && p.bank.bankCode && !editBank && (
+          <button className="btn primary small" disabled={busy} onClick={() => act(() => server.adminPayNow(p.orderId))}>Pay {naira(p.amountNaira)} now via Paystack</button>
         )}
         {p.status === 'owed' && p.bank && !editBank && (
           <div className="stack tight">
-            <span className="fine">1. Send {naira(p.amountNaira)} from StockRun's bank account to the account above. 2. Type the transfer reference from your bank's receipt.</span>
+            <span className="fine">{paystack ? 'Or pay by hand: ' : ''}1. Send {naira(p.amountNaira)} from StockRun's bank account to the account above. 2. Type the transfer reference from your bank's receipt.</span>
             <div className="row wrap">
               <input placeholder="Transfer reference" value={reference} maxLength={60} onChange={(e) => setReference(e.target.value)} />
               <button className="btn primary small" disabled={busy || reference.trim().length < 4} onClick={() => act(() => server.adminPaid(p.orderId, reference.trim()))}>Record as paid</button>
