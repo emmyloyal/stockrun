@@ -4,7 +4,7 @@ import type { Address, Hex } from 'viem';
 // ---------------------------------------------------------------- types (mirror agent/src/server/app.ts)
 export interface Config {
   chainId: number; network: 'local' | 'xlayer'; token: Address; tokenSymbol: string; explorerTx: string | null;
-  naira: { paystack: boolean; test: boolean; testCredit: boolean };
+  naira: { paystack: boolean; test: boolean; testCredit: boolean; fee?: { percent: number; minNaira: number; maxNaira: number } };
   logistics: { id: string; name: string; api: boolean }[];
   emailSignIn: boolean;
   withdrawals?: boolean;
@@ -21,7 +21,7 @@ export interface Payout {
   seller: { key: string; name: string; phone: string | null }; bank: Bank | null; reference: string | null; note: string | null; paidAt: number | null; paidBy: string | null;
 }
 export interface AdminOverview {
-  totals: { lockedNaira: number; buyersAvailableNaira: number; owedSellersNaira: number; owedLogisticsNaira: number; paidOutNaira: number; heldPayouts: number };
+  totals: { feesNaira?: number; lockedNaira: number; buyersAvailableNaira: number; owedSellersNaira: number; owedLogisticsNaira: number; paidOutNaira: number; heldPayouts: number };
   payouts: Payout[]; log: { admin: string; action: string; orderId: number | null; detail: string; at: number }[];
   paystackPayouts?: boolean; paystackTest?: boolean;
   contacts: Contact[];
@@ -31,7 +31,7 @@ export interface Contact {
   buyer: { id: number; label: string };
   seller: { id: string; name: string; phone: string | null; address: string | null; kind: string | null; source: string | null; sourceUrl: string | null };
 }
-export interface AdminOrder { orderId: number; buyerId: number; buyer: string; sellerPhone: string | null; status: string; ordered: number; picked: number; unitPriceNaira: number; totalNaira: number; deliveryFeeNaira: number; self: boolean; createdAt: number; circuits: string[]; seller: string }
+export interface AdminOrder { orderId: number; buyerId: number; buyer: string; sellerPhone: string | null; status: string; ordered: number; picked: number; unitPriceNaira: number; totalNaira: number; deliveryFeeNaira: number; serviceFeeNaira?: number; self: boolean; createdAt: number; circuits: string[]; seller: string }
 export interface Place { lat: number; lng: number; address: string }
 export interface CheckResult {
   status: 'retake' | 'waiting_rider' | 'settled' | 'mismatch' | 'error';
@@ -45,7 +45,7 @@ export interface Order {
   supplier: { name: string; lat: number; lng: number }; shop: { name: string; lat: number; lng: number };
   money: 'naira' | 'coins'; self: boolean;
   status: 'None' | 'AwaitingOwner' | 'Locked' | 'PickedUp' | 'Delivered' | 'Refunded';
-  ordered: number; unitPriceNaira: number; riderFeeNaira: number;
+  ordered: number; unitPriceNaira: number; riderFeeNaira: number; serviceFeeNaira?: number;
   pickup: { picked: number; riderCount: number };
   delivery: { delivered: number; aiCounted: boolean; ownerOk: boolean };
   evidence: Evidence[];
@@ -204,6 +204,9 @@ export async function preparePhoto(file: File, max = 1600, quality = 0.85): Prom
 
 /** wa.me link: opens the person's own WhatsApp on a chat with this number, with the message typed in. */
 export const whatsappLink = (phone: string, message: string) => `https://wa.me/${phone.replace(/\D/g, '')}?text=${encodeURIComponent(message)}`;
+/** StockRun's service fee on goods worth `goodsNaira` (same rule as the server). */
+export const serviceFee = (goodsNaira: number, f?: { percent: number; minNaira: number; maxNaira: number }) =>
+  !f || f.percent <= 0 || goodsNaira <= 0 ? 0 : Math.min(f.maxNaira || Infinity, Math.max(f.minNaira, Math.floor(goodsNaira * f.percent) / 100));
 export const naira = (n: number) => `₦${n.toLocaleString('en-NG', { maximumFractionDigits: 2 })}`;
 export const short = (h: string) => `${h.slice(0, 6)}…${h.slice(-4)}`;
 export function load<T>(key: string, fallback: T): T { try { const v = localStorage.getItem(key); return v ? (JSON.parse(v) as T) : fallback; } catch { return fallback; } }

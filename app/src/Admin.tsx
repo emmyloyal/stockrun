@@ -25,6 +25,7 @@ export function Admin() {
         <h2>Money StockRun holds</h2>
         <dl className="money-grid">
           <div><dt>Locked in buyers' orders</dt><dd>{naira(t.lockedNaira)}</dd></div>
+          <div><dt>StockRun fees earned</dt><dd>{naira(t.feesNaira ?? 0)}</dd></div>
           <div><dt>Owed to sellers</dt><dd>{naira(t.owedSellersNaira)}</dd></div>
           <div><dt>Paid out to sellers</dt><dd>{naira(t.paidOutNaira)}</dd></div>
           <div><dt>Owed to logistics</dt><dd>{naira(t.owedLogisticsNaira)}</dd></div>
@@ -57,7 +58,7 @@ export function Admin() {
             {orders.map((o) => (
               <li key={o.orderId} className="card stack tight">
                 <span className="row between"><strong>#{o.orderId} · {o.seller}</strong><span className="pill">{o.status}</span></span>
-                <span className="fine">{o.ordered} × {naira(o.unitPriceNaira)} = {naira(o.totalNaira)}{o.self ? ' · buyer collects' : ` + ${naira(o.deliveryFeeNaira)} delivery`}{o.picked ? ` · ${o.picked} picked up` : ''} · {when(o.createdAt)}</span>
+                <span className="fine">{o.ordered} × {naira(o.unitPriceNaira)} = {naira(o.totalNaira)}{o.serviceFeeNaira ? ` + ${naira(o.serviceFeeNaira)} fee` : ''}{o.self ? ' · buyer collects' : ` + ${naira(o.deliveryFeeNaira)} delivery`}{o.picked ? ` · ${o.picked} picked up` : ''} · {when(o.createdAt)}</span>
                 <span className="fine">Buyer {o.buyer}{o.sellerPhone ? <> · seller WhatsApp <a href={whatsappLink(o.sellerPhone, '')} target="_blank" rel="noreferrer">{o.sellerPhone}</a></> : ''}</span>
                 <span className="fine">Circuits that decided: {o.circuits.join(' → ') || 'none yet'}</span>
               </li>

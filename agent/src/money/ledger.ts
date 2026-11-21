@@ -7,11 +7,11 @@
 //
 // Per person: `available` (can be spent) and `held` (locked for open orders). System: `paystack` (money in),
 // `sellers` and `logistics` (what StockRun owes them and pays out by bank transfer), `paid_out` (seller payouts an admin
-// sent by bank transfer and recorded with its reference).
+// sent by bank transfer and recorded with its reference), `fees` (StockRun's service fee, paid by buyers on completed pickups).
 import type { DatabaseSync } from 'node:sqlite';
 
 export type Kind = 'available' | 'held';
-export type SystemAccount = 'paystack' | 'sellers' | 'logistics' | 'paid_out';
+export type SystemAccount = 'paystack' | 'sellers' | 'logistics' | 'paid_out' | 'fees';
 export class LedgerError extends Error {
   readonly status: number;
   constructor(status: number, message: string) { super(message); this.name = 'LedgerError'; this.status = status; }
@@ -28,7 +28,7 @@ export function migrateLedger(db: DatabaseSync) {
     CREATE TABLE IF NOT EXISTS ledger_entries (
       id INTEGER PRIMARY KEY, tx_id INTEGER NOT NULL REFERENCES ledger_tx(id), account_id INTEGER NOT NULL REFERENCES ledger_accounts(id),
       amount INTEGER NOT NULL, balance_after INTEGER NOT NULL);
-    INSERT OR IGNORE INTO ledger_accounts (owner, kind, allow_negative) VALUES ('system', 'paystack', 1), ('system', 'sellers', 0), ('system', 'logistics', 0), ('system', 'paid_out', 0);
+    INSERT OR IGNORE INTO ledger_accounts (owner, kind, allow_negative) VALUES ('system', 'paystack', 1), ('system', 'sellers', 0), ('system', 'logistics', 0), ('system', 'paid_out', 0), ('system', 'fees', 0);
   `);
 }
 
@@ -113,6 +113,10 @@ export class Ledger {
   /** The withdrawal transfer failed: the money comes back to the buyer, once. */
   withdrawFailed(userId: number, reference: string, kobo: number): boolean {
     return this.post(`withdraw-failed:${reference}`, 'withdraw_failed', userId, kobo, ['system', 'paystack'], [`user:${userId}`, 'available'], reference);
+  }
+  /** StockRun's service fee for a completed pickup, from the buyer's locked money (the seller's payment is untouched). */
+  payFee(userId: number, key: string, kobo: number): boolean {
+    return this.post(`fee:${key}`, 'service_fee', userId, kobo, [`user:${userId}`, 'held'], ['system', 'fees'], key);
   }
   /** Locked money now owed to the logistics company (a circuit decided). */
   payLogistics(userId: number, key: string, kobo: number): boolean {

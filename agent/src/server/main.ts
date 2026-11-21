@@ -67,7 +67,9 @@ const ledger = new Ledger(db);
 const prices = new PriceBook();
 // Naira orders: the ledger holds the money; circuits #1-#3 decide every payment through eval on the platform's chain.
 let buyers: Buyers;
-const orders = new NairaOrders({ db, ledger, evalCircuit: circuitEvaluator(p), supplierStatus: (k, u) => buyers.sellerStatus(k, u), carriers: () => buyers.carrierKeys() });
+// StockRun's service fee, paid by the buyer on completed pickups (the seller always gets the full agreed price).
+const fee = { bps: Math.round(Number(envValue(env, 'FEE_PERCENT') ?? 1.5) * 100), minKobo: Math.round(Number(envValue(env, 'FEE_MIN_NAIRA') ?? 100) * 100), maxKobo: Math.round(Number(envValue(env, 'FEE_MAX_NAIRA') ?? 10_000) * 100) };
+const orders = new NairaOrders({ db, ledger, fee, evalCircuit: circuitEvaluator(p), supplierStatus: (k, u) => buyers.sellerStatus(k, u), carriers: () => buyers.carrierKeys() });
 // Every seller in data/suppliers.json is a simulated bot today; real sellers will come in over WhatsApp.
 buyers = new Buyers(db, p, ledger, orders, { extractor, channel: new BotChannel(), prices, log, foundDb: db, sellerDelayMs: Number(envValue(env, 'SELLER_APPROVAL_DELAY_HOURS') ?? 0) * 3600_000, dataDir: network === 'local' ? null : dirname(dbFile) });
 const paystackKey = envValue(env, 'PAYSTACK_SECRET_KEY');

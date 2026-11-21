@@ -140,3 +140,55 @@ describe.skipIf(!onMainnet)('the real circuits on X Layer agree with the referen
     }
   }, 60_000);
 });
+
+describe("StockRun's service fee", () => {
+  const withFee = () => {
+    const db = openDb(), ledger = new Ledger(db);
+    const orders = new NairaOrders({ db, ledger, evalCircuit: referenceEval, supplierStatus: (k) => (k === SUP ? 1 : 0), carriers: () => [COMPANY],
+      fee: { bps: 150, minKobo: kobo(100), maxKobo: kobo(10_000) } });
+    const self = (ordered: number, unitNaira: number) => ({ supplierKey: SUP, ordered, unitPrice: BigInt(kobo(unitNaira)), cat: 0, dist: 1, rider: SELF_HANDLER, riderFee: 0n });
+    return { ledger, orders, self };
+  };
+
+  it('is 1.5%, at least ₦100 and at most ₦10,000', () => {
+    const { orders } = withFee();
+    expect(orders.feeFor(kobo(56_000))).toBe(kobo(840));
+    expect(orders.feeFor(kobo(2_000))).toBe(kobo(100));
+    expect(orders.feeFor(kobo(1_000_000))).toBe(kobo(10_000));
+    expect(orders.feeFor(0)).toBe(0);
+  });
+
+  it('is locked with the goods; the seller gets the full price for what was counted; the fee is only on that part', async () => {
+    const { ledger, orders, self } = withFee();
+    ledger.deposit(1, 'p1', kobo(100_000));
+    const r = await orders.propose(1, self(4, 14_000), kobo(100_000));
+    const id = Number((r as { orderId: bigint }).orderId);
+    expect(ledger.balance(1)).toEqual({ availableKobo: kobo(100_000 - 56_840), heldKobo: kobo(56_840) });   // ₦56,000 + ₦840
+    orders.handlerPickup(SELF_HANDLER, id, true, 3);
+    expect(await orders.settlePickup(id)).toEqual({ kind: 'paid', qty: 3, reason: 5 });
+    expect(ledger.system('sellers')).toBe(kobo(42_000));                       // full price for 3 cartons
+    expect(ledger.system('fees')).toBe(kobo(630));                             // 1.5% of what was collected
+    expect(ledger.balance(1)).toEqual({ availableKobo: kobo(100_000 - 42_000 - 630), heldKobo: 0 });
+    expect(ledger.check().ok).toBe(true);
+  });
+
+  it('nothing collected or the order goes stale: the fee comes back too', async () => {
+    const { ledger, orders, self } = withFee();
+    ledger.deposit(1, 'p1', kobo(20_000));
+    const r = await orders.propose(1, self(1, 10_000), kobo(20_000));
+    const id = Number((r as { orderId: bigint }).orderId);
+    expect(ledger.balance(1).heldKobo).toBe(kobo(10_150));
+    orders.handlerPickup(SELF_HANDLER, id, true, 0);
+    expect((await orders.settlePickup(id)).kind).toBe('held');                // PickupCheck pays nothing for 0
+    expect(ledger.system('fees')).toBe(0);
+    expect(ledger.balance(1).heldKobo).toBe(kobo(10_150));
+  });
+
+  it('counts toward RestockGuard: a deal the buyer cannot cover with the fee is not locked', async () => {
+    const { ledger, orders, self } = withFee();
+    ledger.deposit(1, 'p1', kobo(56_000));                                     // exactly the goods, not the fee
+    const r = await orders.propose(1, self(4, 14_000), kobo(56_000));
+    expect(r.status).not.toBe('locked');
+    expect(ledger.balance(1)).toEqual({ availableKobo: kobo(56_000), heldKobo: 0 });
+  });
+});

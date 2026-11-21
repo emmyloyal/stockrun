@@ -34,10 +34,17 @@ export function migrateNairaOrders(db: DatabaseSync) {
     at_shop INTEGER NOT NULL DEFAULT 0, arrived_at INTEGER NOT NULL DEFAULT 0, ai_delivered INTEGER NOT NULL DEFAULT 0, delivered INTEGER NOT NULL DEFAULT 0,
     delivery_damage INTEGER NOT NULL DEFAULT 0, owner_ok INTEGER NOT NULL DEFAULT 0, owner_issue INTEGER NOT NULL DEFAULT 0,
     evidence TEXT NOT NULL DEFAULT '[]')`);
+  // StockRun's service fee, locked with the goods and charged on what is collected (kobo).
+  const cols = db.prepare('PRAGMA table_info(naira_orders)').all() as unknown as { name: string }[];
+  if (!cols.some((c) => c.name === 'service_fee')) db.exec('ALTER TABLE naira_orders ADD COLUMN service_fee INTEGER NOT NULL DEFAULT 0');
 }
 
+/** StockRun's fee: `bps` of the goods (150 = 1.5%), at least `minKobo` and at most `maxKobo`. Zero bps: no fee. */
+export interface FeeSettings { bps: number; minKobo: number; maxKobo: number }
+export const NO_FEE: FeeSettings = { bps: 0, minKobo: 0, maxKobo: 0 };
+
 interface Row {
-  id: number; user_id: number; supplier_key: string; rider: string; ordered: number; cat: number; dist: number; unit_price: number; rider_fee: number;
+  id: number; user_id: number; supplier_key: string; rider: string; ordered: number; cat: number; dist: number; unit_price: number; rider_fee: number; service_fee: number;
   budget: number; status: number; created_at: number; at_supplier: number; rider_counted: number; rider_count: number; ai_counted: number; ai_count: number;
   pickup_damage: number; picked: number; at_shop: number; arrived_at: number; ai_delivered: number; delivered: number; delivery_damage: number;
   owner_ok: number; owner_issue: number; evidence: string;
@@ -52,8 +59,9 @@ export class NairaOrders {
   private db: DatabaseSync; private ledger: Ledger; private evalCircuit: EvalCircuit;
   /** The seller's status in THIS buyer's list (RestockGuard's `sup` input). */
   private supplierStatusOf: (key: Hash, userId: number) => number; private carriers: () => Address[]; private now: () => number;
-  constructor(o: { db: DatabaseSync; ledger: Ledger; evalCircuit: EvalCircuit; supplierStatus: (key: Hash, userId: number) => number; carriers: () => Address[]; now?: () => number }) {
-    this.db = o.db; this.ledger = o.ledger; this.evalCircuit = o.evalCircuit; this.supplierStatusOf = o.supplierStatus;
+  readonly fee: FeeSettings;
+  constructor(o: { db: DatabaseSync; ledger: Ledger; evalCircuit: EvalCircuit; supplierStatus: (key: Hash, userId: number) => number; carriers: () => Address[]; now?: () => number; fee?: FeeSettings }) {
+    this.db = o.db; this.ledger = o.ledger; this.evalCircuit = o.evalCircuit; this.supplierStatusOf = o.supplierStatus; this.fee = o.fee ?? NO_FEE;
     this.carriers = o.carriers; this.now = o.now ?? Date.now;
     migrateNairaOrders(o.db);
   }
@@ -79,6 +87,11 @@ export class NairaOrders {
     return vals;
   }
   private value(o: Row) { return o.ordered * o.unit_price; }
+  /** StockRun's fee on goods worth `goodsKobo` (whole kobo). The seller's payment never pays it. */
+  feeFor(goodsKobo: number): number {
+    if (this.fee.bps <= 0 || goodsKobo <= 0) return 0;
+    return Math.min(this.fee.maxKobo || Infinity, Math.max(this.fee.minKobo, Math.floor((goodsKobo * this.fee.bps) / 10_000)));
+  }
   private units(kobo: number, up: boolean) { const u = up ? (BigInt(kobo) + UNIT_KOBO - 1n) / UNIT_KOBO : BigInt(kobo) / UNIT_KOBO; return Number(u > 255n && !up ? 255n : u); }
 
   // ---------------------------------------------------------------- 1. propose -> RestockGuard
@@ -86,8 +99,9 @@ export class NairaOrders {
   async propose(userId: number, a: ProposeArgs, budgetKobo: number): Promise<ProposeResult> {
     if (!this.trusted(a.rider)) return { status: 'rejected', reason: 1 };
     if (isSelf(a.rider) && a.riderFee !== 0n) return { status: 'rejected', reason: 1 };
-    const id = Number(this.db.prepare(`INSERT INTO naira_orders (user_id, supplier_key, rider, ordered, cat, dist, unit_price, rider_fee, budget, status, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(userId, a.supplierKey, getAddress(a.rider), a.ordered, a.cat, a.dist, Number(a.unitPrice), Number(a.riderFee), budgetKobo, STATUS.None, this.now()).lastInsertRowid);
+    const fee = this.feeFor(a.ordered * Number(a.unitPrice));
+    const id = Number(this.db.prepare(`INSERT INTO naira_orders (user_id, supplier_key, rider, ordered, cat, dist, unit_price, rider_fee, service_fee, budget, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(userId, a.supplierKey, getAddress(a.rider), a.ordered, a.cat, a.dist, Number(a.unitPrice), Number(a.riderFee), fee, budgetKobo, STATUS.None, this.now()).lastInsertRowid);
     const r = await this.guard(id, false).catch(() => ({ status: 'circuit_failed' as const }));
     if (r.status !== 'locked' && r.status !== 'ask_owner') this.db.prepare('DELETE FROM naira_orders WHERE id = ?').run(id);   // REJECT: nothing stored
     return r;
@@ -102,7 +116,7 @@ export class NairaOrders {
 
   private async guard(id: number, ownerOk: boolean): Promise<ProposeResult> {
     const o = this.get(id)!;
-    const amount = this.value(o) + o.rider_fee;
+    const amount = this.value(o) + o.rider_fee + o.service_fee;      // RestockGuard checks the whole amount, fee included
     const remaining = Math.min(o.budget, this.ledger.balance(o.user_id).availableKobo);
     const totalUnits = this.units(amount, true);
     if (totalUnits > 255) return { status: 'too_large' };
@@ -144,8 +158,11 @@ export class NairaOrders {
     const [decision, qty, reason] = await this.decide(o, 'pickup', input, PICKUP_OUT);
     if (decision === 0) return { kind: 'held', reason };
     if (qty === 0 || qty > o.ordered) throw new Error('The circuit returned an impossible quantity; the order holds.');
-    const pay = qty * o.unit_price, unused = this.value(o) - pay;
+    // The seller gets the full agreed price for every unit counted. StockRun's fee is on the counted part only.
+    const pay = qty * o.unit_price, fee = qty === o.ordered ? o.service_fee : Math.floor((o.service_fee * qty) / o.ordered);
+    const unused = this.value(o) - pay + (o.service_fee - fee);
     this.ledger.paySeller(o.user_id, `order:${id}`, pay);
+    if (fee > 0) this.ledger.payFee(o.user_id, `order:${id}`, fee);
     if (unused > 0) this.ledger.release(o.user_id, `order:${id}:unpicked`, unused);
     const self = isSelf(o.rider);
     this.set(id, { picked: qty, status: self ? STATUS.Delivered : STATUS.PickedUp });
@@ -197,7 +214,7 @@ export class NairaOrders {
   refundStale(id: number) {
     const o = this.get(id);
     if (!o || o.status !== STATUS.Locked || this.now() < o.created_at + PICKUP_TIMEOUT_MS) throw new Error('Not refundable yet.');
-    this.ledger.release(o.user_id, `order:${id}:stale`, this.value(o) + o.rider_fee);
+    this.ledger.release(o.user_id, `order:${id}:stale`, this.value(o) + o.rider_fee + o.service_fee);
     this.set(id, { status: STATUS.Refunded });
   }
 }

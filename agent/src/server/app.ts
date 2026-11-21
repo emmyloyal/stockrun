@@ -108,7 +108,7 @@ export function createApp(o: AppOptions): Server {
     if (!job || !r || r.user_id !== userId) return null;
     return {
       ...job, money: 'naira' as const, self: r.rider.toLowerCase() === SELF_HANDLER.toLowerCase(),
-      status: STATUS_NAME[r.status] ?? 'Unknown', ordered: r.ordered, unitPriceNaira: toNaira(r.unit_price), riderFeeNaira: toNaira(r.rider_fee),
+      status: STATUS_NAME[r.status] ?? 'Unknown', ordered: r.ordered, unitPriceNaira: toNaira(r.unit_price), riderFeeNaira: toNaira(r.rider_fee), serviceFeeNaira: toNaira(r.service_fee),
       pickup: { atSupplier: !!r.at_supplier, riderCounted: !!r.rider_counted, riderCount: r.rider_count, aiCounted: !!r.ai_counted, aiCount: r.ai_count, damage: !!r.pickup_damage, picked: r.picked },
       delivery: { atShop: !!r.at_shop, arrivedAt: r.arrived_at, aiCounted: !!r.ai_delivered, delivered: r.delivered, damage: !!r.delivery_damage, ownerOk: !!r.owner_ok, ownerIssue: !!r.owner_issue },
       evidence: JSON.parse(r.evidence), lastCheck: lastCheck.get(`${userId}:${orderId}`) ?? null,
@@ -147,7 +147,8 @@ export function createApp(o: AppOptions): Server {
     // ---------------------------------------------------------------- me
     ['GET', /^\/api\/config$/, async () => ({
       chainId: p.chain.id, network: p.name, token: p.token, tokenSymbol: p.tokenSymbol, explorerTx: p.explorerTx,
-      naira: { paystack: !!paystack, test: paystack?.test ?? true, testCredit: !!o.demoNaira || (!paystack && !!p.faucet) },
+      naira: { paystack: !!paystack, test: paystack?.test ?? true, testCredit: !!o.demoNaira || (!paystack && !!p.faucet),
+        fee: { percent: buyers.orders.fee.bps / 100, minNaira: buyers.orders.fee.minKobo / 100, maxNaira: buyers.orders.fee.maxKobo / 100 } },
       logistics: p.carriers.map((x) => ({ id: x.id, name: x.name, api: !!x.connector })),
       emailSignIn: accounts.emailSignIn,
       sellerHunt: !!o.hunt && huntEnabled(o.hunt),
@@ -310,7 +311,7 @@ export function createApp(o: AppOptions): Server {
       admin(c);
       const t = o.payouts!.totals(), k = (x: number) => x / 100;
       return {
-        totals: { lockedNaira: k(t.lockedKobo), buyersAvailableNaira: k(t.buyersAvailableKobo), owedSellersNaira: k(t.owedSellersKobo), owedLogisticsNaira: k(t.owedLogisticsKobo), paidOutNaira: k(t.paidOutKobo), heldPayouts: t.heldPayouts },
+        totals: { feesNaira: k(ledger.system('fees')), lockedNaira: k(t.lockedKobo), buyersAvailableNaira: k(t.buyersAvailableKobo), owedSellersNaira: k(t.owedSellersKobo), owedLogisticsNaira: k(t.owedLogisticsKobo), paidOutNaira: k(t.paidOutKobo), heldPayouts: t.heldPayouts },
         payouts: o.payouts!.list().map((p) => ({ ...p, amountNaira: k(p.amountKobo) })),
         log: o.payouts!.recentLog(30),
         contacts: o.activity?.list(200) ?? [],
@@ -321,7 +322,7 @@ export function createApp(o: AppOptions): Server {
       admin(c);
       return o.buyers.orders.recent(100).map((r) => ({
         orderId: r.id, buyerId: r.user_id, status: STATUS_NAME[r.status] ?? String(r.status), ordered: r.ordered, picked: r.picked,
-        unitPriceNaira: r.unit_price / 100, totalNaira: (r.ordered * r.unit_price) / 100, deliveryFeeNaira: r.rider_fee / 100,
+        unitPriceNaira: r.unit_price / 100, totalNaira: (r.ordered * r.unit_price) / 100, deliveryFeeNaira: r.rider_fee / 100, serviceFeeNaira: r.service_fee / 100,
         self: r.rider.toLowerCase() === SELF_HANDLER.toLowerCase(), createdAt: r.created_at,
         circuits: (JSON.parse(r.evidence) as { circuit: string }[]).map((e) => e.circuit),
         seller: o.payouts!.sellerName(r.supplier_key), sellerPhone: o.payouts!.sellerPhone(r.supplier_key), buyer: o.payouts!.buyerLabel(r.user_id),

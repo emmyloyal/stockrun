@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import {
-  avatarUrl, currentPosition, hasWallet, load, naira, preparePhoto, save, server, short, signWithWallet, whatsappLink,
+  avatarUrl, currentPosition, hasWallet, load, naira, preparePhoto, save, server, serviceFee, short, signWithWallet, whatsappLink,
   type Category, type Coins, type Config, type DealResult, type FoundSeller, type HuntResult, type Me, type MySeller, type PlaceHit, type SellerHit, type Movement, type Order, type Place, type RequestRecord, type Seller, type User,
 } from './lib';
 import { CircuitTrail, Outcome, StatusPill } from './ui';
@@ -222,7 +222,8 @@ function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me:
     if (!(price >= 1)) return `Enter the agreed price per ${d.unit || 'unit'}.`;
     if (!pinned) return 'Type your delivery address and tap Find sellers first, so the distance can be checked.';
     if (delivery === 'logistics' && !user.phone && contact.replace(/\D/g, '').length < 10) return 'Add a phone number for the rider (under "How should it reach you?"), or choose to collect it yourself.';
-    if (price * qty > available) return `This deal is ${naira(price * qty)} but your balance is ${naira(available)}. Deposit naira first.`;
+    const total = price * qty + serviceFee(price * qty, cfg.naira.fee);
+    if (total > available) return `This deal is ${naira(total)} with StockRun's fee, but your balance is ${naira(available)}. Deposit naira first.`;
     return '';
   };
   const submitDeal = async () => {
@@ -334,7 +335,10 @@ function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me:
                 {CATEGORY_LABELS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
               </select>
             </label>
-            {Number(deal.price.replace(/\D/g, '')) > 0 && Number(deal.quantity) > 0 && <p className="fine">Total {naira(Number(deal.price.replace(/\D/g, '')) * Number(deal.quantity))}{delivery === 'logistics' ? ' plus delivery' : ', you collect it'} · your balance {naira(available)}</p>}
+            {Number(deal.price.replace(/\D/g, '')) > 0 && Number(deal.quantity) > 0 && (() => {
+              const goods = Number(deal.price.replace(/\D/g, '')) * Number(deal.quantity), fee = serviceFee(goods, cfg.naira.fee);
+              return <p className="fine">Goods {naira(goods)}{fee ? ` + StockRun fee ${naira(fee)} (${cfg.naira.fee!.percent}%, only on what you collect)` : ''} = {naira(goods + fee)}{delivery === 'logistics' ? ' plus delivery' : ', you collect it'} · your balance {naira(available)}. The seller gets the full agreed price.</p>;
+            })()}
             <button className="btn primary" disabled={!!busy} onClick={submitDeal}>{busy && busy.startsWith('RestockGuard') ? 'Checking…' : 'Record deal and lock the money'}</button>
             {deal.note && <p className="alert">{deal.note}</p>}
             <p className="fine">RestockGuard, a circuit on X Layer, decides whether the money locks. {deal.name} is paid from it only at pickup, for the number of good {deal.unit || 'unit'}s counted ({delivery === 'self' ? 'by you' : 'by the logistics company'}). Uses your pickup or delivery choice above.</p>
@@ -443,7 +447,7 @@ function Orders({ cfg, onChange }: { cfg: Config; onChange: () => void }) {
           {orders.map((o) => (
             <li key={o.orderId} className="card stack">
               <span className="row between"><strong>{o.ordered} × {o.item}</strong><StatusPill o={o} /></span>
-              <span className="muted">{o.supplier.name} · {naira(o.unitPriceNaira)} each{o.self ? ' · you collect it' : ` · delivery ${naira(o.riderFeeNaira)}`} · paid in naira</span>
+              <span className="muted">{o.supplier.name} · {naira(o.unitPriceNaira)} each{o.self ? ' · you collect it' : ` · delivery ${naira(o.riderFeeNaira)}`}{o.serviceFeeNaira ? ` · StockRun fee ${naira(o.serviceFeeNaira)}` : ''} · paid in naira</span>
               {o.lastCheck && <Outcome r={o.lastCheck} />}
               {o.status === 'AwaitingOwner' && (
                 <div className="stack"><p className="warn">This needs your OK. Approving never overrides a "no" from the circuit.</p>
