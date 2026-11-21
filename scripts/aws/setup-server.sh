@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Sets up (or updates) the StockRun server on a fresh Ubuntu 24.04 Lightsail instance. Safe to run again.
-# Usage on the server:  sudo bash setup-server.sh <public-hostname>     e.g. 3-90-1-2.sslip.io
+# Usage on the server:  sudo bash setup-server.sh <hostname> [more hostnames]   e.g. stockrun-ai.duckdns.org 3-90-1-2.sslip.io
 # Expects the settings file at /opt/stockrun/.env (copied over SSH, never committed).
 set -euo pipefail
-HOST="${1:?usage: setup-server.sh <public-hostname>}"
+HOST="${1:?usage: setup-server.sh <hostname> [more hostnames]}"
+HOSTS=$(printf "%s, " "$@"); HOSTS=${HOSTS%, }   # Caddy serves (and gets a certificate for) every name given
 NODE_VERSION=26.13.0
 REPO=https://github.com/emmyloyal/stockrun.git
 APP_DIR=/opt/stockrun
@@ -60,7 +61,7 @@ EOF
 
 # Caddy gets a free HTTPS certificate for the sslip.io name and forwards to the app.
 cat > /etc/caddy/Caddyfile <<EOF
-$HOST {
+$HOSTS {
   encode gzip
   reverse_proxy 127.0.0.1:8080
 }

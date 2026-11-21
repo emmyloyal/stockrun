@@ -3,7 +3,7 @@
 **Tell an AI what you want to buy. It finds real sellers near you, writes your WhatsApp message, and locks your
 money until you have the goods. Every payment decision is made by a TapeOut circuit on X Layer.**
 
-Built for the X Layer × TapeOut "Build X" hackathon. Live at **https://13-50-119-2.sslip.io** (X Layer mainnet;
+Built for the X Layer × TapeOut "Build X" hackathon. Live at **https://stockrun-ai.duckdns.org** (X Layer mainnet;
 naira through Paystack **test mode**, so no real money moves).
 
 ## How it works
@@ -71,7 +71,7 @@ cd ../contracts && forge build && forge test --fork-url $XLAYER_RPC   # vault, o
 **Hosting:** one AWS Lightsail server (Ubuntu 24.04, 1 GB). [`scripts/aws/setup-server.sh`](scripts/aws/setup-server.sh)
 installs Node, builds the app, runs it as a `systemd` service behind Caddy (free HTTPS on an sslip.io name) and keeps
 the database in `/var/lib/stockrun`, so it survives restarts and updates. Copy the settings to `/opt/stockrun/.env`
-first, then `sudo bash setup-server.sh <ip-with-dashes>.sslip.io`. Run it again to deploy the latest `main`.
+first, then `sudo bash setup-server.sh stockrun-ai.duckdns.org <ip-with-dashes>.sslip.io` (every name gets HTTPS). Run it again to deploy the latest `main`.
 
 ## Repo
 `agent/` server and AI agent · `app/` web app (React, Leaflet) · `circuits/` reference model, netlists, tapeout
