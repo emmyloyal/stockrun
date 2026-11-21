@@ -11,8 +11,9 @@ import {
 import { CircuitTrail, Outcome, StatusPill } from './ui';
 import { Admin } from './Admin';
 import { WithdrawPanel } from './Banks';
+import { ChatsTab, MyStore } from './Store';
 
-type Tab = 'ask' | 'orders' | 'money' | 'me' | 'admin';
+type Tab = 'ask' | 'orders' | 'chats' | 'money' | 'me' | 'admin';
 const LAGOS: [number, number] = [6.55, 3.37];
 const run = async (setBusy: (s: string) => void, setError: (s: string) => void, label: string, f: () => Promise<void>) => {
   setBusy(label); setError('');
@@ -25,6 +26,14 @@ export function AccountApp({ cfg }: { cfg: Config }) {
   const [tab, setTab] = useState<Tab>(() => (new URLSearchParams(location.search).get('reference') ? 'money' : load<Tab>('stockrun.tab', 'ask')));
   const [bust, setBust] = useState(0);
   const reload = useCallback(() => server.me().then(setMe).catch((e) => setError(e.message)), []);
+  const [unread, setUnread] = useState(0);
+  const [openChat, setOpenChat] = useState<number | null>(null);
+  useEffect(() => {
+    if (!cfg.chat || !me?.user) return;
+    const f = () => server.chats().then((r) => setUnread(r.unread)).catch(() => {});
+    f(); const t = setInterval(f, 15_000); return () => clearInterval(t);
+  }, [cfg.chat, me?.user]);
+  const startChat = (sellerId: string) => server.openChat(sellerId).then((c) => { setOpenChat(c.id); setTab('chats'); });
   useEffect(() => { reload(); }, [reload]);
   useEffect(() => { save('stockrun.tab', tab); }, [tab]);
 
@@ -45,14 +54,16 @@ export function AccountApp({ cfg }: { cfg: Config }) {
       </header>
       {!u.username && <p className="note">Choose a username in <button className="link" onClick={() => setTab('me')}>Me</button>.</p>}
       <nav className="tabs" role="tablist">
-        {([['ask', 'Ask'], ['orders', 'Orders'], ['money', 'Money'], ['me', 'Me'], ...(me.admin ? [['admin', 'Admin']] as const : [])] as const).map(([k, l]) => (
+        {([['ask', 'Ask'], ['orders', 'Orders'], ...(cfg.chat ? [['chats', unread ? `Chats (${unread})` : 'Chats']] as const : []), ['money', 'Money'], ['me', 'Me'], ...(me.admin ? [['admin', 'Admin']] as const : [])] as const).map(([k, l]) => (
           <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{l}</button>
         ))}
       </nav>
-      {tab === 'ask' && <Ask cfg={cfg} user={u} me={me} onAsked={() => { reload(); setTab('orders'); }} goMoney={() => setTab('money')} />}
+      {tab === 'chats' && cfg.chat && <ChatsTab openId={openChat} onOpened={() => setOpenChat(null)} />}
+      {tab === 'ask' && <Ask onChat={startChat} cfg={cfg} user={u} me={me} onAsked={() => { reload(); setTab('orders'); }} goMoney={() => setTab('money')} />}
       {tab === 'orders' && <Orders cfg={cfg} onChange={reload} />}
       {tab === 'money' && <Money cfg={cfg} me={me} onChange={reload} />}
       {tab === 'admin' && me.admin && <Admin />}
+      {tab === 'me' && cfg.business && <MyStore fee={cfg.business} banksOn={!!cfg.sellerBankLinks} balance={me.naira?.availableNaira ?? 0} onChange={reload} />}
       {tab === 'me' && <Profile user={u} onChange={() => { setBust(Date.now()); reload(); }} />}
     </section>
   );
@@ -117,7 +128,7 @@ function SignIn({ cfg, onDone }: { cfg: Config; onDone: () => void }) {
 }
 
 // ---------------------------------------------------------------- ask: what, budget, where; sellers on the map
-function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me: Me; onAsked: () => void; goMoney: () => void }) {
+function Ask({ cfg, user, me, onAsked, goMoney, onChat }: { cfg: Config; user: User; me: Me; onAsked: () => void; goMoney: () => void; onChat: (sellerId: string) => Promise<void> }) {
   const [text, setText] = useState('');
   const [budget, setBudget] = useState('');
   const [place, setPlace] = useState<Place>(() => load<Place>('stockrun.place', { lat: NaN, lng: NaN, address: '' }));
@@ -302,7 +313,7 @@ function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me:
         {hunt && (
           <div className="stack">
             <p className="fine">Near <strong>{hunt.place.matched || hunt.place.address}</strong> · looked for {hunt.shopTypes.map((t) => t.replace(/_/g, ' ')).join(', ')}</p>
-            <FoundList hunt={hunt} onContact={(id) => contactSeller(id)} onDeal={openDeal} />
+            <FoundList hunt={hunt} onContact={(id) => contactSeller(id)} onDeal={openDeal} onChat={cfg.chat ? (id) => run(setBusy, setError, 'Opening the chat…', () => onChat(id)) : undefined} />
           </div>
         )}
         {draft && (
@@ -396,23 +407,24 @@ function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me:
     </div>
   );
 }
-const SOURCE = { maps: 'Google Maps', osm: 'OpenStreetMap', web: 'the web' } as const;
-const SOURCE_FROM = { maps: 'its Google Maps listing', osm: 'its OpenStreetMap entry', web: 'a web page' } as const;
+const SOURCE = { maps: 'Google Maps', osm: 'OpenStreetMap', web: 'the web', listed: 'StockRun (registered store)' } as const;
+const SOURCE_FROM = { maps: 'its Google Maps listing', osm: 'its OpenStreetMap entry', web: 'a web page', listed: 'its StockRun store' } as const;
 const CATEGORY_LABELS: [Category, string][] = [
   ['staples', 'Food staples (rice, noodles, flour, garri)'], ['drinks', 'Drinks (water, soft drinks, malt)'], ['cooking', 'Cooking (oil, tomato paste, sugar)'],
   ['toiletries', 'Toiletries (soap, detergent)'], ['snacks', 'Snacks and biscuits'], ['household', 'Household (batteries, candles, bags)'],
   ['restricted', 'Alcohol or cigarettes (always needs your OK)'], ['highValue', 'Phones, electronics, anything else (always needs your OK)'],
 ];
-function FoundList({ hunt, onContact, onDeal }: { hunt: HuntResult; onContact: (id: string) => void; onDeal: (id: string, name: string) => void }) {
+function FoundList({ hunt, onContact, onDeal, onChat }: { hunt: HuntResult; onContact: (id: string) => void; onDeal: (id: string, name: string) => void; onChat?: (id: string) => void }) {
   if (!hunt.sellers.length) return <p className="muted">No seller of this kind with a WhatsApp number turned up near your address. Try other words, or a nearby area.</p>;
   return (
     <ul className="cards">
       {hunt.sellers.map((f: FoundSeller) => (
         <li key={f.id} className="card stack tight">
-          <span className="row between"><strong>{f.name}</strong><span className="pill found">found by AI</span></span>
+          <span className="row between"><strong>{f.name}</strong>{f.listed ? <span className="pill listed">Registered on StockRun</span> : <span className="pill found">found by AI</span>}</span>
+          {f.listed && f.products?.length ? <span className="fine">{f.products.map((p) => `${p.item}: ${naira(p.priceNaira)} per ${p.unit}`).join(' · ')}</span> : null}
           <span className="fine">{f.kind ? `${f.kind.replace(/_/g, ' ')} · ` : ''}{f.km} km · {f.address}</span>
           <span className="fine">WhatsApp {f.phone} · from {SOURCE_FROM[f.source]}{f.sourceUrl && <> · <a href={f.sourceUrl} target="_blank" rel="noreferrer">source</a></>}</span>
-          <span className="row wrap"><button className="btn wa small" onClick={() => onContact(f.id)}>Message on WhatsApp</button><button className="btn ghost small" onClick={() => onDeal(f.id, f.name)}>Record the deal</button></span>
+          <span className="row wrap">{f.listed && onChat && <button className="btn primary small" onClick={() => onChat(f.id)}>Chat in StockRun</button>}<button className="btn wa small" onClick={() => onContact(f.id)}>Message on WhatsApp</button><button className="btn ghost small" onClick={() => onDeal(f.id, f.name)}>Record the deal</button></span>
         </li>
       ))}
     </ul>

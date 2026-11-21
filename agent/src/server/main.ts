@@ -24,6 +24,8 @@ import { Payouts, adminList } from '../admin/payouts.ts';
 import { Activity } from '../admin/activity.ts';
 import { Withdrawals } from '../money/withdrawals.ts';
 import { PAYSTACK_LOCAL } from '../money/paystack.ts';
+import { Listings } from '../business/listings.ts';
+import { Chats } from '../business/chat.ts';
 import { loadSuppliers, supplierKey } from '../tools/suppliers.ts';
 import type { Hash } from 'viem';
 import { WebSellerSearch } from '../discovery/webSearch.ts';
@@ -72,7 +74,7 @@ let buyers: Buyers;
 const fee = { bps: Math.round(Number(envValue(env, 'FEE_PERCENT') ?? 1.5) * 100), minKobo: Math.round(Number(envValue(env, 'FEE_MIN_NAIRA') ?? 100) * 100), maxKobo: Math.round(Number(envValue(env, 'FEE_MAX_NAIRA') ?? 10_000) * 100) };
 const orders = new NairaOrders({ db, ledger, fee, evalCircuit: circuitEvaluator(p), supplierStatus: (k, u) => buyers.sellerStatus(k, u), carriers: () => buyers.carrierKeys() });
 // Every seller in data/suppliers.json is a simulated bot today; real sellers will come in over WhatsApp.
-buyers = new Buyers(db, p, ledger, orders, { extractor, channel: new BotChannel(), prices, log, foundDb: db, sellerDelayMs: Number(envValue(env, 'SELLER_APPROVAL_DELAY_HOURS') ?? 0) * 3600_000, dataDir: network === 'local' ? null : dirname(dbFile) });
+buyers = new Buyers(db, p, ledger, orders, { extractor, channel: new BotChannel(), prices, log, foundDb: db, sellerHidden: (id: string) => listings.hidden(id), sellerDelayMs: Number(envValue(env, 'SELLER_APPROVAL_DELAY_HOURS') ?? 0) * 3600_000, dataDir: network === 'local' ? null : dirname(dbFile) });
 const paystackKey = envValue(env, 'PAYSTACK_SECRET_KEY');
 const publicUrl = envValue(env, 'PUBLIC_URL') ?? `http://localhost:${port}`;
 // Sign-in is by email or wallet. Phone sign-in is off (no SMS sender); accounts made earlier by phone still work.
@@ -86,8 +88,11 @@ const paystack = paystackKey ? new Paystack(db, ledger, { secretKey: paystackKey
 // billing on the Gemini key). Both bill Google per search after their free allowances, so the hunt is capped per day.
 const mapsKey = envValue(env, 'GOOGLE_MAPS_API_KEY'), geminiKey = envValue(env, 'GEMINI_API_KEY');
 const generate = geminiKey ? geminiClient(geminiKey) : null;
+// Registered stores: admin-approved, LISTING_FEE_NAIRA (1,000) every LISTING_DAYS (30), paid from the StockRun balance.
+const geocoder = new Geocoder({ log: (l) => log(`address search: ${l}`) });
+const listings = new Listings({ db, ledger, geocoder, feeNaira: Number(envValue(env, 'LISTING_FEE_NAIRA') ?? 1_000), periodDays: Number(envValue(env, 'LISTING_DAYS') ?? 30) });
 const hunt = {
-  db, log, generate,
+  db, log, generate, listings,
   places: mapsKey ? new PlacesSearch({ apiKey: mapsKey }) : null,
   osm: envValue(env, 'SELLER_OSM') === 'off' ? null : new OsmSearch(),
   web: generate && envValue(env, 'SELLER_WEB_SEARCH') === 'on' ? new WebSellerSearch({ generate }) : null,
@@ -115,7 +120,7 @@ const admins = adminList(envValue(env, 'ADMIN_EMAILS'));
 
 const staticDir = fileURLToPath(new URL('../../../app/dist/', import.meta.url));
 const server = createApp({
-  platform: p, accounts, buyers, ledger, prices, paystack, hunt, payouts, admins, activity: new Activity(db), withdrawals, linkSecret: secret, publicUrl, geocoder: new Geocoder({ log: (l) => log(`address search: ${l}`) }), demoNaira: network === 'local' || envValue(env, 'DEMO_NAIRA') === '1',
+  platform: p, accounts, buyers, ledger, prices, paystack, hunt, payouts, admins, activity: new Activity(db), withdrawals, linkSecret: secret, publicUrl, geocoder, listings, chats: new Chats({ db, listings }), demoNaira: network === 'local' || envValue(env, 'DEMO_NAIRA') === '1',
   staticDir: existsSync(staticDir) ? staticDir : undefined,
   secureCookies: envValue(env, 'SECURE_COOKIES') === '1', log,
   sendrelayWebhookSecret: envValue(env, 'SENDRELAY_WEBHOOK_SECRET'),

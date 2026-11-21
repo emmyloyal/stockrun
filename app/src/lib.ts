@@ -7,6 +7,8 @@ export interface Config {
   naira: { paystack: boolean; test: boolean; testCredit: boolean; fee?: { percent: number; minNaira: number; maxNaira: number } };
   logistics: { id: string; name: string; api: boolean }[];
   emailSignIn: boolean;
+  chat?: boolean;
+  business?: { feeNaira: number; periodDays: number } | null;
   withdrawals?: boolean;
   sellerBankLinks?: boolean;
   sellerHunt: boolean;
@@ -21,13 +23,13 @@ export interface Payout {
   seller: { key: string; name: string; phone: string | null }; bank: Bank | null; reference: string | null; note: string | null; paidAt: number | null; paidBy: string | null;
 }
 export interface AdminOverview {
-  totals: { feesNaira?: number; lockedNaira: number; buyersAvailableNaira: number; owedSellersNaira: number; owedLogisticsNaira: number; paidOutNaira: number; heldPayouts: number };
+  totals: { listingsNaira?: number; feesNaira?: number; lockedNaira: number; buyersAvailableNaira: number; owedSellersNaira: number; owedLogisticsNaira: number; paidOutNaira: number; heldPayouts: number };
   payouts: Payout[]; log: { admin: string; action: string; orderId: number | null; detail: string; at: number }[];
   paystackPayouts?: boolean; paystackTest?: boolean;
   contacts: Contact[];
 }
 export interface Contact {
-  at: number; action: 'drafted_message' | 'opened_whatsapp' | 'recorded_deal' | 'deal_refused'; detail: string | null;
+  at: number; action: 'drafted_message' | 'opened_whatsapp' | 'opened_chat' | 'recorded_deal' | 'deal_refused'; detail: string | null;
   buyer: { id: number; label: string };
   seller: { id: string; name: string; phone: string | null; address: string | null; kind: string | null; source: string | null; sourceUrl: string | null };
 }
@@ -58,7 +60,14 @@ export interface Order {
 }
 export interface RequestRecord { id: number; text: string; budgetNaira: number; place: Place; delivery: 'self' | 'logistics'; message: string; createdAt: number }
 /** A seller the AI found on Google Maps or the web: real, but not confirmed by StockRun. */
-export interface FoundSeller { id: string; name: string; kind?: string | null; address: string; lat: number; lng: number; phone: string; source: 'maps' | 'osm' | 'web'; sourceUrl: string | null; km: number }
+export interface FoundSeller { id: string; name: string; kind?: string | null; address: string; lat: number; lng: number; phone: string; source: 'maps' | 'osm' | 'web' | 'listed'; sourceUrl: string | null; km: number; listed?: boolean; products?: { item: string; unit: string; priceNaira: number }[] }
+export interface Business {
+  sellerId: string; name: string; kind: string; address: string; lat: number; lng: number; phone: string; products: { item: string; unit: string; priceNaira: number }[];
+  paidUntil: number; live: boolean; suspended: boolean; suspendedNote: string | null; createdAt: number; review: 'pending' | 'approved' | 'rejected'; reviewNote: string | null;
+  owner?: { id: number; label: string }; bank?: { bankName: string; accountName: string; accountNumber: string; approved?: boolean } | null;
+}
+export interface ChatSummary { id: number; role: 'buyer' | 'shop'; store: { sellerId: string; name: string }; buyer: { id: number; label: string }; last: { text: string; from: 'buyer' | 'shop'; at: number } | null; unread: number; updatedAt: number }
+export interface ChatMessage { id: number; from: 'buyer' | 'shop'; text: string; at: number }
 export interface SellerHit { id: string; name: string; kind: string | null; address: string; lat: number; lng: number; phone: string | null; source: 'maps' | 'osm' | 'web' | 'demo'; sourceUrl: string | null; km: number; demo: boolean }
 export interface PlaceHit { name: string; address: string; lat: number; lng: number; kind: string }
 export interface MySeller { sellerId: string; status: 0 | 1 | 3; pendingStatus: 1 | null; effectiveAt: number | null; addedAt: number }
@@ -120,6 +129,17 @@ export const server = {
   sellerBankLink: (sellerId: string) => call<{ url: string; message: string; whatsappUrl: string | null }>(`/api/sellers/${sellerId}/bank-link`, {}),
   sellerBankInfo: (sellerId: string, t: string) => call<{ name: string; transfers: boolean; test: boolean }>(`/api/seller-bank/${sellerId}?t=${encodeURIComponent(t)}`),
   sellerBankSubmit: (sellerId: string, t: string, b: { bankCode: string; accountNumber: string }) => call<{ accountName: string; bankName: string }>(`/api/seller-bank/${sellerId}`, { t, ...b }),
+  myBusiness: () => call<{ business: Business | null; feeNaira: number; periodDays: number; bankLinked: { bankName: string; accountName: string; approved?: boolean } | null }>('/api/business'),
+  saveBusiness: (b: { name: string; kind: string; address: string; phone: string; products: { item: string; unit: string; priceNaira: number }[] }) => call<Business>('/api/business', b),
+  payBusiness: (key: string) => call<Business>('/api/business/pay', { key }),
+  businessBank: (b: { bankCode: string; accountNumber: string }) => call<{ accountName: string; bankName: string }>('/api/business/bank', b),
+  adminBusinesses: () => call<Business[]>('/api/admin/businesses'),
+  adminReviewBusiness: (sellerId: string, approve: boolean, note: string) => call<Business>(`/api/admin/businesses/${sellerId}/review`, { approve, note }),
+  adminSuspendBusiness: (sellerId: string, suspended: boolean, note: string) => call<Business>(`/api/admin/businesses/${sellerId}/suspend`, { suspended, note }),
+  chats: () => call<{ chats: ChatSummary[]; unread: number }>('/api/chats'),
+  openChat: (sellerId: string) => call<ChatSummary>('/api/chats', { sellerId }),
+  chatMessages: (id: number, after: number) => call<ChatMessage[]>(`/api/chats/${id}/messages?after=${after}`),
+  chatSend: (id: number, text: string) => call<ChatMessage>(`/api/chats/${id}/messages`, { text }),
   depositQuote: (amountNaira: number) => call<{ amountNaira: number; chargeNaira: number; totalNaira: number }>(`/api/naira/deposit-quote?amountNaira=${amountNaira}`),
   withdraw: (amountNaira: number, bankCode: string, accountNumber: string) => call<Withdrawal>('/api/naira/withdraw', { amountNaira, bankCode, accountNumber }),
   withdrawals: () => call<Withdrawal[]>('/api/naira/withdrawals'),

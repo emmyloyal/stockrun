@@ -38,6 +38,8 @@ export interface BuyerServices {
   extractor: Extractor; channel: SupplierChannel; prices: PriceBook;
   /** Where found sellers live (the hunt's database), for recording deals with them. */
   foundDb?: DatabaseSync | null;
+  /** A registered store that is not live (waiting for approval, unpaid, expired or suspended): no new deals. */
+  sellerHidden?: (sellerId: string) => boolean;
   /** Where each buyer's order details are saved (null: memory only, for tests and the local chain). */
   dataDir?: string | null;
   log?: (line: string) => void;
@@ -148,6 +150,7 @@ export class Buyers {
     const foundDb = this.services.foundDb;
     const s = foundDb && typeof raw.sellerId === 'string' ? foundSeller(foundDb, raw.sellerId) : null;
     if (!s) throw new AuthError(404, 'That seller is not on the map any more.');
+    if (this.services.sellerHidden?.(s.id)) throw new AuthError(409, `${s.name} is not taking orders on StockRun right now.`);
     const item = String(raw.item ?? '').trim().replace(/\s+/g, ' '), unit = String(raw.unit ?? '').trim().toLowerCase() || 'unit';
     const quantity = Number(raw.quantity), price = Number(raw.unitPriceNaira);
     if (item.length < 2 || item.length > 80) throw new AuthError(400, 'Say what you agreed to buy (up to 80 characters).');

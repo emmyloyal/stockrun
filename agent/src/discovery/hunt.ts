@@ -11,6 +11,7 @@ import { haversineKm } from '../tools/suppliers.ts';
 import type { Listing, PlacesSearch } from './places.ts';
 import { GROCERY_TYPES, OSM_SHOP_TYPES, type OsmSearch } from './osm.ts';
 import type { WebSellerSearch } from './webSearch.ts';
+import type { Listings, Product } from '../business/listings.ts';
 
 export interface FoundSeller {
   id: string;              // "found-<hash of the phone>": the same seller found twice is one record
@@ -19,8 +20,11 @@ export interface FoundSeller {
   lat: number;
   lng: number;
   phone: string;           // +234..., a Nigerian mobile number (the kind that can be on WhatsApp)
-  source: 'maps' | 'osm' | 'web';
+  source: 'maps' | 'osm' | 'web' | 'listed';
   sourceUrl: string | null;
+  /** Registered on StockRun (paid listing): its products and prices. */
+  listed?: boolean;
+  products?: Product[];
   /** OpenStreetMap shop type (supermarket, wholesale...), when known. */
   kind?: string | null;
   km: number;
@@ -49,6 +53,8 @@ export interface HuntDeps {
   /** OpenStreetMap: free, but few Lagos shops have a phone number mapped. */
   osm?: OsmSearch | null;
   web?: WebSellerSearch | null;
+  /** Registered stores: matched first, and unpaid or suspended ones kept out. */
+  listings?: Pick<Listings, 'matching' | 'hidden'> | null;
   /** Gemini, for planning the searches; absent: fallbackPlan. */
   generate?: Generate | null;
   db: DatabaseSync;
@@ -86,10 +92,16 @@ export async function huntSellers(product: string, near: { lat: number; lng: num
   // 2. Search. Google Maps listings carry their own pin and phone; web finds need a page that shows the number.
   const byPhone = new Map<string, FoundSeller>();
   let checked = 0, dropped = 0;
+  // Stores registered on StockRun whose products match come first, with their own prices.
+  for (const m of d.listings?.matching(product, near, radiusKm, plan.shopTypes) ?? []) {
+    const s = foundSeller(d.db, m.sellerId);
+    if (s) byPhone.set(s.phone, { ...s, km: Math.round(haversineKm(near, s) * 10) / 10, listed: true, products: m.products });
+  }
+  const off = (id: string) => !!d.listings?.hidden(id);
   const keep = (s: Omit<FoundSeller, 'id' | 'km' | 'foundAt'>) => {
     if (!s.kind) s.kind = null;
     const km = haversineKm(near, s);
-    if (km > radiusKm || byPhone.has(s.phone)) return;
+    if (km > radiusKm || byPhone.has(s.phone) || off(idFor(s.phone))) return;
     byPhone.set(s.phone, { ...s, id: idFor(s.phone), km: Math.round(km * 10) / 10, foundAt: now() });
   };
   if (d.places) {
@@ -132,15 +144,15 @@ export async function huntSellers(product: string, near: { lat: number; lng: num
 
   // 3. Sellers found before (e.g. the OpenStreetMap Lagos list) count too, when they are the kind that sells this.
   for (const s of foundNear(d.db, near, radiusKm, 500)) {
-    if (byPhone.has(s.phone) || !s.kind || !plan.shopTypes.includes(s.kind)) continue;
+    if (byPhone.has(s.phone) || !s.kind || !plan.shopTypes.includes(s.kind) || off(s.id) || s.source === 'listed') continue;
     byPhone.set(s.phone, s);
   }
   // 4. Rank: the kinds the plan put first, then sellers of unknown kind (Maps, web), then distance. Remember them.
-  const rank = (s: FoundSeller) => (s.kind ? (plan.shopTypes.indexOf(s.kind) + 1 || 50) : 25);
+  const rank = (s: FoundSeller) => (s.listed ? -100 : s.kind ? (plan.shopTypes.indexOf(s.kind) + 1 || 50) : 25);
   const sellers = [...byPhone.values()].sort((a, b) => rank(a) - rank(b) || a.km - b.km).slice(0, max);
   const save = d.db.prepare(`INSERT INTO found_sellers (id, name, address, lat, lng, phone, source, source_url, found_at, kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(phone) DO UPDATE SET name = excluded.name, address = excluded.address, lat = excluded.lat, lng = excluded.lng, source_url = excluded.source_url, found_at = excluded.found_at, kind = COALESCE(excluded.kind, kind)`);
-  for (const s of sellers) save.run(s.id, s.name, s.address, s.lat, s.lng, s.phone, s.source, s.sourceUrl, s.foundAt, s.kind ?? null);
+  for (const s of sellers) if (!s.listed) save.run(s.id, s.name, s.address, s.lat, s.lng, s.phone, s.source, s.sourceUrl, s.foundAt, s.kind ?? null);
   d.log?.(`hunt "${product}": ${plan.queries.length} searches, ${checked} checked, ${sellers.length} kept, ${dropped} dropped`);
   return { plan, sellers, checked, dropped, notes };
 }

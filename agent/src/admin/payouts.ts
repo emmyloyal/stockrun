@@ -140,6 +140,16 @@ export class Payouts {
     return { accountName, bankName: bank.name };
   }
 
+  /** The bank account on file for a seller (any order), or null. */
+  bankFor(sellerId: string): Bank | null {
+    const r = this.db.prepare('SELECT bank_name, account_number, account_name, bank_code, approved, source FROM seller_banks WHERE seller_key = ?').get(supplierKey(sellerId).toLowerCase()) as unknown as
+      { bank_name: string; account_number: string; account_name: string; bank_code: string | null; approved: number; source: 'admin' | 'seller' } | undefined;
+    return r ? { bankName: r.bank_name, accountNumber: r.account_number, accountName: r.account_name, bankCode: r.bank_code, approved: !!r.approved, source: r.source } : null;
+  }
+  approveBankFor(sellerId: string, by: string) {
+    this.db.prepare('UPDATE seller_banks SET approved = 1, updated_at = ?, updated_by = ? WHERE seller_key = ?').run(this.now(), by, supplierKey(sellerId).toLowerCase());
+  }
+
   /** An admin checked the name on a seller-submitted account against the business: payouts may go there now. */
   approveBank(admin: string, orderId: number): Payout {
     const p = this.one(orderId);

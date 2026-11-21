@@ -24,6 +24,8 @@ import { Geocoder } from '../discovery/geocode.ts';
 import { AdminError, type Payouts } from '../admin/payouts.ts';
 import type { Activity } from '../admin/activity.ts';
 import type { Withdrawals } from '../money/withdrawals.ts';
+import { BusinessError, type Listings } from '../business/listings.ts';
+import { ChatError, type Chats } from '../business/chat.ts';
 import { createHmac, timingSafeEqual as safeEqual } from 'node:crypto';
 import { draftMessage, whatsappLink } from '../discovery/draft.ts';
 import { PICKUP_REASONS, DELIVERY_REASONS } from '../check/checkService.ts';
@@ -48,6 +50,10 @@ export interface AppOptions {
   pickupRadiusM?: number;
   /** Seller payouts and the admin page; `admins` are the email accounts allowed in (ADMIN_EMAILS). */
   payouts?: Payouts | null;
+  /** Businesses that register their store (monthly fee, admin approval); absent: off. */
+  listings?: Listings | null;
+  /** In-app chat between buyers and registered stores. */
+  chats?: Chats | null;
   /** Buyer withdrawals to their bank (Paystack Transfers); absent: off. */
   withdrawals?: Withdrawals | null;
   /** Signs the links sellers use to add their bank account, and builds them (PUBLIC_URL). */
@@ -86,7 +92,13 @@ export function createApp(o: AppOptions): Server {
   /** The signed-in admin's email; anyone else gets 404, so the admin pages do not show they exist. */
   const admin = (c: Ctx): string => { const u = need(c); if (!isAdmin(u) || !o.payouts) throw new AuthError(404, 'Not found.'); return u.email!; };
   const adminTry = <T>(f: () => T): T => { try { return f(); } catch (e) { if (e instanceof AdminError) throw new AuthError(e.status, e.message); throw e; } };
-  const adminTryAsync = async <T>(f: () => Promise<T>): Promise<T> => { try { return await f(); } catch (e) { if (e instanceof AdminError || e instanceof PaystackError || e instanceof LedgerError) throw new AuthError((e as { status: number }).status, e.message); throw e; } };
+  const adminTryAsync = async <T>(f: () => Promise<T>): Promise<T> => { try { return await f(); } catch (e) { if (e instanceof AdminError || e instanceof PaystackError || e instanceof LedgerError || e instanceof BusinessError) throw new AuthError((e as { status: number }).status, e.message); throw e; } };
+  const hidden = (sellerId: string) => !!o.listings?.hidden(sellerId);
+  const biz = () => { if (!o.listings) throw new AuthError(503, 'Store registration is not switched on yet.'); return o.listings; };
+  const chat = <T>(f: (c: Chats) => T): T => {
+    if (!o.chats) throw new AuthError(503, 'Chat is not switched on yet.');
+    try { return f(o.chats); } catch (e) { if (e instanceof ChatError) throw new AuthError(e.status, e.message); throw e; }
+  };
   /** The token in a seller's bank link: only someone given the link can add the bank account for that seller. */
   const sellerToken = (sellerId: string) => createHmac('sha256', o.linkSecret ?? 'no-secret').update(`seller-bank:${sellerId}`).digest('base64url').slice(0, 22);
   const sellerTokenOk = (sellerId: string, t: unknown) => { const a = Buffer.from(sellerToken(sellerId)), b = Buffer.from(String(t ?? '')); return !!o.linkSecret && a.length === b.length && safeEqual(a, b); };
@@ -152,6 +164,8 @@ export function createApp(o: AppOptions): Server {
       logistics: p.carriers.map((x) => ({ id: x.id, name: x.name, api: !!x.connector })),
       emailSignIn: accounts.emailSignIn,
       sellerHunt: !!o.hunt && huntEnabled(o.hunt),
+      chat: !!o.chats,
+      business: o.listings ? { feeNaira: o.listings.feeKobo / 100, periodDays: Math.round(o.listings.periodMs / 86_400_000) } : null,
       withdrawals: !!o.withdrawals, sellerBankLinks: !!(o.linkSecret && o.publicUrl && o.payouts?.paystack),
     })],
     ['GET', /^\/api\/me$/, async (c) => (c.user ? { user: c.user, naira: money(c.user.id), admin: isAdmin(c.user) } : { user: null })],
@@ -267,9 +281,52 @@ export function createApp(o: AppOptions): Server {
       return {
         place: { lat, lng, address: address || matched, matched },
         searches: r.plan.queries, shopTypes: r.plan.shopTypes, checked: r.checked, dropped: r.dropped,
-        sellers: r.sellers.map((s) => ({ id: s.id, name: s.name, kind: s.kind ?? null, address: s.address, lat: s.lat, lng: s.lng, phone: s.phone, source: s.source, sourceUrl: s.sourceUrl, km: s.km })),
+        sellers: r.sellers.map((s) => ({ id: s.id, name: s.name, kind: s.kind ?? null, address: s.address, lat: s.lat, lng: s.lng, phone: s.phone, source: s.source, sourceUrl: s.sourceUrl, km: s.km, listed: !!s.listed, products: s.products ?? [] })),
       };
     }],
+
+    // ---------------------------------------------------------------- businesses: register a store (admin approves, monthly fee)
+    ['GET', /^\/api\/business$/, async (c) => {
+      const u = need(c), l = biz();
+      return { business: l.mine(u.id), feeNaira: l.feeKobo / 100, periodDays: Math.round(l.periodMs / 86_400_000), bankLinked: (() => {
+        const b = l.mine(u.id); if (!b || !o.payouts) return null;
+        return o.payouts.bankFor(b.sellerId);
+      })() };
+    }],
+    ['POST', /^\/api\/business$/, async (c) => { const u = need(c); return adminTryAsync(() => biz().save(u.id, c.body ?? {})); }],
+    ['POST', /^\/api\/business\/pay$/, async (c) => { const u = need(c); return adminTry(() => { try { return biz().payMonth(u.id, String(c.body?.key ?? '')); } catch (e) { if (e instanceof BusinessError) throw new AuthError(e.status, e.message); throw e; } }); }],
+    /** The store's bank account, so StockRun pays it for collected orders (checked with the bank; approved with the store). */
+    ['POST', /^\/api\/business\/bank$/, async (c) => {
+      const u = need(c), b = biz().mine(u.id);
+      if (!b) throw new AuthError(404, 'Register your store first.');
+      if (!o.payouts) throw new AuthError(503, 'Bank payments are not switched on yet.');
+      return adminTryAsync(async () => {
+        const r = await o.payouts!.sellerSubmitBank(b.sellerId, c.body ?? {});
+        if (b.review === 'approved') o.payouts!.approveBankFor(b.sellerId, 'store already approved');   // the store was vetted already
+        return r;
+      });
+    }],
+    ['GET', /^\/api\/admin\/businesses$/, async (c) => { admin(c); return biz().all().map((b) => ({ ...b, bank: o.payouts?.bankFor(b.sellerId) ?? null })); }],
+    ['POST', /^\/api\/admin\/businesses\/(found-[0-9a-f]{16})\/review$/, async (c) => {
+      const a = admin(c);
+      try { return biz().review(c.m[1], c.body?.approve === true, String(c.body?.note ?? ''), a); } catch (e) { if (e instanceof BusinessError) throw new AuthError(e.status, e.message); throw e; }
+    }],
+    ['POST', /^\/api\/admin\/businesses\/(found-[0-9a-f]{16})\/suspend$/, async (c) => {
+      admin(c);
+      try { return biz().suspend(c.m[1], c.body?.suspended !== false, String(c.body?.note ?? '')); } catch (e) { if (e instanceof BusinessError) throw new AuthError(e.status, e.message); throw e; }
+    }],
+
+    // ---------------------------------------------------------------- chat with registered stores
+    ['GET', /^\/api\/chats$/, async (c) => { const u = need(c); return chat((ch) => ({ chats: ch.list(u.id), unread: ch.unread(u.id) })); }],
+    ['POST', /^\/api\/chats$/, async (c) => {
+      const u = need(c), sellerId = String(c.body?.sellerId ?? '');
+      if (!/^found-[0-9a-f]{16}$/.test(sellerId)) throw new AuthError(400, 'Which store?');
+      const r = chat((ch) => ch.open(u.id, sellerId));
+      o.activity?.record(u.id, sellerId, 'opened_chat');
+      return r;
+    }],
+    ['GET', /^\/api\/chats\/(\d+)\/messages$/, async (c) => { const u = need(c); return chat((ch) => ch.messages(u.id, Number(c.m[1]), Number(c.url.searchParams.get('after')) || 0)); }],
+    ['POST', /^\/api\/chats\/(\d+)\/messages$/, async (c) => { const u = need(c); return chat((ch) => ch.send(u.id, Number(c.m[1]), c.body?.text)); }],
 
     // ---------------------------------------------------------------- banks: seller bank links, buyer withdrawals
     ['GET', /^\/api\/banks$/, async () => {
@@ -316,7 +373,7 @@ export function createApp(o: AppOptions): Server {
       admin(c);
       const t = o.payouts!.totals(), k = (x: number) => x / 100;
       return {
-        totals: { feesNaira: k(ledger.system('fees')), lockedNaira: k(t.lockedKobo), buyersAvailableNaira: k(t.buyersAvailableKobo), owedSellersNaira: k(t.owedSellersKobo), owedLogisticsNaira: k(t.owedLogisticsKobo), paidOutNaira: k(t.paidOutKobo), heldPayouts: t.heldPayouts },
+        totals: { feesNaira: k(ledger.system('fees')), listingsNaira: k(ledger.system('listings')), lockedNaira: k(t.lockedKobo), buyersAvailableNaira: k(t.buyersAvailableKobo), owedSellersNaira: k(t.owedSellersKobo), owedLogisticsNaira: k(t.owedLogisticsKobo), paidOutNaira: k(t.paidOutKobo), heldPayouts: t.heldPayouts },
         payouts: o.payouts!.list().map((p) => ({ ...p, amountNaira: k(p.amountKobo) })),
         log: o.payouts!.recentLog(30),
         contacts: o.activity?.list(200) ?? [],
@@ -372,7 +429,7 @@ export function createApp(o: AppOptions): Server {
       const u = need(c);
       if (!o.hunt) throw new AuthError(503, 'Seller contact is not switched on yet on this server.');
       const seller = foundSeller(o.hunt.db, c.m[1]);
-      if (!seller) throw new AuthError(404, 'That seller is not on the map any more.');
+      if (!seller || hidden(seller.id)) throw new AuthError(404, 'That seller is not on the map any more.');
       const request = String(c.body?.text ?? '').trim();
       if (request.length < 3 || request.length > 300) throw new AuthError(400, 'Type what you want to buy first (up to 300 characters).');
       const t = Date.now(), mine = (drafts.get(u.id) ?? []).filter((x) => x > t - 24 * 3600_000);
@@ -390,7 +447,7 @@ export function createApp(o: AppOptions): Server {
       const lat = Number(c.url.searchParams.get('lat')), lng = Number(c.url.searchParams.get('lng'));
       const from = IN_NIGERIA(lat, lng) ? { lat, lng } : { lat: 6.5244, lng: 3.3792 };      // Lagos when no pin
       const has = (...xs: (string | null | undefined)[]) => xs.some((x) => x?.toLowerCase().includes(needle));
-      const found = o.hunt ? foundNear(o.hunt.db, from, 1000, 1000).filter((f) => has(f.name, f.kind?.replace(/_/g, ' '), f.address))
+      const found = o.hunt ? foundNear(o.hunt.db, from, 1000, 1000).filter((f) => !hidden(f.id) && has(f.name, f.kind?.replace(/_/g, ' '), f.address))
         .map((f) => ({ id: f.id, name: f.name, kind: f.kind, address: f.address, lat: f.lat, lng: f.lng, phone: f.phone, source: f.source, sourceUrl: f.sourceUrl, km: f.km, demo: false })) : [];
       const demo = loadSuppliers().filter((s) => has(s.name, s.market, ...s.stocks.map((st) => st.item)))
         .map((s) => ({ id: s.id, name: s.name, kind: 'demo seller', address: s.market, lat: s.lat, lng: s.lng, phone: null, source: 'demo', sourceUrl: null, km: Math.round(haversineKm(from, s) * 10) / 10, demo: true }));
@@ -414,7 +471,7 @@ export function createApp(o: AppOptions): Server {
       return {
         center: { lat, lng }, radiusKm: radius,
         // Real businesses found on OpenStreetMap or by the AI hunt: not confirmed by StockRun.
-        found: o.hunt ? foundNear(o.hunt.db, { lat, lng }, radius).map((f) => ({ id: f.id, name: f.name, kind: f.kind, address: f.address, lat: f.lat, lng: f.lng, phone: f.phone, source: f.source, sourceUrl: f.sourceUrl, km: f.km })) : [],
+        found: o.hunt ? foundNear(o.hunt.db, { lat, lng }, radius).filter((f) => !hidden(f.id)).map((f) => ({ id: f.id, name: f.name, kind: f.kind, address: f.address, lat: f.lat, lng: f.lng, phone: f.phone, source: f.source, sourceUrl: f.sourceUrl, km: f.km })) : [],
         sellers: sellers.map(({ s, km }) => ({
           id: s.id, key: supplierKey(s.id), name: s.name, market: s.market, lat: s.lat, lng: s.lng, simulated: s.simulated, verified: buyers.sellerStatus(supplierKey(s.id)) === 1,
           km: Math.round(km * 10) / 10,

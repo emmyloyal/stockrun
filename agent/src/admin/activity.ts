@@ -3,7 +3,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { foundTable } from '../discovery/hunt.ts';
 
-export type ContactAction = 'drafted_message' | 'opened_whatsapp' | 'recorded_deal' | 'deal_refused';
+export type ContactAction = 'drafted_message' | 'opened_whatsapp' | 'opened_chat' | 'recorded_deal' | 'deal_refused';
 export interface ContactRow {
   at: number; action: ContactAction; detail: string | null;
   buyer: { id: number; label: string };

@@ -11,7 +11,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 
 export type Kind = 'available' | 'held';
-export type SystemAccount = 'paystack' | 'sellers' | 'logistics' | 'paid_out' | 'fees';
+export type SystemAccount = 'paystack' | 'sellers' | 'logistics' | 'paid_out' | 'fees' | 'listings';
 export class LedgerError extends Error {
   readonly status: number;
   constructor(status: number, message: string) { super(message); this.name = 'LedgerError'; this.status = status; }
@@ -28,7 +28,7 @@ export function migrateLedger(db: DatabaseSync) {
     CREATE TABLE IF NOT EXISTS ledger_entries (
       id INTEGER PRIMARY KEY, tx_id INTEGER NOT NULL REFERENCES ledger_tx(id), account_id INTEGER NOT NULL REFERENCES ledger_accounts(id),
       amount INTEGER NOT NULL, balance_after INTEGER NOT NULL);
-    INSERT OR IGNORE INTO ledger_accounts (owner, kind, allow_negative) VALUES ('system', 'paystack', 1), ('system', 'sellers', 0), ('system', 'logistics', 0), ('system', 'paid_out', 0), ('system', 'fees', 0);
+    INSERT OR IGNORE INTO ledger_accounts (owner, kind, allow_negative) VALUES ('system', 'paystack', 1), ('system', 'sellers', 0), ('system', 'logistics', 0), ('system', 'paid_out', 0), ('system', 'fees', 0), ('system', 'listings', 0);
   `);
 }
 
@@ -113,6 +113,10 @@ export class Ledger {
   /** The withdrawal transfer failed: the money comes back to the buyer, once. */
   withdrawFailed(userId: number, reference: string, kobo: number): boolean {
     return this.post(`withdraw-failed:${reference}`, 'withdraw_failed', userId, kobo, ['system', 'paystack'], [`user:${userId}`, 'available'], reference);
+  }
+  /** A business pays its monthly store listing from its StockRun balance (StockRun's income). Once per key. */
+  payListing(userId: number, key: string, kobo: number): boolean {
+    return this.post(`listing:${key}`, 'listing_fee', userId, kobo, [`user:${userId}`, 'available'], ['system', 'listings'], key);
   }
   /** StockRun's service fee for a completed pickup, from the buyer's locked money (the seller's payment is untouched). */
   payFee(userId: number, key: string, kobo: number): boolean {

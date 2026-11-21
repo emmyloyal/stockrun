@@ -4,6 +4,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { naira, server, whatsappLink, type AdminOrder, type AdminOverview, type Contact, type Payout } from './lib';
 import { BankFields, useBanks } from './Banks';
+import { STORE_KINDS } from './Store';
+import type { Business } from './lib';
 
 const when = (t: number) => new Date(t).toLocaleString('en-NG', { timeZone: 'Africa/Lagos', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 
@@ -26,6 +28,7 @@ export function Admin() {
         <dl className="money-grid">
           <div><dt>Locked in buyers' orders</dt><dd>{naira(t.lockedNaira)}</dd></div>
           <div><dt>StockRun fees earned</dt><dd>{naira(t.feesNaira ?? 0)}</dd></div>
+          <div><dt>Store listings earned</dt><dd>{naira(t.listingsNaira ?? 0)}</dd></div>
           <div><dt>Owed to sellers</dt><dd>{naira(t.owedSellersNaira)}</dd></div>
           <div><dt>Paid out to sellers</dt><dd>{naira(t.paidOutNaira)}</dd></div>
           <div><dt>Owed to logistics</dt><dd>{naira(t.owedLogisticsNaira)}</dd></div>
@@ -33,6 +36,8 @@ export function Admin() {
         </dl>
         <p className="fine">Naira is held in StockRun's ledger, not on-chain. "Owed to sellers" is what PickupCheck approved and nobody has sent yet.</p>
       </div>
+
+      <Stores />
 
       <div className="panel stack">
         <h2>Seller payouts</h2>
@@ -85,7 +90,46 @@ export function Admin() {
   );
 }
 
+/** Stores businesses registered: approve or reject new ones (with a reason), suspend live ones. */
+function Stores() {
+  const [list, setList] = useState<Business[] | null>(null);
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const [msg, setMsg] = useState('');
+  const load = useCallback(() => server.adminBusinesses().then(setList).catch((e) => setMsg(e.message)), []);
+  useEffect(() => { load(); }, [load]);
+  const act = async (f: () => Promise<unknown>) => { setMsg(''); try { await f(); await load(); } catch (e) { setMsg((e as Error).message); } };
+  if (!list) return null;
+  const order = { pending: 0, approved: 1, rejected: 2 } as const;
+  return (
+    <div className="panel stack">
+      <h2>Stores ({list.filter((b) => b.review === 'pending').length} waiting)</h2>
+      {list.length === 0 ? <p className="muted">No business has registered a store yet.</p> : (
+        <ul className="cards">{[...list].sort((a, b) => order[a.review] - order[b.review]).map((b) => (
+          <li key={b.sellerId} className="card stack tight">
+            <span className="row between"><strong>{b.name}</strong><span className="pill">{b.suspended ? 'suspended' : b.review === 'approved' ? (b.live ? 'live' : 'approved, not paid') : b.review}</span></span>
+            <span className="fine">{STORE_KINDS.find(([k]) => k === b.kind)?.[1] ?? b.kind} · {b.address} · WhatsApp <a href={whatsappLink(b.phone, '')} target="_blank" rel="noreferrer">{b.phone}</a> · owner {b.owner?.label}</span>
+            <span className="fine">{b.products.map((p) => `${p.item} ${naira(p.priceNaira)}/${p.unit}`).join(' · ')}</span>
+            {b.bank && <span className="fine">Bank: {b.bank.bankName} {b.bank.accountNumber} · name at the bank: <strong>{b.bank.accountName}</strong>{b.bank.approved ? '' : ' (approved with the store)'}</span>}
+            {b.reviewNote && <span className="fine">Reason given: {b.reviewNote}</span>}
+            <div className="row wrap">
+              <input placeholder="Reason (for reject or suspend)" value={notes[b.sellerId] ?? ''} maxLength={300} onChange={(e) => setNotes({ ...notes, [b.sellerId]: e.target.value })} />
+              {b.review !== 'approved' && <button className="btn primary small" onClick={() => act(() => server.adminReviewBusiness(b.sellerId, true, ''))}>Approve</button>}
+              {b.review !== 'rejected' && !b.live && <button className="btn ghost small" disabled={(notes[b.sellerId] ?? '').trim().length < 3} onClick={() => act(() => server.adminReviewBusiness(b.sellerId, false, notes[b.sellerId] ?? ''))}>Reject</button>}
+              {b.review === 'approved' && (b.suspended
+                ? <button className="btn ghost small" onClick={() => act(() => server.adminSuspendBusiness(b.sellerId, false, ''))}>Lift suspension</button>
+                : <button className="btn ghost small" disabled={(notes[b.sellerId] ?? '').trim().length < 3} onClick={() => act(() => server.adminSuspendBusiness(b.sellerId, true, notes[b.sellerId] ?? ''))}>Suspend</button>)}
+            </div>
+          </li>
+        ))}</ul>
+      )}
+      <p className="fine">Before approving, check the store is real (call or WhatsApp the number) and that the name at the bank matches the business or its owner: approving also lets payouts go to that account.</p>
+      {msg && <p className="alert">{msg}</p>}
+    </div>
+  );
+}
+
 const ACTION: Record<Contact['action'], string> = {
+  opened_chat: 'opened a StockRun chat with',
   drafted_message: 'got an AI message for', opened_whatsapp: 'opened WhatsApp with', recorded_deal: 'recorded a deal with', deal_refused: 'tried to record a deal with',
 };
 /** Grouped by seller (most recent first), each with its contact details and what buyers did. */
