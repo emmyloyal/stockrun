@@ -28,11 +28,11 @@ Full plan (living doc): https://claude.ai/artifact/Eg2nTvmL9rk9ATxjSAcbcW
 | 2:35–3:00 | Users, fee model, pilot feedback |
 
 ## Submission checklist
-- [ ] Processor address + circuit IDs (3 main + shared)
+- [x] Processor address + circuit IDs (3 circuits, flat: no shared REF circuits; see README)
 - [ ] Vault address
 - [ ] DeWEB app link
-- [ ] Description: product, users + how to reach them, revenue, why they pay and stay
-- [ ] TapeOut features used
-- [ ] Public GitHub repo
+- [ ] Description: draft in docs/SUBMISSION.md (fill the [you] parts)
+- [x] TapeOut features used (README, docs/SUBMISSION.md)
+- [x] Public GitHub repo
 - [ ] Demo video ≤ 3 min
 - [ ] Form: https://forms.gle/EoDNbxQ65dev1wFd9 — by Dec 6

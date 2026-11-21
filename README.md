@@ -1,35 +1,75 @@
 # StockRun
 
-**StockRun finds it, buys it and delivers it. Nobody gets paid until the goods are checked, and every step is guarded by a circuit on X Layer.**
+**Tell an AI what you want to buy. It finds real sellers near you, writes your WhatsApp message, and locks your
+money until you have the goods. Every payment decision is made by a TapeOut circuit on X Layer.**
 
-An AI restocking agent for small shops in Lagos, built on TapeOut and X Layer for the Build X hackathon.
+Built for the X Layer × TapeOut "Build X" hackathon. Live at **https://stockrun.onrender.com** (X Layer mainnet;
+naira through Paystack **test mode**, so no real money moves).
 
 ## How it works
-1. **Order:** the shop owner sends the order by text or voice.
-2. **Approve and lock:** RestockGuard (a TapeOut circuit) approves it, and the money is locked in the vault.
-3. **Find and negotiate:** the agent finds suppliers on the map and negotiates on WhatsApp.
-4. **Pickup check:** the owner chooses who collects: themselves, or a verified logistics company (Sendrelay first). That handler checks the goods at the supplier, and PickupCheck pays the supplier for the count it confirms, in naira.
-5. **Delivery check** (logistics company only): the owner confirms receipt and gives the rider the delivery code. DeliveryCheck pays the company's fee, or holds it back for the owner if goods arrive short; the shortfall is claimed from the company's insurance. There are no rider bonds.
+1. **Sign in** with an email code or a wallet. **Deposit naira** with Paystack (test card in test mode).
+2. **Ask:** type what you want, your budget and your area ("20 cartons of Indomie, ₦300,000, Ketu"). One word is
+   enough for the area.
+3. **Find sellers:** the AI decides what kind of seller sells this (bulk orders → wholesalers, small orders →
+   supermarkets) and finds the closest ones that list a mobile number. Sellers come from OpenStreetMap: real
+   businesses, labelled "not checked by StockRun".
+4. **Message:** the AI writes your first WhatsApp message (never your budget); a link opens *your own* WhatsApp chat
+   with the seller. StockRun sends no messages itself.
+5. **Record the deal:** enter what you agreed. **RestockGuard** (circuit #1) decides: lock the money, ask you first
+   (far away, alcohol, electronics) or reject it with nothing charged.
+6. **Collect:** at the shop, with the goods in your hands, confirm the count. Your phone's location must be within
+   ~300 m of the shop. **PickupCheck** (circuit #2) approves the seller's payment for what you counted; the rest comes
+   back to you.
+7. **Seller paid:** StockRun pays the seller's bank through Paystack Transfers, automatically once an admin has
+   approved the account (sellers add it from a link you forward). Delivery by a logistics company is decided by
+   **DeliveryCheck** (circuit #3).
 
-## TapeOut ecosystem used
-- **Processor Factory, NAND transistors, tapeout, `eval()`, REF:** three decision circuits plus shared comparator circuits.
-- **DeWEB:** hosts the app.
-- **TapeSend:** encrypted receipts between owner, rider and StockRun.
-- **TapeCode:** frontend scaffolding, security audit, DeWEB deployment.
+## What is on-chain and what is not
+| | Where it lives | Who can move it |
+| --- | --- | --- |
+| The three circuits' rules | X Layer, taped out (fixed NAND netlists; the processor is frozen) | Nobody can change them |
+| Each payment decision | Asked of the circuit with `eval` on X Layer (read-only; no gas, no wallet). The input, output, circuit ID and block are saved with the order, so anyone can re-ask the circuit and check | — |
+| Naira balances and locked money | **StockRun's double-entry ledger**, backed by StockRun's Paystack/bank account. **Not on-chain.** | Only circuit decisions move locked money; an admin can send approved payouts but cannot create, change or redirect them |
+| Coins (wallet users) | The buyer's own vault contract (`contracts/src/StockRunVault.sol`), which calls the circuits itself | **Not live yet**: the vault is written and fork-tested, not deployed on mainnet |
 
-## Repo
-See `CLAUDE.md` for the layout and the design rules, and `docs/PLAN.md` for the schedule.
+## TapeOut and X Layer used
+- **Processor Factory, NAND transistor tokens, tapeout, `eval`:** three decision circuits, taped out on X Layer
+  mainnet on 2026-11-19 and called live for every naira order.
+- **Not used:** DeWEB (the app runs on Render), TapeSend, REF (the circuits are flat netlists), circuit containers.
 
-## Website (`site/`)
-`site/index.html` is the public landing page. It is one static file with no build step. It includes a working RestockGuard demo, which runs a JavaScript copy of the reference model.
-- **Deploy on Vercel:** import the repo, set **Root Directory** to `site`, set **Framework Preset** to *Other*, and leave the build command empty. Alternatively, run `npx vercel site` from the repo root.
-- **Keep it honest:** the page's "Where we are" section lists what is built, what is simulated and what is not built yet. Update it, and the gate counts, whenever those change.
-
-## Status
 | Item | Value |
 | --- | --- |
-| Processor (X Layer) | [`0x34efCc0a3191A48Feec787252E6d817b063A4017`](https://www.oklink.com/xlayer/address/0x34efCc0a3191A48Feec787252E6d817b063A4017), taped out 2026-11-19 (see `deployments/xlayer.json`) |
-| Circuit IDs | RestockGuard #1 (119 NAND) · PickupCheck #2 (210 NAND) · DeliveryCheck #3 (141 NAND) |
-| Vault | _TBD_ |
-| Server + app | https://stockrun.onrender.com (X Layer mainnet; Render, deployed 2026-11-20) |
-| App (DeWEB) | `1.2.433.tape` at https://1-2-433.tapekit.org/ (publish script ready, rehearsed on a fork; not published yet) |
+| Processor | [`0x34efCc0a3191A48Feec787252E6d817b063A4017`](https://www.oklink.com/xlayer/address/0x34efCc0a3191A48Feec787252E6d817b063A4017) |
+| RestockGuard #1 (34 in → 5 out, 119 NAND) | tapeout tx [`0xaf6429bf…d2a0feca6fd`](https://www.oklink.com/xlayer/tx/0xaf6429bf2e4a7bc4e435ca493815b8b868d7728389ed904e5eb0dd2a0feca6fd) |
+| PickupCheck #2 (27 in → 13 out, 210 NAND) | tapeout tx [`0x24b80f4d…38bacae`](https://www.oklink.com/xlayer/tx/0x24b80f4d29c57371c33357cd9b9ece03038d9016ade3e296620747c5e18bacae) |
+| DeliveryCheck #3 (21 in → 13 out, 141 NAND) | tapeout tx [`0x0249042e…e86d66d2`](https://www.oklink.com/xlayer/tx/0x0249042e8918f77cbe4056880fc10a0d54ab3bdb4599f47fe66fa313e86d66d2) |
+| Vault | not deployed yet |
+
+The rules each circuit implements are in [`docs/CIRCUITS.md`](docs/CIRCUITS.md); the TypeScript reference model in
+[`circuits/reference/`](circuits/reference/) is the source of truth, and tests check the netlists match it bit for bit.
+
+## Status
+**Works:** email and wallet sign-in · Paystack deposits (test) · address-first seller search with AI planning ·
+AI-written WhatsApp messages · record a deal → RestockGuard → money locked · pickup with a location check →
+PickupCheck → seller's payment approved · automatic seller payouts and buyer withdrawals through Paystack (test) ·
+admin page (orders, money held, payouts, which sellers buyers contacted).
+
+**Not yet:** paying with coins through the vault · persistent hosting (Render's free plan wipes the database on
+restart, so balances and orders are lost) · real logistics bookings (Sendrelay is built, needs a live key) ·
+Google Maps sellers (built, needs billing).
+
+## Run it
+Needs Node 24+ (`node:sqlite`) and, for the local chain, [Foundry](https://getfoundry.sh) (`anvil`).
+```
+cd app && npm install && npm run build          # the app, served by the server
+cd ../agent && npm install && npm run serve     # local chain, test money, codes printed in the console
+cd ../agent && npm test                          # server tests
+cd ../circuits && npm install && npm test        # circuit reference model
+cd ../contracts && forge build && forge test --fork-url $XLAYER_RPC   # vault, on a fork of X Layer
+```
+`npm run serve:xlayer` runs against X Layer mainnet. Settings are documented in [`.env.example`](.env.example).
+
+## Repo
+`agent/` server and AI agent · `app/` web app (React, Leaflet) · `circuits/` reference model, netlists, tapeout
+scripts · `contracts/` the vault (Foundry) · `deployments/xlayer.json` mainnet addresses · `docs/` design notes ·
+`site/` landing page.
