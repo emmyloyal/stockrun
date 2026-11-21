@@ -20,8 +20,14 @@ export interface Payout {
 export interface AdminOverview {
   totals: { lockedNaira: number; buyersAvailableNaira: number; owedSellersNaira: number; owedLogisticsNaira: number; paidOutNaira: number; heldPayouts: number };
   payouts: Payout[]; log: { admin: string; action: string; orderId: number | null; detail: string; at: number }[];
+  contacts: Contact[];
 }
-export interface AdminOrder { orderId: number; buyerId: number; status: string; ordered: number; picked: number; unitPriceNaira: number; totalNaira: number; deliveryFeeNaira: number; self: boolean; createdAt: number; circuits: string[]; seller: string }
+export interface Contact {
+  at: number; action: 'drafted_message' | 'opened_whatsapp' | 'recorded_deal' | 'deal_refused'; detail: string | null;
+  buyer: { id: number; label: string };
+  seller: { id: string; name: string; phone: string | null; address: string | null; kind: string | null; source: string | null; sourceUrl: string | null };
+}
+export interface AdminOrder { orderId: number; buyerId: number; buyer: string; sellerPhone: string | null; status: string; ordered: number; picked: number; unitPriceNaira: number; totalNaira: number; deliveryFeeNaira: number; self: boolean; createdAt: number; circuits: string[]; seller: string }
 export interface Place { lat: number; lng: number; address: string }
 export interface CheckResult {
   status: 'retake' | 'waiting_rider' | 'settled' | 'mismatch' | 'error';
@@ -103,6 +109,7 @@ export const server = {
   blockSeller: (id: string) => call<MySeller>(`/api/my-sellers/${id}/block`, {}),
   recordDeal: (d: { sellerId: string; item: string; quantity: number; unit: string; unitPriceNaira: number; category: Category; delivery: 'self' | 'logistics'; place: Place; contactPhone?: string }) =>
     call<DealResult>('/api/deals', d),
+  sellerOpened: (sellerId: string) => call<{ ok: true }>(`/api/sellers/${sellerId}/opened`, {}),
   adminOverview: () => call<AdminOverview>('/api/admin/overview'),
   adminOrders: () => call<AdminOrder[]>('/api/admin/orders'),
   adminBank: (orderId: number, b: Bank) => call<Payout>(`/api/admin/payouts/${orderId}/bank`, b),

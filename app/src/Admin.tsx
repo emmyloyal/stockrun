@@ -2,7 +2,7 @@
 // The admin never decides a payment: PickupCheck approved each payout and its amount. The admin sends the bank
 // transfer from StockRun's account, then records the reference here (or holds the payout for review).
 import { useCallback, useEffect, useState } from 'react';
-import { naira, server, type AdminOrder, type AdminOverview, type Payout } from './lib';
+import { naira, server, whatsappLink, type AdminOrder, type AdminOverview, type Contact, type Payout } from './lib';
 
 const when = (t: number) => new Date(t).toLocaleString('en-NG', { timeZone: 'Africa/Lagos', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 
@@ -54,11 +54,18 @@ export function Admin() {
               <li key={o.orderId} className="card stack tight">
                 <span className="row between"><strong>#{o.orderId} · {o.seller}</strong><span className="pill">{o.status}</span></span>
                 <span className="fine">{o.ordered} × {naira(o.unitPriceNaira)} = {naira(o.totalNaira)}{o.self ? ' · buyer collects' : ` + ${naira(o.deliveryFeeNaira)} delivery`}{o.picked ? ` · ${o.picked} picked up` : ''} · {when(o.createdAt)}</span>
-                <span className="fine">Circuits that decided: {o.circuits.join(' → ') || 'none yet'} · buyer #{o.buyerId}</span>
+                <span className="fine">Buyer {o.buyer}{o.sellerPhone ? <> · seller WhatsApp <a href={whatsappLink(o.sellerPhone, '')} target="_blank" rel="noreferrer">{o.sellerPhone}</a></> : ''}</span>
+                <span className="fine">Circuits that decided: {o.circuits.join(' → ') || 'none yet'}</span>
               </li>
             ))}
           </ul>
         )}
+      </div>
+
+      <div className="panel stack">
+        <h2>Sellers buyers contacted</h2>
+        <p className="fine">Every time a buyer got an AI message for a seller, opened the WhatsApp chat, or recorded a deal. Sellers were found on public maps and are not checked by StockRun.</p>
+        <SellerContacts contacts={ov.contacts} />
       </div>
 
       {ov.log.length > 0 && (
@@ -70,6 +77,39 @@ export function Admin() {
       )}
       {error && <p className="alert">{error}</p>}
     </div>
+  );
+}
+
+const ACTION: Record<Contact['action'], string> = {
+  drafted_message: 'got an AI message for', opened_whatsapp: 'opened WhatsApp with', recorded_deal: 'recorded a deal with', deal_refused: 'tried to record a deal with',
+};
+/** Grouped by seller (most recent first), each with its contact details and what buyers did. */
+function SellerContacts({ contacts }: { contacts: Contact[] }) {
+  if (!contacts.length) return <p className="muted">No buyer has contacted a seller yet.</p>;
+  const bySeller = new Map<string, Contact[]>();
+  for (const c of contacts) bySeller.set(c.seller.id, [...(bySeller.get(c.seller.id) ?? []), c]);
+  return (
+    <ul className="cards">
+      {[...bySeller.values()].map((list) => {
+        const s = list[0].seller, buyers = new Set(list.map((c) => c.buyer.id)).size;
+        return (
+          <li key={s.id} className="card stack tight">
+            <span className="row between"><strong>{s.name}</strong><span className="fine">{buyers} buyer{buyers === 1 ? '' : 's'} · {list.length} action{list.length === 1 ? '' : 's'}</span></span>
+            <span className="fine">
+              {s.kind ? `${s.kind.replace(/_/g, ' ')} · ` : ''}{s.address ?? 'address unknown'}
+              {s.phone && <> · WhatsApp <a href={whatsappLink(s.phone, '')} target="_blank" rel="noreferrer">{s.phone}</a></>}
+              {s.sourceUrl && <> · <a href={s.sourceUrl} target="_blank" rel="noreferrer">found on {s.source === 'osm' ? 'OpenStreetMap' : s.source === 'maps' ? 'Google Maps' : 'the web'}</a></>}
+            </span>
+            <details>
+              <summary className="fine">What buyers did</summary>
+              <ul className="plain">
+                {list.map((c, i) => <li key={i} className="fine">{when(c.at)} · {c.buyer.label} {ACTION[c.action]} {s.name}{c.detail ? `: ${c.detail}` : ''}</li>)}
+              </ul>
+            </details>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

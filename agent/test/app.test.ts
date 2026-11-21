@@ -19,6 +19,7 @@ import { NairaOrders } from '../src/orders/nairaOrders.ts';
 import { foundTable } from '../src/discovery/hunt.ts';
 import { SELLER_APPROVAL_DELAY_MS } from '../src/buyers/buyers.ts';
 import { Payouts } from '../src/admin/payouts.ts';
+import { Activity } from '../src/admin/activity.ts';
 import { supplierKey } from '../src/tools/suppliers.ts';
 
 const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(200, 9)]).toString('base64');
@@ -59,7 +60,7 @@ describe.skipIf(!localChainAvailable())('StockRun server', () => {
     buyers = new Buyers(db, p, ledger, orders, { extractor: new RuleExtractor(), channel: new BotChannel(), prices: new PriceBook(), foundDb: db, now: () => clock });
     hunt = { db, places: null, osm: null, web: null, generate: null };
     const payouts = new Payouts({ db, ledger, sellerOf: (k) => (k.toLowerCase() === supplierKey('found-00000000000000a1').toLowerCase() ? { name: 'Agora Marketplace', phone: '+2349079579400' } : null) });
-    server = createApp({ hunt, payouts, admins: new Set(['boss@example.com']), platform: p, accounts: new Accounts(db, new ConsoleSms(), 'x'.repeat(40), Date.now, null, mail), buyers, ledger, prices: new PriceBook(), paystack: null, allowedOrigins: [SITE], log: (l) => process.env.DEBUG_SERVER && console.error(l) });
+    server = createApp({ hunt, payouts, activity: new Activity(db), admins: new Set(['boss@example.com']), platform: p, accounts: new Accounts(db, new ConsoleSms(), 'x'.repeat(40), Date.now, null, mail), buyers, ledger, prices: new PriceBook(), paystack: null, allowedOrigins: [SITE], log: (l) => process.env.DEBUG_SERVER && console.error(l) });
     await new Promise<void>((r) => server.listen(0, r));
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   }, 60_000);
@@ -208,7 +209,14 @@ describe.skipIf(!localChainAvailable())('StockRun server', () => {
     expect(p0).toMatchObject({ status: 'owed', amountNaira: 42_000, buyer: 'gbenga@example.com', bank: null });   // 3 cartons at ₦14,000
     expect(ov.totals.owedSellersNaira).toBeGreaterThanOrEqual(42_000);
     const id = p0.orderId, owedBefore = ov.totals.owedSellersNaira;
-    expect((await boss.call('/api/admin/orders')).json.find((o: any) => o.orderId === id)).toMatchObject({ status: 'Delivered', picked: 3, seller: 'Agora Marketplace', circuits: ['restock', 'pickup'] });
+    expect((await boss.call('/api/admin/orders')).json.find((o: any) => o.orderId === id)).toMatchObject({ status: 'Delivered', picked: 3, seller: 'Agora Marketplace', sellerPhone: '+2349079579400', buyer: 'gbenga@example.com', circuits: ['restock', 'pickup'] });
+    // Which sellers buyers engaged with: the deal gbenga recorded (and the ones refused), with the seller's details.
+    const contacts = ov.contacts.filter((x: any) => x.buyer.label === 'gbenga@example.com');
+    expect(contacts.find((x: any) => x.action === 'recorded_deal' && x.seller.id === 'found-00000000000000a1')).toMatchObject({ seller: { name: 'Agora Marketplace', phone: '+2349079579400', kind: 'supermarket', source: 'osm' } });
+    expect(contacts.find((x: any) => x.action === 'recorded_deal' && x.seller.id === 'found-00000000000000a1').detail).toMatch(/4 carton Indomie carton at ₦14,000: locked \(order #\d+\)/);
+    expect(contacts.some((x: any) => x.action === 'deal_refused' && /balance is too low/.test(x.detail))).toBe(true);
+    expect((await buyer.call('/api/sellers/found-00000000000000a1/opened', {})).status).toBe(200);
+    expect((await boss.call('/api/admin/overview')).json.contacts[0]).toMatchObject({ action: 'opened_whatsapp', buyer: { label: 'just-a-buyer@example.com' }, seller: { name: 'Agora Marketplace' } });
 
     expect((await boss.call(`/api/admin/payouts/${id}/paid`, { reference: 'TRF12345' })).json.error).toMatch(/bank account first/);
     expect((await boss.call(`/api/admin/payouts/${id}/bank`, { bankName: 'GTBank', accountNumber: '01234', accountName: 'Agora' })).status).toBe(400);

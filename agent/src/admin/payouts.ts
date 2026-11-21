@@ -131,6 +131,11 @@ export class Payouts {
   }
 
   sellerName(key: string): string { return this.sellerOf(key as Hash)?.name ?? 'Unknown seller'; }
+  sellerPhone(key: string): string | null { return this.sellerOf(key as Hash)?.phone ?? null; }
+  buyerLabel(userId: number): string {
+    const u = this.db.prepare('SELECT email, username, wallet FROM users WHERE id = ?').get(userId) as unknown as { email: string | null; username: string | null; wallet: string | null } | undefined;
+    return u?.username ? `@${u.username}` : u?.email ?? (u?.wallet ? `${u.wallet.slice(0, 6)}…${u.wallet.slice(-4)}` : `user ${userId}`);
+  }
 
   /** Totals for the admin page, in kobo. */
   totals() {

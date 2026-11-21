@@ -22,6 +22,7 @@ import { RESTOCK_REASONS } from '../tools/vault.ts';
 import { foundNear, foundSeller, huntEnabled, huntSellers, type HuntDeps } from '../discovery/hunt.ts';
 import { Geocoder } from '../discovery/geocode.ts';
 import { AdminError, type Payouts } from '../admin/payouts.ts';
+import type { Activity } from '../admin/activity.ts';
 import { draftMessage, whatsappLink } from '../discovery/draft.ts';
 import { PICKUP_REASONS, DELIVERY_REASONS } from '../check/checkService.ts';
 
@@ -43,6 +44,8 @@ export interface AppOptions {
   hunt?: Omit<HuntDeps, 'db'> & { db: HuntDeps['db']; perUserDaily?: number; siteDaily?: number };
   /** Seller payouts and the admin page; `admins` are the email accounts allowed in (ADMIN_EMAILS). */
   payouts?: Payouts | null;
+  /** Which found sellers buyers messaged or dealt with (shown to admins). */
+  activity?: Activity | null;
   admins?: Set<string>;
   /** Place search for the map's search box (OpenStreetMap Nominatim); absent: sellers only. */
   geocoder?: Geocoder | null;
@@ -252,6 +255,7 @@ export function createApp(o: AppOptions): Server {
         totals: { lockedNaira: k(t.lockedKobo), buyersAvailableNaira: k(t.buyersAvailableKobo), owedSellersNaira: k(t.owedSellersKobo), owedLogisticsNaira: k(t.owedLogisticsKobo), paidOutNaira: k(t.paidOutKobo), heldPayouts: t.heldPayouts },
         payouts: o.payouts!.list().map((p) => ({ ...p, amountNaira: k(p.amountKobo) })),
         log: o.payouts!.recentLog(30),
+        contacts: o.activity?.list(200) ?? [],
       };
     }],
     ['GET', /^\/api\/admin\/orders$/, async (c) => {
@@ -261,7 +265,7 @@ export function createApp(o: AppOptions): Server {
         unitPriceNaira: r.unit_price / 100, totalNaira: (r.ordered * r.unit_price) / 100, deliveryFeeNaira: r.rider_fee / 100,
         self: r.rider.toLowerCase() === SELF_HANDLER.toLowerCase(), createdAt: r.created_at,
         circuits: (JSON.parse(r.evidence) as { circuit: string }[]).map((e) => e.circuit),
-        seller: o.payouts!.sellerName(r.supplier_key),
+        seller: o.payouts!.sellerName(r.supplier_key), sellerPhone: o.payouts!.sellerPhone(r.supplier_key), buyer: o.payouts!.buyerLabel(r.user_id),
       }));
     }],
     ['POST', /^\/api\/admin\/payouts\/(\d+)\/bank$/, async (c) => { const a = admin(c); return adminTry(() => o.payouts!.setBank(a, Number(c.m[1]), c.body ?? {})); }],
@@ -274,7 +278,20 @@ export function createApp(o: AppOptions): Server {
     ['POST', /^\/api\/my-sellers\/(found-[0-9a-f]{16})$/, async (c) => buyers.addSeller(need(c).id, c.m[1])],
     ['POST', /^\/api\/my-sellers\/(found-[0-9a-f]{16})\/block$/, async (c) => buyers.blockSeller(need(c).id, c.m[1])],
     /** A deal the buyer agreed with a found seller becomes an order: RestockGuard decides, the seller is paid at pickup. */
-    ['POST', /^\/api\/deals$/, async (c) => buyers.recordDeal(need(c), c.body ?? {})],
+    /** The buyer opened the WhatsApp chat with a found seller (the app tells us when the link is tapped). */
+    ['POST', /^\/api\/sellers\/(found-[0-9a-f]{16})\/opened$/, async (c) => { const u = need(c); o.activity?.record(u.id, c.m[1], 'opened_whatsapp'); return { ok: true }; }],
+    ['POST', /^\/api\/deals$/, async (c) => {
+      const u = need(c), sellerId = typeof c.body?.sellerId === 'string' && /^found-[0-9a-f]{16}$/.test(c.body.sellerId) ? c.body.sellerId : null;
+      const what = `${c.body?.quantity ?? '?'} ${c.body?.unit ?? ''} ${c.body?.item ?? ''} at ₦${Number(c.body?.unitPriceNaira || 0).toLocaleString('en-NG')}`.replace(/\s+/g, ' ').trim();
+      try {
+        const r = await buyers.recordDeal(u, c.body ?? {});
+        if (sellerId) o.activity?.record(u.id, sellerId, 'recorded_deal', `${what}: ${r.status}${r.orderId ? ` (order #${r.orderId})` : ''}`);
+        return r;
+      } catch (e) {
+        if (sellerId) o.activity?.record(u.id, sellerId, 'deal_refused', `${what}: ${(e as Error).message}`);
+        throw e;
+      }
+    }],
 
     // ---------------------------------------------------------------- the map
     /** The AI writes the buyer's WhatsApp message to a found seller; the buyer sends it from their own WhatsApp. */
@@ -290,6 +307,7 @@ export function createApp(o: AppOptions): Server {
       drafts.set(u.id, [...mine, t]);
       const area = String(c.body?.place?.address ?? '').trim().slice(0, 120) || 'Lagos';
       const d = await draftMessage(o.hunt.generate, { request, sellerName: seller.name, sellerKind: null, area, delivery: c.body?.delivery === 'self' ? 'self' : 'logistics' });
+      o.activity?.record(u.id, seller.id, 'drafted_message', request);
       return { seller: { id: seller.id, name: seller.name, phone: seller.phone }, message: d.message, ai: d.ai, whatsappUrl: whatsappLink(seller.phone, d.message) };
     }],
     /** The map's search box: sellers anywhere (by name, kind, market or product) and places in Nigeria. Public. */

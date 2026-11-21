@@ -309,7 +309,7 @@ function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me:
             <label className="field"><span>{draft.ai ? 'Written by the AI from your request. Change anything you like.' : 'Your message. Change anything you like.'}</span>
               <textarea rows={4} value={draft.message} maxLength={600} onChange={(e) => setDraft({ ...draft, message: e.target.value })} />
             </label>
-            <a className="btn wa" href={whatsappLink(draft.phone, draft.message)} target="_blank" rel="noreferrer">Open WhatsApp chat</a>
+            <a className="btn wa" href={whatsappLink(draft.phone, draft.message)} target="_blank" rel="noreferrer" onClick={() => { server.sellerOpened(draft.id).catch(() => {}); }}>Open WhatsApp chat</a>
             <button className="btn ghost" onClick={() => openDeal(draft.id, draft.name)}>Agreed a price? Record the deal</button>
             <p className="fine">WhatsApp opens on your phone with this message typed in; you send it and chat with the seller yourself. StockRun does not see the chat. This seller was found on a public map and is not checked by StockRun, so agree the price and see the goods before you pay.</p>
             <button className="link" onClick={() => setDraft(null)}>Close</button>

@@ -21,6 +21,7 @@ import { OsmSearch } from '../discovery/osm.ts';
 import { seedOsmSellers } from '../discovery/hunt.ts';
 import { Geocoder } from '../discovery/geocode.ts';
 import { Payouts, adminList } from '../admin/payouts.ts';
+import { Activity } from '../admin/activity.ts';
 import { loadSuppliers, supplierKey } from '../tools/suppliers.ts';
 import type { Hash } from 'viem';
 import { WebSellerSearch } from '../discovery/webSearch.ts';
@@ -106,7 +107,7 @@ const admins = adminList(envValue(env, 'ADMIN_EMAILS'));
 
 const staticDir = fileURLToPath(new URL('../../../app/dist/', import.meta.url));
 const server = createApp({
-  platform: p, accounts, buyers, ledger, prices, paystack, hunt, payouts, admins, geocoder: new Geocoder({ log: (l) => log(`address search: ${l}`) }), demoNaira: network === 'local' || envValue(env, 'DEMO_NAIRA') === '1',
+  platform: p, accounts, buyers, ledger, prices, paystack, hunt, payouts, admins, activity: new Activity(db), geocoder: new Geocoder({ log: (l) => log(`address search: ${l}`) }), demoNaira: network === 'local' || envValue(env, 'DEMO_NAIRA') === '1',
   staticDir: existsSync(staticDir) ? staticDir : undefined,
   secureCookies: envValue(env, 'SECURE_COOKIES') === '1', log,
   sendrelayWebhookSecret: envValue(env, 'SENDRELAY_WEBHOOK_SECRET'),
