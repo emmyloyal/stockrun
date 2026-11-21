@@ -13,7 +13,7 @@ export interface Config {
   sellerBankLinks?: boolean;
   sellerHunt: boolean;
 }
-export interface User { id: number; phone: string | null; email: string | null; wallet: Address | null; username: string | null; displayName: string | null; hasAvatar: boolean; createdAt: number }
+export interface User { id: number; phone: string | null; email: string | null; wallet: Address | null; username: string | null; displayName: string | null; hasAvatar: boolean; createdAt: number; role?: 'buyer' | 'shop' }
 export interface NairaBalance { availableNaira: number; heldNaira: number }
 export interface Me { user: User | null; naira?: NairaBalance; admin?: boolean }
 export interface Bank { bankName: string; accountNumber: string; accountName: string; bankCode?: string | null; approved?: boolean; source?: 'admin' | 'seller' }
@@ -129,6 +129,7 @@ export const server = {
   sellerBankLink: (sellerId: string) => call<{ url: string; message: string; whatsappUrl: string | null }>(`/api/sellers/${sellerId}/bank-link`, {}),
   sellerBankInfo: (sellerId: string, t: string) => call<{ name: string; transfers: boolean; test: boolean }>(`/api/seller-bank/${sellerId}?t=${encodeURIComponent(t)}`),
   sellerBankSubmit: (sellerId: string, t: string, b: { bankCode: string; accountNumber: string }) => call<{ accountName: string; bankName: string }>(`/api/seller-bank/${sellerId}`, { t, ...b }),
+  setRole: (role: 'buyer' | 'shop') => call<{ user: User }>('/api/me/role', { role }),
   myBusiness: () => call<{ business: Business | null; feeNaira: number; periodDays: number; bankLinked: { bankName: string; accountName: string; approved?: boolean } | null }>('/api/business'),
   saveBusiness: (b: { name: string; kind: string; address: string; phone: string; products: { item: string; unit: string; priceNaira: number }[] }) => call<Business>('/api/business', b),
   payBusiness: (key: string) => call<Business>('/api/business/pay', { key }),

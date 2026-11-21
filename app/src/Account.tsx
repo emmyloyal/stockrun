@@ -63,7 +63,7 @@ export function AccountApp({ cfg }: { cfg: Config }) {
       {tab === 'orders' && <Orders cfg={cfg} onChange={reload} />}
       {tab === 'money' && <Money cfg={cfg} me={me} onChange={reload} />}
       {tab === 'admin' && me.admin && <Admin />}
-      {tab === 'me' && cfg.business && <MyStore fee={cfg.business} banksOn={!!cfg.sellerBankLinks} balance={me.naira?.availableNaira ?? 0} onChange={reload} />}
+      {tab === 'me' && cfg.business && u.role === 'shop' && <MyStore fee={cfg.business} banksOn={!!cfg.sellerBankLinks} balance={me.naira?.availableNaira ?? 0} onChange={reload} />}
       {tab === 'me' && <Profile user={u} onChange={() => { setBust(Date.now()); reload(); }} />}
     </section>
   );
@@ -77,8 +77,11 @@ function SignIn({ cfg, onDone }: { cfg: Config; onDone: () => void }) {
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
+  const [asShop, setAsShop] = useState(false);
   const go = (label: string, f: () => Promise<void>) => run(setBusy, setError, label, f);
-  const signIn = (c: string) => go('Signing in…', async () => { await server.emailVerify(email, c); save('stockrun.signin', 'email'); onDone(); });
+  /** A new shop owner's account is marked as one right after signing in (existing shop owners stay shop owners). */
+  const finish = async (u: { role?: string }) => { if (asShop && u.role !== 'shop') await server.setRole('shop'); onDone(); };
+  const signIn = (c: string) => go('Signing in…', async () => { const r = await server.emailVerify(email, c); save('stockrun.signin', 'email'); await finish(r.user); });
   const pick = (w: typeof way) => { setWay(w); setSent(false); setCode(''); setError(''); };
   const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
 
@@ -89,6 +92,11 @@ function SignIn({ cfg, onDone }: { cfg: Config; onDone: () => void }) {
         <h1>Tell the AI what you need. It finds it on the map.</h1>
         <p className="muted">It finds sellers near you, haggles on WhatsApp, and pays them only after the goods are picked up.</p>
       </header>
+      <fieldset className="stack choice-group">
+        <legend className="fine">I am</legend>
+        <label className="row"><input type="radio" checked={!asShop} onChange={() => setAsShop(false)} /> Buying</label>
+        <label className="row"><input type="radio" checked={asShop} onChange={() => setAsShop(true)} /> A shop owner (sell on StockRun; you can still buy)</label>
+      </fieldset>
       <nav className="tabs" role="tablist">
         {cfg.emailSignIn && <button role="tab" aria-selected={way === 'email'} className={way === 'email' ? 'on' : ''} onClick={() => pick('email')}>Email</button>}
         <button role="tab" aria-selected={way === 'wallet'} className={way === 'wallet' ? 'on' : ''} onClick={() => pick('wallet')}>Wallet</button>
@@ -117,7 +125,7 @@ function SignIn({ cfg, onDone }: { cfg: Config; onDone: () => void }) {
           {!hasWallet() && <p className="warn">No wallet found in this browser. Open StockRun inside the OKX Wallet or MetaMask app, or install their extension.</p>}
           <button className="btn primary" disabled={!!busy || !hasWallet()} onClick={() => go('Waiting for your wallet…', async () => {
             const s = await signWithWallet(async (a) => (await server.walletMessage(a)).message);
-            await server.walletSignIn(s.message, s.signature); save('stockrun.signin', 'wallet'); onDone();
+            const r = await server.walletSignIn(s.message, s.signature); save('stockrun.signin', 'wallet'); await finish(r.user);
           })}>Connect wallet</button>
         </>)}
         {busy && <p className="busy">{busy}</p>}
@@ -747,6 +755,13 @@ function Profile({ user, onChange }: { user: User; onChange: () => void }) {
         <label className="field"><span>Name</span><input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Ada Obi" maxLength={40} /></label>
         <button className="btn primary" disabled={!!busy} onClick={() => go('Saving…', async () => { await server.profile({ username: username.trim() || undefined, displayName }); onChange(); setSaved('Saved.'); })}>Save</button>
         <p className="fine">Your username, name and picture are public. Your email and wallet are never shown to others.</p>
+      </div>
+      <div className="panel stack">
+        <h2>Account type</h2>
+        <p>{user.role === 'shop' ? 'Shop owner: your store is under My store above.' : 'Buyer.'}</p>
+        {user.role !== 'shop'
+          ? <button className="link" disabled={!!busy} onClick={() => go('Switching…', async () => { await server.setRole('shop'); onChange(); setSaved('You are now a shop owner. Register your store under My store.'); })}>Own a shop? Sell on StockRun</button>
+          : <button className="link" disabled={!!busy} onClick={() => go('Switching…', async () => { await server.setRole('buyer'); onChange(); setSaved('Switched to a buyer account.'); })}>Switch back to a buyer account</button>}
       </div>
       <div className="panel stack">
         <h2>Sign-in methods</h2>

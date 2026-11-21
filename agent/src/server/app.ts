@@ -286,6 +286,8 @@ export function createApp(o: AppOptions): Server {
     }],
 
     // ---------------------------------------------------------------- businesses: register a store (admin approves, monthly fee)
+    /** Buyer or shop owner (shop owners get My store). */
+    ['POST', /^\/api\/me\/role$/, async (c) => { const u = need(c); return { user: accounts.setRole(u, c.body?.role, !!o.listings?.mine(u.id)) }; }],
     ['GET', /^\/api\/business$/, async (c) => {
       const u = need(c), l = biz();
       return { business: l.mine(u.id), feeNaira: l.feeKobo / 100, periodDays: Math.round(l.periodMs / 86_400_000), bankLinked: (() => {
@@ -293,7 +295,11 @@ export function createApp(o: AppOptions): Server {
         return o.payouts.bankFor(b.sellerId);
       })() };
     }],
-    ['POST', /^\/api\/business$/, async (c) => { const u = need(c); return adminTryAsync(() => biz().save(u.id, c.body ?? {})); }],
+    ['POST', /^\/api\/business$/, async (c) => {
+      const u = need(c);
+      if (u.role !== 'shop') throw new AuthError(403, 'Only shop owner accounts can register a store. Switch to a shop owner account in Me first.');
+      return adminTryAsync(() => biz().save(u.id, c.body ?? {}));
+    }],
     ['POST', /^\/api\/business\/pay$/, async (c) => { const u = need(c); return adminTry(() => { try { return biz().payMonth(u.id, String(c.body?.key ?? '')); } catch (e) { if (e instanceof BusinessError) throw new AuthError(e.status, e.message); throw e; } }); }],
     /** The store's bank account, so StockRun pays it for collected orders (checked with the bank; approved with the store). */
     ['POST', /^\/api\/business\/bank$/, async (c) => {

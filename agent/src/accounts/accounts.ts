@@ -28,6 +28,8 @@ export interface User {
   displayName: string | null;
   hasAvatar: boolean;
   createdAt: number;
+  /** buyer (default) or shop: shop owners also get My store. */
+  role: 'buyer' | 'shop';
 }
 export interface SmsSender { send(phone: string, text: string): Promise<void> }
 export interface EmailSender { send(to: string, subject: string, text: string): Promise<void> }
@@ -91,6 +93,13 @@ export function openDb(file = ':memory:'): DatabaseSync {
       DROP TABLE users_old;
       COMMIT;`);
   }
+  // Account type: buyer (default) or shop owner. Anyone who already registered a store is a shop owner.
+  const ucols = db.prepare('PRAGMA table_info(users)').all() as unknown as { name: string }[];
+  if (!ucols.some((c) => c.name === 'role')) {
+    db.exec("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'buyer'");
+    const hasStores = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'business_listings'").get();
+    if (hasStores) db.exec("UPDATE users SET role = 'shop' WHERE id IN (SELECT owner_user_id FROM business_listings)");
+  }
   return db;
 }
 const USERS_TABLE = `
@@ -98,11 +107,11 @@ const USERS_TABLE = `
       display_name TEXT, avatar BLOB, avatar_type TEXT, created_at INTEGER NOT NULL,
       CHECK (phone IS NOT NULL OR email IS NOT NULL OR wallet IS NOT NULL)`;
 
-interface UserRow { id: number; phone: string | null; email: string | null; wallet: string | null; username: string | null; display_name: string | null; has_avatar: number; created_at: number }
-const USER_COLS = 'id, phone, email, wallet, username, display_name, (avatar IS NOT NULL) AS has_avatar, created_at';
+interface UserRow { id: number; phone: string | null; email: string | null; wallet: string | null; username: string | null; display_name: string | null; has_avatar: number; created_at: number; role: string | null }
+const USER_COLS = 'id, phone, email, wallet, username, display_name, (avatar IS NOT NULL) AS has_avatar, created_at, role';
 const toUser = (r: UserRow): User => ({
   id: r.id, phone: r.phone, email: r.email, wallet: r.wallet ? getAddress(r.wallet) : null, username: r.username,
-  displayName: r.display_name, hasAvatar: !!r.has_avatar, createdAt: r.created_at,
+  displayName: r.display_name, hasAvatar: !!r.has_avatar, createdAt: r.created_at, role: r.role === 'shop' ? 'shop' : 'buyer',
 });
 
 export class Accounts {
@@ -292,6 +301,14 @@ export class Accounts {
 
   // ---------------------------------------------------------------- profile
   /** Username: 3-20 letters, digits or _, unique (case-insensitive). Display name: up to 40 characters. */
+  /** Buyer or shop owner. Becoming a shop owner is open to anyone; going back is blocked while they have a store. */
+  setRole(user: User, role: unknown, hasStore: boolean): User {
+    if (role !== 'buyer' && role !== 'shop') throw new AuthError(400, 'Choose buyer or shop owner.');
+    if (role === 'buyer' && hasStore) throw new AuthError(409, 'You have a store registered. Contact StockRun to close it first.');
+    this.db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, user.id);
+    return this.byId(user.id);
+  }
+
   setProfile(user: User, input: { username?: unknown; displayName?: unknown }): User {
     if (input.username !== undefined) {
       const u = String(input.username).trim();

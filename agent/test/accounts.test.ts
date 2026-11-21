@@ -203,3 +203,18 @@ describe('profiles', () => {
     expect(() => acc.setAvatar(u, Buffer.concat([JPEG, Buffer.alloc(300_000)]), 'image/jpeg')).toThrow(/too big/);
   });
 });
+
+describe('buyer or shop owner', () => {
+  it('new accounts are buyers; anyone can become a shop owner; not back while they have a store', async () => {
+    const { acc } = setup();
+    const w = privateKeyToAccount(generatePrivateKey());
+    const { message } = acc.walletChallenge(w.address);
+    const { user } = await acc.verifyWallet(message, await w.signMessage({ message }));
+    expect(user.role).toBe('buyer');
+    const shop = acc.setRole(user, 'shop', false);
+    expect(shop.role).toBe('shop');
+    expect(() => acc.setRole(shop, 'buyer', true)).toThrow(/store registered/);
+    expect(acc.setRole(shop, 'buyer', false).role).toBe('buyer');
+    expect(() => acc.setRole(shop, 'admin', false)).toThrow(AuthError);
+  });
+});
