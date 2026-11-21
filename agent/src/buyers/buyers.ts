@@ -95,7 +95,8 @@ export class Buyers {
     if (userId !== undefined) {
       const r = this.sellerRow(userId, key);
       if (r?.status === 3) return 3;
-      if (r && r.pending_status !== null && r.effective_at !== null && r.effective_at <= this.now()) {
+      // A queued approval takes effect at its time, or sooner if the server's wait was shortened since (0: at once).
+      if (r && r.pending_status !== null && r.effective_at !== null && Math.min(r.effective_at, r.added_at + this.sellerDelayMs) <= this.now()) {
         this.db.prepare('UPDATE buyer_sellers SET status = pending_status, pending_status = NULL, effective_at = NULL WHERE user_id = ? AND seller_key = ?').run(userId, key.toLowerCase());
         return r.pending_status;
       }

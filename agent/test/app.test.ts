@@ -200,4 +200,12 @@ describe.skipIf(!localChainAvailable())('StockRun server', () => {
     clock += SELLER_APPROVAL_DELAY_MS;
     expect(slow.sellerFor(userId, 'found-00000000000000a1')).toMatchObject({ status: 1, pendingStatus: null });
   });
+
+  it('a seller queued under a 24-hour wait counts at once after the server turns the wait off', async () => {
+    const orders = new NairaOrders({ db, ledger, evalCircuit: circuitEvaluator(p), supplierStatus: () => 0, carriers: () => [] });
+    const mk = (sellerDelayMs: number) => new Buyers(db, p, ledger, orders, { extractor: new RuleExtractor(), channel: new BotChannel(), prices: new PriceBook(), foundDb: db, now: () => clock, sellerDelayMs });
+    const userId = 9_998;
+    expect(mk(SELLER_APPROVAL_DELAY_MS).addSeller(userId, 'found-00000000000000b2')).toMatchObject({ status: 0, pendingStatus: 1 });
+    expect(mk(0).sellerFor(userId, 'found-00000000000000b2')).toMatchObject({ status: 1, pendingStatus: null });
+  });
 });
