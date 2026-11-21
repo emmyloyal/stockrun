@@ -209,20 +209,11 @@ function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me:
   });
   const dealRef = useRef(openDeal);
   dealRef.current = openDeal;
-  const addToMySellers = async () => {
-    if (!deal) return;
-    setBusy('Adding the seller…');
-    try { const seller = await server.addSeller(deal.id); setDeal({ ...deal, seller, note: '' }); }
-    catch (e) { setDeal({ ...deal, note: (e as Error).message }); }
-    finally { setBusy(''); }
-  };
   /** What still stops this deal, in plain words; empty when it can be sent. */
   const dealProblem = (d: NonNullable<typeof deal>): string => {
     const price = Number(d.price.replace(/\D/g, '')), qty = Number(d.quantity);
     if (d.seller?.status === 3) return 'You blocked this seller.';
-    if (d.seller?.status !== 1) return d.seller?.pendingStatus
-      ? `${d.name} is not on your sellers list yet: they join on ${lagosTime(d.seller.effectiveAt!)}. You can record the deal from then.`
-      : `Add ${d.name} to your sellers first (button above).`;
+    if (d.seller?.status !== 1 && d.seller?.pendingStatus) return `${d.name} joins your sellers on ${lagosTime(d.seller.effectiveAt!)}. You can record the deal from then.`;
     if (d.item.trim().length < 2) return 'Say what you agreed to buy.';
     if (!Number.isInteger(qty) || qty < 1 || qty > 255) return 'Enter how many (1 to 255).';
     if (!(price >= 1)) return `Enter the agreed price per ${d.unit || 'unit'}.`;
@@ -325,16 +316,10 @@ function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me:
         {deal && (
           <div ref={dealPanel} className="stack note deal">
             <p><strong>Record your deal with {deal.name}</strong></p>
-            {!deal.seller || deal.seller.status === 0 ? (
-              deal.seller?.pendingStatus ? (
-                <p className="warn">{deal.name} joins your sellers on {lagosTime(deal.seller.effectiveAt!)}. A new seller waits a day before money can be locked for them, so nobody who gets into your account can pay a seller of their own straight away.</p>
-              ) : (
-                <div className="stack tight">
-                  <p className="warn">{deal.name} is not on your sellers list. RestockGuard only lets money go to sellers on your list.</p>
-                  <button className="btn ghost" disabled={!!busy} onClick={addToMySellers}>Add to my sellers (ready in 24 hours)</button>
-                </div>
-              )
-            ) : deal.seller.status === 3 ? <p className="alert">You blocked this seller.</p> : <p className="ok">✓ {deal.name} is on your sellers list.</p>}
+            {deal.seller?.status === 3 ? <p className="alert">You blocked this seller.</p>
+              : deal.seller?.status === 1 ? <p className="ok">✓ {deal.name} is on your sellers list.</p>
+              : deal.seller?.pendingStatus ? <p className="warn">{deal.name} joins your sellers on {lagosTime(deal.seller.effectiveAt!)}.</p>
+              : <p className="fine">Recording this deal adds {deal.name} to your sellers.</p>}
             <label className="field"><span>What you agreed to buy</span><input value={deal.item} maxLength={80} placeholder="Indomie noodles (40 x 70g)" onChange={(e) => setDeal({ ...deal, item: e.target.value })} /></label>
             <div className="row wrap">
               <label className="field"><span>How many</span><input type="number" min={1} max={255} value={deal.quantity} onChange={(e) => setDeal({ ...deal, quantity: e.target.value })} /></label>

@@ -42,7 +42,11 @@ export interface BuyerServices {
   dataDir?: string | null;
   log?: (line: string) => void;
 }
-/** A seller the buyer adds waits this long before orders with them can lock money (the vault's DELAY). Blocking is immediate. */
+/**
+ * The vault's DELAY for a new seller (coin vaults always wait this long). Naira buyers wait `sellerDelayMs`, which is 0
+ * by default (the buyer records a deal and the money locks at once; SELLER_APPROVAL_DELAY_HOURS turns a wait back on).
+ * Blocking is always immediate.
+ */
 export const SELLER_APPROVAL_DELAY_MS = 24 * 3600_000;
 export interface MySeller { sellerId: string; key: Hash; status: 0 | 1 | 3; pendingStatus: 1 | null; effectiveAt: number | null; addedAt: number }
 export interface DealInput { sellerId: string; item: string; quantity: number; unit: string; unitPriceNaira: number; category: Category; delivery: DeliveryChoice; place: Place; contactPhone?: string }
@@ -69,9 +73,10 @@ export class Buyers {
   private runtimes = new Map<number, BuyerRuntime>();
   private verified = new Set<string>(loadSuppliers().map((s) => supplierKey(s.id).toLowerCase()));
 
-  private now: () => number;
-  constructor(db: DatabaseSync, p: Platform, ledger: Ledger, orders: NairaOrders, services: BuyerServices & { now?: () => number }) {
+  private now: () => number; private sellerDelayMs: number;
+  constructor(db: DatabaseSync, p: Platform, ledger: Ledger, orders: NairaOrders, services: BuyerServices & { now?: () => number; sellerDelayMs?: number }) {
     this.now = services.now ?? Date.now;
+    this.sellerDelayMs = Math.max(0, services.sellerDelayMs ?? 0);
     this.db = db; this.p = p; this.ledger = ledger; this.orders = orders; this.services = services;
     this.dispatcher = new Dispatcher({ entries: p.carriers, log: services.log });
     db.exec(`CREATE TABLE IF NOT EXISTS requests (
@@ -108,15 +113,20 @@ export class Buyers {
     return { sellerId, key, status: (status === 3 ? 3 : status >= 1 ? 1 : 0), pendingStatus: r?.pending_status === 1 ? 1 : null, effectiveAt: r?.effective_at ?? null, addedAt: r?.added_at ?? 0 };
   }
 
-  /** The buyer adds a seller they found to their list. Like the vault, the approval waits a day; adding twice changes nothing. */
+  /** The buyer adds a seller they found to their list: at once, or after `sellerDelayMs` when a wait is set. Adding twice changes nothing. */
   addSeller(userId: number, sellerId: string): MySeller {
     const s = this.services.foundDb ? foundSeller(this.services.foundDb, sellerId) : null;
     if (!s) throw new AuthError(404, 'That seller is not on the map any more.');
     const cur = this.mine(userId, sellerId);
     if (cur.status === 1 || cur.pendingStatus === 1) return cur;
     const t = this.now();
+    if (this.sellerDelayMs === 0) {
+      this.db.prepare(`INSERT INTO buyer_sellers (user_id, seller_key, seller_id, status, added_at) VALUES (?, ?, ?, 1, ?)
+        ON CONFLICT(user_id, seller_key) DO UPDATE SET status = 1, pending_status = NULL, effective_at = NULL`).run(userId, cur.key.toLowerCase(), sellerId, t);
+      return this.mine(userId, sellerId);
+    }
     this.db.prepare(`INSERT INTO buyer_sellers (user_id, seller_key, seller_id, status, pending_status, effective_at, added_at) VALUES (?, ?, ?, 0, 1, ?, ?)
-      ON CONFLICT(user_id, seller_key) DO UPDATE SET pending_status = 1, effective_at = excluded.effective_at`).run(userId, cur.key.toLowerCase(), sellerId, t + SELLER_APPROVAL_DELAY_MS, t);
+      ON CONFLICT(user_id, seller_key) DO UPDATE SET pending_status = 1, effective_at = excluded.effective_at`).run(userId, cur.key.toLowerCase(), sellerId, t + this.sellerDelayMs, t);
     return this.mine(userId, sellerId);
   }
   /** Blocking is immediate (and cancels a queued approval). */
@@ -151,15 +161,18 @@ export class Buyers {
     if (raw.contactPhone) { try { contactPhone = normalisePhone(String(raw.contactPhone)); } catch { throw new AuthError(400, 'Enter the rider contact number like 0803 123 4567.'); } }
     if (delivery === 'logistics' && !contactPhone) throw new AuthError(400, 'Add a phone number so the logistics rider can reach you, or collect it yourself.');
 
-    const mine = this.mine(user.id, s.id);
+    let mine = this.mine(user.id, s.id);
     if (mine.status === 3) throw new AuthError(409, 'You blocked this seller.');
-    if (mine.status === 0) {
-      throw new AuthError(409, mine.pendingStatus
-        ? `${s.name} joins your sellers at ${new Date(mine.effectiveAt!).toLocaleString('en-NG', { timeZone: 'Africa/Lagos', dateStyle: 'medium', timeStyle: 'short' })} (a day after you added them, to protect you if someone gets into your account). Record the deal then.`
-        : `Add ${s.name} to your sellers first. It takes a day before orders with a new seller can go through.`);
+    if (mine.status === 0 && mine.pendingStatus) {
+      throw new AuthError(409, `${s.name} joins your sellers at ${new Date(mine.effectiveAt!).toLocaleString('en-NG', { timeZone: 'Africa/Lagos', dateStyle: 'medium', timeStyle: 'short' })}. Record the deal then.`);
     }
     const available = this.ledger.balance(user.id).availableKobo;
     if (available < kobo(price * quantity)) throw new AuthError(409, 'Your balance is too low for this deal. Deposit naira first.');
+    // Recording a deal is the buyer choosing this seller: it joins their list now (or starts the wait, if one is set).
+    if (mine.status === 0) {
+      mine = this.addSeller(user.id, s.id);
+      if (mine.status !== 1) throw new AuthError(409, `${s.name} joins your sellers at ${new Date(mine.effectiveAt!).toLocaleString('en-NG', { timeZone: 'Africa/Lagos', dateStyle: 'medium', timeStyle: 'short' })}. Record the deal then.`);
+    }
 
     const rt = this.runtime(user.id);
     rt.naira.budgetKobo = available;

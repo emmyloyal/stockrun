@@ -152,32 +152,22 @@ describe.skipIf(!localChainAvailable())('StockRun server', () => {
     expect(me.user.email).toBe('fio@example.com');
   }, 60_000);
 
-  it('records a WhatsApp deal with a found seller: a day to join the list, then RestockGuard, then pay at pickup', async () => {
+  it('records a WhatsApp deal with a found seller: the money locks at once, RestockGuard decides, the seller is paid at pickup', async () => {
     foundTable(db);
     const add = db.prepare("INSERT INTO found_sellers (id, name, address, lat, lng, phone, source, source_url, found_at, kind) VALUES (?, ?, ?, ?, ?, ?, 'osm', 'https://www.openstreetmap.org/node/1', 0, 'supermarket')");
     add.run('found-00000000000000a1', 'Agora Marketplace', 'Egbe, Lagos', 6.6050, 3.3900, '+2349079579400');      // ~1 km from Mile 12 pin
     add.run('found-00000000000000b2', 'Far Away Store', 'Lekki, Lagos', 6.4400, 3.5300, '+2348111621102');         // ~24 km away
     const gbenga = person(); await gbenga.email('gbenga@example.com');
-    await gbenga.call('/api/dev/naira', { amountNaira: 200_000 });
     const deal = { sellerId: 'found-00000000000000a1', item: 'Indomie carton', quantity: 4, unit: 'carton', unitPriceNaira: 14_000, category: 'staples', delivery: 'self', place: MILE12 };
 
-    const first = await gbenga.call('/api/deals', deal);
-    expect(first.status).toBe(409);
-    expect(first.json.error).toMatch(/Add Agora Marketplace to your sellers first/);
+    expect((await gbenga.call('/api/deals', deal)).json.error).toMatch(/balance is too low/);              // no money yet
+    expect((await gbenga.call('/api/my-sellers/found-00000000000000a1')).json.status).toBe(0);           // and the seller was not added
+    await gbenga.call('/api/dev/naira', { amountNaira: 200_000 });
 
-    const added = (await gbenga.call('/api/my-sellers/found-00000000000000a1', {})).json;
-    expect(added).toMatchObject({ status: 0, pendingStatus: 1 });
-    expect(added.effectiveAt - clock).toBe(SELLER_APPROVAL_DELAY_MS);
-    const early = await gbenga.call('/api/deals', deal);
-    expect(early.status).toBe(409);
-    expect(early.json.error).toMatch(/joins your sellers at .* Record the deal then/);
-    expect((await gbenga.call('/api/orders')).json).toEqual([]);
-
-    clock += SELLER_APPROVAL_DELAY_MS;                                                    // a day later
-    expect((await gbenga.call('/api/my-sellers/found-00000000000000a1')).json).toMatchObject({ status: 1, pendingStatus: null });
-    const r = (await gbenga.call('/api/deals', deal)).json;
+    const r = (await gbenga.call('/api/deals', deal)).json;                                              // a new seller, straight away
     expect(r).toMatchObject({ status: 'locked' });
     expect(r.message).toMatch(/RestockGuard approved it; the money is locked/);
+    expect((await gbenga.call('/api/my-sellers/found-00000000000000a1')).json.status).toBe(1);           // recording added them
     let [o] = (await gbenga.call('/api/orders')).json;
     expect(o).toMatchObject({ status: 'Locked', ordered: 4, unitPriceNaira: 14_000, self: true, item: 'Indomie carton' });
     expect(o.supplier.name).toMatch(/^Agora Marketplace/);
@@ -191,9 +181,7 @@ describe.skipIf(!localChainAvailable())('StockRun server', () => {
     expect((await gbenga.call('/api/me')).json.naira).toEqual({ availableNaira: 200_000 - 42_000, heldNaira: 0 });
     expect(ledger.check().ok).toBe(true);
 
-    // Far away (over 10 km): RestockGuard asks the buyer first.
-    await gbenga.call('/api/my-sellers/found-00000000000000b2', {});
-    clock += SELLER_APPROVAL_DELAY_MS;
+    // Far away (over 10 km): RestockGuard asks the buyer first, nothing is locked yet.
     const far = (await gbenga.call('/api/deals', { ...deal, sellerId: 'found-00000000000000b2', quantity: 1 })).json;
     expect(far).toMatchObject({ status: 'ask_owner', reason: 5 });
 
@@ -202,6 +190,14 @@ describe.skipIf(!localChainAvailable())('StockRun server', () => {
     expect((await gbenga.call('/api/deals', deal)).json.error).toMatch(/blocked/);
     const other = person(); await other.email('other@example.com');
     expect((await other.call('/api/my-sellers/found-00000000000000a1')).json.status).toBe(0);
-    expect((await other.call('/api/deals', { ...deal })).status).toBe(409);
   }, 120_000);
+
+  it('a server can still make new sellers wait (SELLER_APPROVAL_DELAY_HOURS), like the vault', async () => {
+    const orders = new NairaOrders({ db, ledger, evalCircuit: circuitEvaluator(p), supplierStatus: () => 0, carriers: () => [] });
+    const slow = new Buyers(db, p, ledger, orders, { extractor: new RuleExtractor(), channel: new BotChannel(), prices: new PriceBook(), foundDb: db, now: () => clock, sellerDelayMs: SELLER_APPROVAL_DELAY_MS });
+    const userId = 9_999;
+    expect(slow.addSeller(userId, 'found-00000000000000a1')).toMatchObject({ status: 0, pendingStatus: 1, effectiveAt: clock + SELLER_APPROVAL_DELAY_MS });
+    clock += SELLER_APPROVAL_DELAY_MS;
+    expect(slow.sellerFor(userId, 'found-00000000000000a1')).toMatchObject({ status: 1, pendingStatus: null });
+  });
 });

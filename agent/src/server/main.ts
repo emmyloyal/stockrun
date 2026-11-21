@@ -64,7 +64,7 @@ const prices = new PriceBook();
 let buyers: Buyers;
 const orders = new NairaOrders({ db, ledger, evalCircuit: circuitEvaluator(p), supplierStatus: (k, u) => buyers.sellerStatus(k, u), carriers: () => buyers.carrierKeys() });
 // Every seller in data/suppliers.json is a simulated bot today; real sellers will come in over WhatsApp.
-buyers = new Buyers(db, p, ledger, orders, { extractor, channel: new BotChannel(), prices, log, foundDb: db, dataDir: network === 'local' ? null : dirname(dbFile) });
+buyers = new Buyers(db, p, ledger, orders, { extractor, channel: new BotChannel(), prices, log, foundDb: db, sellerDelayMs: Number(envValue(env, 'SELLER_APPROVAL_DELAY_HOURS') ?? 0) * 3600_000, dataDir: network === 'local' ? null : dirname(dbFile) });
 const paystackKey = envValue(env, 'PAYSTACK_SECRET_KEY');
 const publicUrl = envValue(env, 'PUBLIC_URL') ?? `http://localhost:${port}`;
 // Sign-in is by email or wallet. Phone sign-in is off (no SMS sender); accounts made earlier by phone still work.
