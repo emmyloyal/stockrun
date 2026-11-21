@@ -38,7 +38,9 @@ export interface Order {
 }
 export interface RequestRecord { id: number; text: string; budgetNaira: number; place: Place; delivery: 'self' | 'logistics'; message: string; createdAt: number }
 /** A seller the AI found on Google Maps or the web: real, but not confirmed by StockRun. */
-export interface FoundSeller { id: string; name: string; address: string; lat: number; lng: number; phone: string; source: 'maps' | 'web'; sourceUrl: string | null; km: number }
+export interface FoundSeller { id: string; name: string; kind?: string | null; address: string; lat: number; lng: number; phone: string; source: 'maps' | 'osm' | 'web'; sourceUrl: string | null; km: number }
+export interface SellerHit { id: string; name: string; kind: string | null; address: string; lat: number; lng: number; phone: string | null; source: 'maps' | 'osm' | 'web' | 'demo'; sourceUrl: string | null; km: number; demo: boolean }
+export interface PlaceHit { name: string; address: string; lat: number; lng: number; kind: string }
 export interface HuntResult { searches: string[]; checked: number; dropped: number; sellers: FoundSeller[] }
 export interface Seller {
   id: string; name: string; market: string; lat: number; lng: number; simulated: boolean; verified: boolean; km: number;
@@ -80,6 +82,9 @@ const signedIn = async (p: Promise<{ user: User; token?: string }>) => { const r
 export const server = {
   config: () => call<Config>('/api/config'),
   me: () => call<Me>('/api/me'),
+  search: (q: string, near?: { lat: number; lng: number }) => call<{ sellers: SellerHit[]; places: PlaceHit[] }>(`/api/search?${new URLSearchParams({ q, ...(near ? { lat: String(near.lat), lng: String(near.lng) } : {}) })}`),
+  messageDraft: (sellerId: string, text: string, place: Place, delivery: 'self' | 'logistics') =>
+    call<{ seller: { id: string; name: string; phone: string }; message: string; ai: boolean; whatsappUrl: string }>(`/api/sellers/${sellerId}/message`, { text, place, delivery }),
   hunt: (text: string, place: Place) => call<HuntResult>('/api/hunt', { text, place }),
   emailCode: (email: string) => call<{ sent: true }>('/api/auth/email-code', { email }),
   emailVerify: (email: string, code: string) => signedIn(call('/api/auth/email-verify', { email, code })),
@@ -100,7 +105,7 @@ export const server = {
   approve: (id: string) => call<{ result: string; reason: string }>(`/api/orders/${id}/approve`, {}),
   collect: (id: string, count: number) => call<CheckResult>(`/api/orders/${id}/collect`, { count }),
   received: (id: string, count: number) => call<{ attestTx: string }>(`/api/orders/${id}/received`, { count }),
-  map: (lat: number, lng: number, radiusKm = 25) => call<{ sellers: Seller[] }>(`/api/map?lat=${lat}&lng=${lng}&radius=${radiusKm}`),
+  map: (lat: number, lng: number, radiusKm = 25) => call<{ sellers: Seller[]; found: FoundSeller[] }>(`/api/map?lat=${lat}&lng=${lng}&radius=${radiusKm}`),
 };
 export const avatarUrl = (userId: number, bust = 0) => `${API}/api/users/${userId}/avatar${bust ? `?v=${bust}` : ''}`;
 
@@ -154,6 +159,8 @@ export async function preparePhoto(file: File, max = 1600, quality = 0.85): Prom
   return { mediaType: 'image/jpeg', data: btoa(bin), previewUrl: URL.createObjectURL(blob) };
 }
 
+/** wa.me link: opens the person's own WhatsApp on a chat with this number, with the message typed in. */
+export const whatsappLink = (phone: string, message: string) => `https://wa.me/${phone.replace(/\D/g, '')}?text=${encodeURIComponent(message)}`;
 export const naira = (n: number) => `₦${n.toLocaleString('en-NG', { maximumFractionDigits: 2 })}`;
 export const short = (h: string) => `${h.slice(0, 6)}…${h.slice(-4)}`;
 export function load<T>(key: string, fallback: T): T { try { const v = localStorage.getItem(key); return v ? (JSON.parse(v) as T) : fallback; } catch { return fallback; } }

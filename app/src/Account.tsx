@@ -5,8 +5,8 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import {
-  avatarUrl, currentPosition, hasWallet, load, naira, preparePhoto, save, server, short, signWithWallet,
-  type Coins, type Config, type FoundSeller, type HuntResult, type Me, type Movement, type Order, type Place, type RequestRecord, type Seller, type User,
+  avatarUrl, currentPosition, hasWallet, load, naira, preparePhoto, save, server, short, signWithWallet, whatsappLink,
+  type Coins, type Config, type FoundSeller, type HuntResult, type Me, type PlaceHit, type SellerHit, type Movement, type Order, type Place, type RequestRecord, type Seller, type User,
 } from './lib';
 import { CircuitTrail, Outcome, StatusPill } from './ui';
 
@@ -122,6 +122,14 @@ function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me:
   const [contact, setContact] = useState('');
   const [sellers, setSellers] = useState<Seller[]>([]);
   const [hunt, setHunt] = useState<HuntResult | null>(null);
+  const [found, setFound] = useState<FoundSeller[]>([]);
+  const [q, setQ] = useState('');
+  const [results, setResults] = useState<{ sellers: SellerHit[]; places: PlaceHit[] } | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [picked, setPicked] = useState<SellerHit | null>(null);
+  const markers = useRef(new Map<string, L.CircleMarker>());
+  const [draft, setDraft] = useState<{ id: string; name: string; phone: string; message: string; ai: boolean } | null>(null);
+  const contactPanel = useRef<HTMLDivElement>(null);
   const [reply, setReply] = useState('');
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
@@ -141,29 +149,70 @@ function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me:
   useEffect(() => { save('stockrun.place', place); }, [place]);
   useEffect(() => {
     if (!pinned) return;
-    server.map(place.lat, place.lng, 25).then((r) => setSellers(r.sellers)).catch(() => setSellers([]));
+    server.map(place.lat, place.lng, 25).then((r) => { setSellers(r.sellers); setFound(r.found ?? []); }).catch(() => { setSellers([]); setFound([]); });
   }, [place.lat, place.lng, pinned]);
   useEffect(() => {
     const g = layer.current; if (!g) return;
-    g.clearLayers();
+    g.clearLayers(); markers.current.clear();
     for (const s of sellers) {
       const rows = s.prices.slice(0, 6).map((p) => `<tr><td>${esc(p.item)}</td><td class="num">${naira(p.priceNaira)}</td></tr>`).join('');
-      L.circleMarker([s.lat, s.lng], { radius: 8, color: s.verified ? '#18794A' : '#7A8194', weight: 3, fillOpacity: 0.8, fillColor: s.verified ? '#18794A' : '#7A8194' })
-        .bindPopup(`<div class="pop"><strong>${esc(s.name)}</strong><span>${esc(s.market)} · ${s.km} km${s.simulated ? ' · demo seller' : ''}</span><table>${rows}</table></div>`).addTo(g);
+      markers.current.set(s.id, L.circleMarker([s.lat, s.lng], { radius: 8, color: s.verified ? '#18794A' : '#7A8194', weight: 3, fillOpacity: 0.8, fillColor: s.verified ? '#18794A' : '#7A8194' })
+        .bindPopup(`<div class="pop"><strong>${esc(s.name)}</strong><span>${esc(s.market)} · ${s.km} km${s.simulated ? ' · demo seller' : ''}</span><table>${rows}</table></div>`).addTo(g));
     }
-    for (const f of hunt?.sellers ?? []) {
-      L.circleMarker([f.lat, f.lng], { radius: 9, color: '#C2410C', weight: 3, fillOpacity: 0.85, fillColor: '#F97316' })
-        .bindPopup(`<div class="pop"><strong>${esc(f.name)}</strong><span>${f.km} km · found by AI on ${f.source === 'maps' ? 'Google Maps' : 'the web'} · not confirmed by StockRun</span>${f.sourceUrl ? `<a href="${esc(f.sourceUrl)}" target="_blank" rel="noreferrer">Where we found it</a>` : ''}</div>`).addTo(g);
+    const shown = new Map<string, FoundSeller>();
+    for (const f of [...found, ...(hunt?.sellers ?? [])]) shown.set(f.id, f);
+    if (picked && !picked.demo && picked.phone) shown.set(picked.id, { ...picked, phone: picked.phone, source: picked.source as FoundSeller['source'] });
+    if (picked?.demo && !markers.current.has(picked.id)) {
+      markers.current.set(picked.id, L.circleMarker([picked.lat, picked.lng], { radius: 8, color: '#7A8194', weight: 3, fillOpacity: 0.8, fillColor: '#7A8194' })
+        .bindPopup(`<div class="pop"><strong>${esc(picked.name)}</strong><span>${esc(picked.address)} · demo seller</span></div>`).addTo(g));
+    }
+    for (const f of shown.values()) {
+      markers.current.set(f.id, L.circleMarker([f.lat, f.lng], { radius: 9, color: '#C2410C', weight: 3, fillOpacity: 0.85, fillColor: '#F97316' })
+        .bindPopup(`<div class="pop"><strong>${esc(f.name)}</strong><span>${f.kind ? `${esc(f.kind.replace(/_/g, ' '))} · ` : ''}${f.km} km · WhatsApp ${esc(f.phone)}</span><span>Found on ${SOURCE[f.source]} · not confirmed by StockRun</span>${f.sourceUrl ? `<a href="${esc(f.sourceUrl)}" target="_blank" rel="noreferrer">Where we found it</a>` : ''}${f.source === 'osm' ? '<span class="fine">© OpenStreetMap contributors</span>' : ''}<button type="button" class="wa-btn" data-seller="${esc(f.id)}">Message on WhatsApp</button></div>`).addTo(g));
     }
     if (pinned) L.circleMarker([place.lat, place.lng], { radius: 10, color: '#141B2E', weight: 3, fillColor: '#F4C20D', fillOpacity: 1 }).bindTooltip('Deliver here').addTo(g);
-  }, [sellers, hunt, place.lat, place.lng, pinned]);
+    if (picked) markers.current.get(picked.id)?.openPopup();
+  }, [sellers, found, hunt, picked, place.lat, place.lng, pinned]);
+
+  const search = async (e?: { preventDefault(): void }) => {
+    e?.preventDefault();
+    if (q.trim().length < 2) return;
+    setSearching(true);
+    try { setResults(await server.search(q.trim(), pinned ? place : undefined)); }
+    catch (err) { setError((err as Error).message); }
+    finally { setSearching(false); }
+  };
+  const goSeller = (s: SellerHit) => { setResults(null); setPicked(s); map.current?.setView([s.lat, s.lng], 16); };
+  const goPlace = (p: PlaceHit) => {
+    setResults(null); setPicked(null);
+    setPlace((x) => ({ lat: p.lat, lng: p.lng, address: x.address.trim() ? x.address : [p.name, p.address].filter(Boolean).join(', ') }));
+    map.current?.setView([p.lat, p.lng], 15);
+  };
+  /** The AI writes the buyer's message to this seller; the buyer checks it and sends it from their own WhatsApp. */
+  const contactSeller = (id: string) => run(setBusy, setError, 'The AI is writing your message…', async () => {
+    if (text.trim().length < 3) throw new Error('Type what you want to buy first, then tap Message on WhatsApp.');
+    const r = await server.messageDraft(id, text.trim(), place, delivery);
+    setDraft({ id, name: r.seller.name, phone: r.seller.phone, message: r.message, ai: r.ai });
+    setTimeout(() => contactPanel.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
+  });
+  const contactRef = useRef(contactSeller);
+  contactRef.current = contactSeller;
+  useEffect(() => {
+    const box = el.current; if (!box) return;
+    const onClick = (e: MouseEvent) => {
+      const b = (e.target as HTMLElement).closest<HTMLElement>('.wa-btn');
+      if (b?.dataset.seller) { e.preventDefault(); map.current?.closePopup(); contactRef.current(b.dataset.seller); }
+    };
+    box.addEventListener('click', onClick);
+    return () => box.removeEventListener('click', onClick);
+  }, []);
 
   const here = () => run(setBusy, setError, 'Finding you…', async () => {
     const p = await currentPosition();
     setPlace((x) => ({ ...x, lat: p.lat, lng: p.lng }));
     map.current?.setView([p.lat, p.lng], 15);
   });
-  const findReal = () => run(setBusy, setError, 'The AI is searching Google Maps and the web for real sellers…', async () => {
+  const findReal = () => run(setBusy, setError, 'The AI is searching maps and the web for real sellers…', async () => {
     const r = await server.hunt(text, place);
     setHunt(r);
     if (r.sellers.length && map.current) map.current.fitBounds(L.latLngBounds([[place.lat, place.lng], ...r.sellers.map((s): [number, number] => [s.lat, s.lng])]).pad(0.2));
@@ -188,16 +237,50 @@ function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me:
         <label className="field"><span>Deliver to (address)</span>
           <input placeholder="12 Ikorodu Road, Ketu, Lagos" value={place.address} onChange={(e) => setPlace((p) => ({ ...p, address: e.target.value }))} />
         </label>
-        <div ref={el} className="map pick" />
+        <div className="map-wrap">
+          <div ref={el} className="map pick" />
+          <form className="map-search" role="search" onSubmit={search}>
+            <input type="search" aria-label="Search sellers or places" placeholder="Search sellers or places (e.g. Shoprite, Mile 12)" value={q}
+              onChange={(e) => { setQ(e.target.value); if (!e.target.value) setResults(null); }} />
+            <button className="btn primary" type="submit" disabled={searching || q.trim().length < 2}>{searching ? '…' : 'Search'}</button>
+          </form>
+          {results && (
+            <div className="map-results" role="listbox">
+              {!results.sellers.length && !results.places.length && <p className="muted">Nothing found for &ldquo;{q}&rdquo;.</p>}
+              {results.sellers.map((s) => (
+                <button key={s.id} type="button" className="map-hit" onClick={() => goSeller(s)}>
+                  <strong>{s.name}</strong><span className="fine">{s.demo ? 'demo seller' : `${(s.kind ?? 'seller').replace(/_/g, ' ')} · not confirmed`} · {s.km} km{s.address ? ` · ${s.address}` : ''}</span>
+                </button>
+              ))}
+              {results.places.map((p, i) => (
+                <button key={`p${i}`} type="button" className="map-hit place" onClick={() => goPlace(p)}>
+                  <strong>📍 {p.name}</strong><span className="fine">{p.kind}{p.address ? ` · ${p.address}` : ''} · tap to deliver here</span>
+                </button>
+              ))}
+              <button type="button" className="link" onClick={() => setResults(null)}>Close</button>
+            </div>
+          )}
+        </div>
+        {draft && (
+          <div ref={contactPanel} className="stack note contact">
+            <p><strong>Message to {draft.name}</strong> <span className="fine">· WhatsApp {draft.phone}</span></p>
+            <label className="field"><span>{draft.ai ? 'Written by the AI from your request. Change anything you like.' : 'Your message. Change anything you like.'}</span>
+              <textarea rows={4} value={draft.message} maxLength={600} onChange={(e) => setDraft({ ...draft, message: e.target.value })} />
+            </label>
+            <a className="btn wa" href={whatsappLink(draft.phone, draft.message)} target="_blank" rel="noreferrer">Open WhatsApp chat</a>
+            <p className="fine">WhatsApp opens on your phone with this message typed in; you send it and chat with the seller yourself. StockRun does not see the chat. This seller was found on a public map and is not checked by StockRun, so agree the price and see the goods before you pay.</p>
+            <button className="link" onClick={() => setDraft(null)}>Close</button>
+          </div>
+        )}
         <div className="row wrap">
           <button className="btn ghost" onClick={here}>Use where I am</button>
-          <span className="fine">{pinned ? `Pin: ${place.lat.toFixed(4)}, ${place.lng.toFixed(4)} · ${sellers.length} demo seller(s) within 25 km` : 'Tap the map to drop the delivery pin.'}</span>
+          <span className="fine">{pinned ? `Pin: ${place.lat.toFixed(4)}, ${place.lng.toFixed(4)} · ${sellers.length} demo and ${found.length} real seller(s) within 25 km` : 'Tap the map to drop the delivery pin.'}</span>
         </div>
         {cfg.sellerHunt && (
           <div className="stack note">
             <button className="btn ghost" disabled={!!busy || text.trim().length < 3 || !pinned} onClick={findReal}>Find real sellers with AI</button>
-            <p className="fine">The AI searches Google Maps and the web near your pin and keeps only sellers whose WhatsApp number it can prove from the source. They are not checked by StockRun.</p>
-            {hunt && <FoundList hunt={hunt} />}
+            <p className="fine">The AI searches maps and the web near your pin and keeps only sellers whose WhatsApp number it can prove from the source. They are not checked by StockRun.</p>
+            {hunt && <FoundList hunt={hunt} onContact={(id) => contactSeller(id)} />}
           </div>
         )}
         <fieldset className="stack choice-group">
@@ -217,7 +300,9 @@ function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me:
     </div>
   );
 }
-function FoundList({ hunt }: { hunt: HuntResult }) {
+const SOURCE = { maps: 'Google Maps', osm: 'OpenStreetMap', web: 'the web' } as const;
+const SOURCE_FROM = { maps: 'its Google Maps listing', osm: 'its OpenStreetMap entry', web: 'a web page' } as const;
+function FoundList({ hunt, onContact }: { hunt: HuntResult; onContact: (id: string) => void }) {
   if (!hunt.sellers.length) return <p className="muted">No seller with a WhatsApp number turned up near your pin ({hunt.checked} checked). Try other words, or move the pin.</p>;
   return (
     <ul className="cards">
@@ -225,7 +310,8 @@ function FoundList({ hunt }: { hunt: HuntResult }) {
         <li key={f.id} className="card stack tight">
           <span className="row between"><strong>{f.name}</strong><span className="pill found">found by AI</span></span>
           <span className="fine">{f.km} km · {f.address}</span>
-          <span className="fine">WhatsApp {f.phone} · from {f.source === 'maps' ? 'its Google Maps listing' : 'a web page'}{f.sourceUrl && <> · <a href={f.sourceUrl} target="_blank" rel="noreferrer">source</a></>}</span>
+          <span className="fine">WhatsApp {f.phone} · from {SOURCE_FROM[f.source]}{f.sourceUrl && <> · <a href={f.sourceUrl} target="_blank" rel="noreferrer">source</a></>}</span>
+          <button className="btn wa small" onClick={() => onContact(f.id)}>Message on WhatsApp</button>
         </li>
       ))}
     </ul>

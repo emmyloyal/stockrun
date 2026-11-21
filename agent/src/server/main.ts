@@ -17,6 +17,9 @@ import { Paystack } from '../money/paystack.ts';
 import { NairaOrders } from '../orders/nairaOrders.ts';
 import { emailFromEnv } from '../accounts/email.ts';
 import { PlacesSearch } from '../discovery/places.ts';
+import { OsmSearch } from '../discovery/osm.ts';
+import { seedOsmSellers } from '../discovery/hunt.ts';
+import { Geocoder } from '../discovery/geocode.ts';
 import { WebSellerSearch } from '../discovery/webSearch.ts';
 import { geminiClient } from '../llm.ts';
 import { circuitEvaluator, envValue, localPlatform, xlayerPlatform, type Platform } from '../chain/platform.ts';
@@ -69,20 +72,24 @@ const noSms = { send: async () => { throw new AuthError(503, 'Phone sign-in is o
 const accounts = new Accounts(db, noSms, secret, Date.now, null, mail);
 const paystack = paystackKey ? new Paystack(db, ledger, { secretKey: paystackKey, callbackUrl: `${publicUrl}/?deposit=done` }) : null;
 
-// The AI seller hunt: Google Maps listings (GOOGLE_MAPS_API_KEY) and Gemini web search (SELLER_WEB_SEARCH=on, needs
+// The AI seller hunt: OpenStreetMap shops (free; on unless SELLER_OSM=off), Google Maps listings (GOOGLE_MAPS_API_KEY) and Gemini web search (SELLER_WEB_SEARCH=on, needs
 // billing on the Gemini key). Both bill Google per search after their free allowances, so the hunt is capped per day.
 const mapsKey = envValue(env, 'GOOGLE_MAPS_API_KEY'), geminiKey = envValue(env, 'GEMINI_API_KEY');
 const generate = geminiKey ? geminiClient(geminiKey) : null;
 const hunt = {
   db, log, generate,
   places: mapsKey ? new PlacesSearch({ apiKey: mapsKey }) : null,
+  osm: envValue(env, 'SELLER_OSM') === 'off' ? null : new OsmSearch(),
   web: generate && envValue(env, 'SELLER_WEB_SEARCH') === 'on' ? new WebSellerSearch({ generate }) : null,
   perUserDaily: Number(envValue(env, 'HUNT_PER_USER_DAILY') ?? 5), siteDaily: Number(envValue(env, 'HUNT_SITE_DAILY') ?? 50),
 };
 
+// The 41 Lagos businesses with a mobile number on OpenStreetMap (data/osm-lagos-sellers.json) start on the map.
+log(`OpenStreetMap sellers loaded: ${seedOsmSellers(db)} new`);
+
 const staticDir = fileURLToPath(new URL('../../../app/dist/', import.meta.url));
 const server = createApp({
-  platform: p, accounts, buyers, ledger, prices, paystack, hunt, demoNaira: network === 'local' || envValue(env, 'DEMO_NAIRA') === '1',
+  platform: p, accounts, buyers, ledger, prices, paystack, hunt, geocoder: new Geocoder(), demoNaira: network === 'local' || envValue(env, 'DEMO_NAIRA') === '1',
   staticDir: existsSync(staticDir) ? staticDir : undefined,
   secureCookies: envValue(env, 'SECURE_COOKIES') === '1', log,
   sendrelayWebhookSecret: envValue(env, 'SENDRELAY_WEBHOOK_SECRET'),
@@ -102,7 +109,7 @@ server.on('error', (e: NodeJS.ErrnoException) => {
 server.listen(port, async () => {
   console.log(`StockRun on http://localhost:${port}  (${network === 'xlayer' ? 'X LAYER MAINNET, real money' : 'local test chain, test money'})`);
   console.log(`Deployer ${p.deployer.account.address}: ${formatEther(await p.pub.getBalance({ address: p.deployer.account.address }))} OKB/ETH for vaults and gas top-ups`);
-  console.log(`Seller hunt: Google Maps ${hunt.places ? 'on' : 'off (set GOOGLE_MAPS_API_KEY)'}, web search ${hunt.web ? 'on' : 'off'}.`);
+  console.log(`Seller hunt: OpenStreetMap ${hunt.osm ? 'on' : 'off'}, Google Maps ${hunt.places ? 'on' : 'off (set GOOGLE_MAPS_API_KEY)'}, web search ${hunt.web ? 'on' : 'off'}.`);
   console.log(`Email: ${mailKind}. Reader: ${extractor instanceof RuleExtractor ? 'rule-based' : `Gemini (${model()})`}.`);
   console.log(`Naira: ${paystack ? `Paystack (${paystack.test ? 'TEST mode, no real money' : 'LIVE'}), held by StockRun in a ledger` : network === 'local' ? 'test naira button (local only)' : 'deposits OFF (set PAYSTACK_SECRET_KEY)'}`);
   console.log(`Demo naira (free, not real money): ${network === 'local' || envValue(env, 'DEMO_NAIRA') === '1' ? 'ON' : 'off'}. Database: ${dbFile}. Sellers: simulated bots.`);

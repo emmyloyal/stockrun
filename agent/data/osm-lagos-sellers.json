@@ -1,0 +1,375 @@
+{
+ "_note": "Real businesses in Lagos State that list a Nigerian mobile number on OpenStreetMap, collected 2026-11-21 for StockRun. NOT confirmed by StockRun: the number may not be on WhatsApp and the listing may be out of date. Data (c) OpenStreetMap contributors, available under the Open Database License (ODbL 1.0): https://www.openstreetmap.org/copyright",
+ "attribution": "© OpenStreetMap contributors (ODbL)",
+ "sellers": [
+  {
+   "name": "315 Travel and tours limited",
+   "kind": "travel_agency",
+   "lat": 6.441594,
+   "lng": 3.46696,
+   "phone": "+2349120981925",
+   "address": "2A Olarenwaju Ninalowo Crescent, Lagos",
+   "osmUrl": "https://www.openstreetmap.org/node/11998537311"
+  },
+  {
+   "name": "89 Stakes Lifestyle",
+   "kind": "clothes",
+   "lat": 6.443085,
+   "lng": 3.481162,
+   "phone": "+2347089654307",
+   "address": "55/57 Ayinde Akinmade Street, lekki",
+   "osmUrl": "https://www.openstreetmap.org/way/1269073017"
+  },
+  {
+   "name": "Agora Marketplace",
+   "kind": "supermarket",
+   "lat": 6.545767,
+   "lng": 3.270573,
+   "phone": "+2349079579400",
+   "address": "7 Nik Chuks Street, Egbe",
+   "osmUrl": "https://www.openstreetmap.org/node/8111929251"
+  },
+  {
+   "name": "Ash Media Nigeria",
+   "kind": "photo",
+   "lat": 6.618558,
+   "lng": 3.496433,
+   "phone": "+2347036998698",
+   "address": "9 Raphael Adegboyega Street",
+   "osmUrl": "https://www.openstreetmap.org/node/5472890123"
+  },
+  {
+   "name": "Ashani Studio & Beau Monde",
+   "kind": "clothes",
+   "lat": 6.597246,
+   "lng": 3.35396,
+   "phone": "+2348161360737",
+   "address": "Lagos",
+   "osmUrl": "https://www.openstreetmap.org/node/5906765949"
+  },
+  {
+   "name": "Asuquo bespoke",
+   "kind": "tailor",
+   "lat": 6.498493,
+   "lng": 3.381065,
+   "phone": "+2348166680891",
+   "address": "6 Akinwumi Street",
+   "osmUrl": "https://www.openstreetmap.org/node/5455623024"
+  },
+  {
+   "name": "Beauty By Caesignatures",
+   "kind": "beauty",
+   "lat": 6.488002,
+   "lng": 3.305233,
+   "phone": "+2347063432913",
+   "address": "34 Ojefia Crescent",
+   "osmUrl": "https://www.openstreetmap.org/node/13328352836"
+  },
+  {
+   "name": "BeautybyAD",
+   "kind": "beauty",
+   "lat": 6.435612,
+   "lng": 3.480898,
+   "phone": "+2348099483333",
+   "address": "15 Oladimeji Alo Street, lekki",
+   "osmUrl": "https://www.openstreetmap.org/node/11384633104"
+  },
+  {
+   "name": "bokku MART",
+   "kind": "bakery",
+   "lat": 6.537268,
+   "lng": 3.387216,
+   "phone": "+2349164867254",
+   "address": "34 Abule Okuta Road, Lagos",
+   "osmUrl": "https://www.openstreetmap.org/node/13022889383"
+  },
+  {
+   "name": "Bolien Mall",
+   "kind": "mall",
+   "lat": 6.443318,
+   "lng": 3.4812,
+   "phone": "+2348130825113",
+   "address": "55/57 Ayinde Akinmade Street, lekki",
+   "osmUrl": "https://www.openstreetmap.org/node/13810944263"
+  },
+  {
+   "name": "Bride and Groom Photography",
+   "kind": "photographer",
+   "lat": 6.603062,
+   "lng": 3.355754,
+   "phone": "+2348178746690",
+   "address": "12 Ogundana Street, Ikeja",
+   "osmUrl": "https://www.openstreetmap.org/node/2874266517"
+  },
+  {
+   "name": "DHL",
+   "kind": "company",
+   "lat": 6.546808,
+   "lng": 3.336571,
+   "phone": "+2348039077000",
+   "address": "Apapa-Oworonshoki Expressway, Lagos",
+   "osmUrl": "https://www.openstreetmap.org/node/5678239534"
+  },
+  {
+   "name": "DJIN Homes & Security Ltd",
+   "kind": "hardware",
+   "lat": 6.460837,
+   "lng": 3.556787,
+   "phone": "+2347079920849",
+   "address": "5 Ikota Shopping Complex,, Lagos",
+   "osmUrl": "https://www.openstreetmap.org/node/12071680805"
+  },
+  {
+   "name": "Eric Kayser Ikoyi",
+   "kind": "bakery",
+   "lat": 6.46021,
+   "lng": 3.432179,
+   "phone": "+2349060007275",
+   "address": "Lagos",
+   "osmUrl": "https://www.openstreetmap.org/node/9637998805"
+  },
+  {
+   "name": "Fouani",
+   "kind": "electronics",
+   "lat": 6.597866,
+   "lng": 3.353714,
+   "phone": "+2348107540008",
+   "address": "17-19 Allen Avenue, Ikeja",
+   "osmUrl": "https://www.openstreetmap.org/node/5912282958"
+  },
+  {
+   "name": "GreyBoulders",
+   "kind": "company",
+   "lat": 6.449855,
+   "lng": 3.476657,
+   "phone": "+2349078118741",
+   "address": "2b Dapo Solanke Close, lekki phase1",
+   "osmUrl": "https://www.openstreetmap.org/node/13674737174"
+  },
+  {
+   "name": "HighFashionByJol",
+   "kind": "clothes",
+   "lat": 6.445628,
+   "lng": 3.471297,
+   "phone": "+2349131058119",
+   "address": "Shop 19 Aaron’s Mall, Lekki Phase 1, Olubunmi Owa Street, Admiralty Way, Lagos",
+   "osmUrl": "https://www.openstreetmap.org/node/11787180458"
+  },
+  {
+   "name": "Honeytenny",
+   "kind": "clothes",
+   "lat": 6.598118,
+   "lng": 3.353569,
+   "phone": "+2348096297922",
+   "address": "17-19 Allen Avenue, Ikeja",
+   "osmUrl": "https://www.openstreetmap.org/node/5912282956"
+  },
+  {
+   "name": "IFESOLOX LAGOS",
+   "kind": "electronics",
+   "lat": 6.457878,
+   "lng": 3.188499,
+   "phone": "+2349028621860",
+   "address": "6 St. Peters Road, Ojo, Lagos",
+   "osmUrl": "https://www.openstreetmap.org/node/13531553845"
+  },
+  {
+   "name": "Internet Exchange Point of Nigeria",
+   "kind": "company",
+   "lat": 6.447516,
+   "lng": 3.397808,
+   "phone": "+2348093878110",
+   "address": "6 Broad Street, Lagos",
+   "osmUrl": "https://www.openstreetmap.org/node/10131861130"
+  },
+  {
+   "name": "IOTA Nigeria",
+   "kind": "company",
+   "lat": 6.430438,
+   "lng": 3.428402,
+   "phone": "+2348099929270",
+   "address": "1004 Oladele Olashore Street",
+   "osmUrl": "https://www.openstreetmap.org/node/6095336786"
+  },
+  {
+   "name": "JD BATHROOM & ACCESSORIES",
+   "kind": "bathroom_furnishing",
+   "lat": 6.443888,
+   "lng": 3.475066,
+   "phone": "+2348104210354",
+   "address": "47 Babatope Bejide Crescent, lekki",
+   "osmUrl": "https://www.openstreetmap.org/node/12138718152"
+  },
+  {
+   "name": "Kia",
+   "kind": "car",
+   "lat": 6.429659,
+   "lng": 3.423548,
+   "phone": "+2348036768888",
+   "address": "308 Adeola Odeku Street, Lagos",
+   "osmUrl": "https://www.openstreetmap.org/way/1002110434"
+  },
+  {
+   "name": "Live2living Furniture",
+   "kind": "furniture",
+   "lat": 6.612775,
+   "lng": 3.357657,
+   "phone": "+2349038376463",
+   "address": "20 Iyalla Street",
+   "osmUrl": "https://www.openstreetmap.org/node/4334856289"
+  },
+  {
+   "name": "Loyal Point Welding and Fabrication",
+   "kind": "handicraft",
+   "lat": 6.610047,
+   "lng": 3.386429,
+   "phone": "+2347030330791",
+   "address": "8 Oladega Street off Segun Salau ketu-kosofe, Lagos",
+   "osmUrl": "https://www.openstreetmap.org/node/13031543898"
+  },
+  {
+   "name": "Miskay Boutique",
+   "kind": "mall",
+   "lat": 6.442913,
+   "lng": 3.476926,
+   "phone": "+2348082709999",
+   "address": "13b Emma Abimbola Cole Street, lekki",
+   "osmUrl": "https://www.openstreetmap.org/way/941038668"
+  },
+  {
+   "name": "Old English Superstores",
+   "kind": "supermarket",
+   "lat": 6.652416,
+   "lng": 3.310288,
+   "phone": "+2348076885752",
+   "address": "51 Charity Road",
+   "osmUrl": "https://www.openstreetmap.org/node/13011527303"
+  },
+  {
+   "name": "Olive Spa",
+   "kind": "beauty",
+   "lat": 6.451359,
+   "lng": 3.470838,
+   "phone": "+2348107891063",
+   "address": "38 Shakiru Anjorin Street, Lagos",
+   "osmUrl": "https://www.openstreetmap.org/node/12198546248"
+  },
+  {
+   "name": "ONPOINT CLOTHING",
+   "kind": "clothes",
+   "lat": 6.439894,
+   "lng": 3.466116,
+   "phone": "+2348034645559",
+   "address": "12B BEN OKAGBUE STREET OFF ADEBAYO DOHERTY  LEKKI PHASE 1, lagos",
+   "osmUrl": "https://www.openstreetmap.org/node/12003373139"
+  },
+  {
+   "name": "Pick n Pay",
+   "kind": "supermarket",
+   "lat": 6.430191,
+   "lng": 3.424487,
+   "phone": "+2348111621102",
+   "address": "1292 Akin Adesola Street, Lagos",
+   "osmUrl": "https://www.openstreetmap.org/way/653305671"
+  },
+  {
+   "name": "RegalFlowers",
+   "kind": "florist",
+   "lat": 6.45734,
+   "lng": 3.414241,
+   "phone": "+2347011992888",
+   "address": "81b Lafiaji Street, Lagos",
+   "osmUrl": "https://www.openstreetmap.org/node/10166465152"
+  },
+  {
+   "name": "SAINT LUXURY",
+   "kind": "clothes",
+   "lat": 6.442425,
+   "lng": 3.477369,
+   "phone": "+2347046357360",
+   "address": "8B Emma Abimbola Cole Street, lekki",
+   "osmUrl": "https://www.openstreetmap.org/node/11961097798"
+  },
+  {
+   "name": "Shaddash",
+   "kind": "supermarket",
+   "lat": 6.592396,
+   "lng": 3.360503,
+   "phone": "+2348029702046",
+   "address": "23A Opebi Link Road, Ikeja",
+   "osmUrl": "https://www.openstreetmap.org/node/8126987110"
+  },
+  {
+   "name": "Shoprite",
+   "kind": "supermarket",
+   "lat": 6.43649,
+   "lng": 3.451335,
+   "phone": "+2349014000001",
+   "address": "Bisway Street, Lagos",
+   "osmUrl": "https://www.openstreetmap.org/node/2987189855"
+  },
+  {
+   "name": "Silverbird Film Distribution",
+   "kind": "company",
+   "lat": 6.428276,
+   "lng": 3.408534,
+   "phone": "+2348181397657",
+   "address": "133 Ahmadu Bello Way, Lagos",
+   "osmUrl": "https://www.openstreetmap.org/node/5792046953"
+  },
+  {
+   "name": "Sims",
+   "kind": "electronics",
+   "lat": 6.597681,
+   "lng": 3.354256,
+   "phone": "+2347051093233",
+   "address": "16 Allen Avenue, Ikeja",
+   "osmUrl": "https://www.openstreetmap.org/way/496851833"
+  },
+  {
+   "name": "Sonmade luxury ( Stitches )",
+   "kind": "clothes",
+   "lat": 6.442752,
+   "lng": 3.470573,
+   "phone": "+2348107156702",
+   "address": "41 Fola Osibo Street, lagos",
+   "osmUrl": "https://www.openstreetmap.org/node/13151005894"
+  },
+  {
+   "name": "Spaland",
+   "kind": "beauty",
+   "lat": 6.442344,
+   "lng": 3.475084,
+   "phone": "+2349039251171",
+   "address": "2a Hakeem Dickson Road, lekki",
+   "osmUrl": "https://www.openstreetmap.org/node/13353371939"
+  },
+  {
+   "name": "The Dripped Collection",
+   "kind": "fashion_accessories",
+   "lat": 6.44294,
+   "lng": 3.469589,
+   "phone": "+2347014487348",
+   "address": "35B Fola Osibo Street, lagos",
+   "osmUrl": "https://www.openstreetmap.org/way/1268728999"
+  },
+  {
+   "name": "VICTORIOUS YUTE",
+   "kind": "clothes",
+   "lat": 6.442898,
+   "lng": 3.473867,
+   "phone": "+2349160007611",
+   "address": "18A Emma Abimbola Cole Street, lekki",
+   "osmUrl": "https://www.openstreetmap.org/node/13039060070"
+  },
+  {
+   "name": "ZTTWSHOP",
+   "kind": "clothes",
+   "lat": 6.452536,
+   "lng": 3.470567,
+   "phone": "+2347045393104",
+   "address": "1 Olawale Cole Ontiri Avenue, Lagos",
+   "osmUrl": "https://www.openstreetmap.org/node/12071626739"
+  }
+ ]
+}

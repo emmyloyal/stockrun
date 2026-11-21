@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { openDb } from '../src/accounts/accounts.ts';
 import { PlacesSearch } from '../src/discovery/places.ts';
+import { OsmSearch } from '../src/discovery/osm.ts';
 import { WebSellerSearch, fetchPageText, nationalDigits, pageHasNumber } from '../src/discovery/webSearch.ts';
-import { fallbackPlan, foundSeller, huntSellers } from '../src/discovery/hunt.ts';
+import { fallbackPlan, foundNear, foundSeller, huntSellers, seedOsmSellers } from '../src/discovery/hunt.ts';
 import type { Generate } from '../src/llm.ts';
 
 const KETU = { lat: 6.5965, lng: 3.3878, address: '12 Ikorodu Road, Ketu, Lagos' };
@@ -73,7 +74,7 @@ describe('the seller hunt', () => {
       ] });
     }) as unknown as typeof fetch;
     const db = openDb();
-    const plan = { queries: ['Indomie noodles wholesale', 'Dufil distributor'], markets: ['Mile 12'] };
+    const plan = { queries: ['Indomie noodles wholesale', 'Dufil distributor'], markets: ['Mile 12'], shopTypes: ['wholesale'] };
     const r = await huntSellers('Indomie noodles carton', KETU, { places: new PlacesSearch({ apiKey: 'k', fetch: f }), generate: gemini(plan, {}), db });
     expect(searched).toEqual(plan.queries);
     expect(r.sellers).toHaveLength(1);
@@ -112,3 +113,64 @@ describe('the seller hunt', () => {
 });
 
 void WebSellerSearch;
+
+describe('OpenStreetMap search', () => {
+  it('asks Overpass for shops of the chosen types with a phone, and ignores made-up types', async () => {
+    let query = '';
+    const f = (async (url: string, init: RequestInit) => {
+      expect(url).toContain('overpass');
+      expect((init.headers as Record<string, string>)['User-Agent']).toMatch(/^StockRun/);
+      query = new URLSearchParams(String(init.body)).get('data')!;
+      return json({ elements: [
+        { type: 'node', id: 1, lat: 6.60, lon: 3.39, tags: { name: 'Agora Marketplace', shop: 'supermarket', phone: '0803 222 1111; 01 555 0000' } },
+        { type: 'way', id: 2, center: { lat: 6.61, lon: 3.40 }, tags: { name: 'Shaddash', shop: 'supermarket', 'contact:whatsapp': '+234 905 000 1111' } },
+        { type: 'node', id: 3, lat: 6.6, lon: 3.39, tags: { shop: 'kiosk', phone: '0803 000 0000' } },     // no name: skipped
+      ] });
+    }) as unknown as typeof fetch;
+    const r = await new OsmSearch({ fetch: f }).search(['supermarket', 'wholesale', 'not_a_shop_type'], KETU, 10_000);
+    expect(query).toContain('around:10000,6.5965,3.3878');
+    expect(query).toContain('^(supermarket|wholesale)$');
+    expect(r.map((l) => [l.name, l.phone, l.mapsUrl])).toEqual([
+      ['Agora Marketplace', '0803 222 1111', 'https://www.openstreetmap.org/node/1'],
+      ['Shaddash', '+234 905 000 1111', 'https://www.openstreetmap.org/way/2'],
+    ]);
+  });
+
+  it('falls back to Nominatim, one request a second, when no Overpass server answers', async () => {
+    const urls: string[] = []; const waits: number[] = [];
+    const f = (async (url: string) => {
+      urls.push(url);
+      if (url.includes('overpass')) throw new Error('connection reset');
+      return json([{ osm_type: 'node', osm_id: 9, lat: '6.6', lon: '3.39', name: 'Old English Superstores', type: 'supermarket', display_name: 'Old English, Ikorodu Road, Ketu, Lagos', extratags: { phone: '0809 111 2222' } }]);
+    }) as unknown as typeof fetch;
+    const r = await new OsmSearch({ fetch: f, sleep: async (ms) => { waits.push(ms); } }).search(['supermarket', 'convenience'], KETU);
+    expect(urls.filter((u) => u.includes('nominatim'))).toHaveLength(2);
+    expect(waits).toEqual([1100]);
+    expect(r).toHaveLength(1);                                   // the same place from both searches counts once
+    expect(r[0]).toMatchObject({ name: 'Old English Superstores', phone: '0809 111 2222' });
+  });
+
+  it('feeds the hunt: OSM shops with a mobile become found sellers', async () => {
+    const f = (async () => json({ elements: [{ type: 'node', id: 7, lat: 6.60, lon: 3.39, tags: { name: 'Agora Marketplace', shop: 'supermarket', phone: '0803 222 1111' } }] })) as unknown as typeof fetch;
+    const r = await huntSellers('Indomie', KETU, { osm: new OsmSearch({ fetch: f }), db: openDb() });
+    expect(r.sellers[0]).toMatchObject({ name: 'Agora Marketplace', phone: '+2348032221111', source: 'osm', sourceUrl: 'https://www.openstreetmap.org/node/7' });
+  });
+});
+
+describe('the OpenStreetMap Lagos sellers', () => {
+  it('load once (not again on restart), carry the OSM credit, and come back closest first', async () => {
+    const { readFileSync } = await import('node:fs');
+    const data = JSON.parse(readFileSync(new URL('../data/osm-lagos-sellers.json', import.meta.url), 'utf8'));
+    expect(data.attribution).toMatch(/OpenStreetMap contributors/);
+    expect(data.sellers.length).toBe(41);
+    for (const x of data.sellers) expect(x.phone).toMatch(/^\+234[789][01]\d{8}$/);
+    const db = openDb();
+    expect(seedOsmSellers(db)).toBe(41);
+    expect(seedOsmSellers(db)).toBe(0);
+    const near = foundNear(db, KETU, 100);
+    expect(near.length).toBe(41);
+    expect(near[0].km).toBeLessThanOrEqual(near[1].km);
+    expect(near[0]).toMatchObject({ source: 'osm' });
+    expect(near[0].sourceUrl).toMatch(/^https:\/\/www\.openstreetmap\.org\//);
+  });
+});

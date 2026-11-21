@@ -19,7 +19,9 @@ import { kobo, toNaira, LedgerError, type Ledger } from '../money/ledger.ts';
 import { PaystackError, type Paystack } from '../money/paystack.ts';
 import { SELF_HANDLER } from '../orders/nairaOrders.ts';
 import { RESTOCK_REASONS } from '../tools/vault.ts';
-import { huntEnabled, huntSellers, type HuntDeps } from '../discovery/hunt.ts';
+import { foundNear, foundSeller, huntEnabled, huntSellers, type HuntDeps } from '../discovery/hunt.ts';
+import { Geocoder } from '../discovery/geocode.ts';
+import { draftMessage, whatsappLink } from '../discovery/draft.ts';
 import { PICKUP_REASONS, DELIVERY_REASONS } from '../check/checkService.ts';
 
 export interface AppOptions {
@@ -38,6 +40,8 @@ export interface AppOptions {
   allowedOrigins?: string[];
   /** The AI seller hunt (Google Maps + web search); absent or with neither search: off. */
   hunt?: Omit<HuntDeps, 'db'> & { db: HuntDeps['db']; perUserDaily?: number; siteDaily?: number };
+  /** Place search for the map's search box (OpenStreetMap Nominatim); absent: sellers only. */
+  geocoder?: Geocoder | null;
   /** whsec_... from registering /api/webhooks/sendrelay with Sendrelay; webhooks are refused without it. */
   sendrelayWebhookSecret?: string;
   log?: (line: string) => void;
@@ -57,7 +61,9 @@ export function createApp(o: AppOptions): Server {
   const log = o.log ?? (() => {});
   const lastCheck = new Map<string, CheckResult>();
   const codeRequests = new Map<string, number[]>();         // per-IP limit on emailed codes
-  const hunts = new Map<number, number[]>();                 // per-user hunt times (each hunt costs Google lookups)
+  const hunts = new Map<number, number[]>();
+  const drafts = new Map<number, number[]>();                // per-user AI message drafts
+  const searches = new Map<string, number[]>();              // per-IP place searches (they go to OpenStreetMap)                 // per-user hunt times (each hunt costs Google lookups)
 
   const need = (c: Ctx): User => { if (!c.user) throw new AuthError(401, 'Sign in first.'); return c.user; };
   const signedIn = (res: ServerResponse, r: { user: User; token: string }) => {
@@ -221,6 +227,43 @@ export function createApp(o: AppOptions): Server {
     }],
 
     // ---------------------------------------------------------------- the map
+    /** The AI writes the buyer's WhatsApp message to a found seller; the buyer sends it from their own WhatsApp. */
+    ['POST', /^\/api\/sellers\/(found-[0-9a-f]{16})\/message$/, async (c) => {
+      const u = need(c);
+      if (!o.hunt) throw new AuthError(503, 'Seller contact is not switched on yet on this server.');
+      const seller = foundSeller(o.hunt.db, c.m[1]);
+      if (!seller) throw new AuthError(404, 'That seller is not on the map any more.');
+      const request = String(c.body?.text ?? '').trim();
+      if (request.length < 3 || request.length > 300) throw new AuthError(400, 'Type what you want to buy first (up to 300 characters).');
+      const t = Date.now(), mine = (drafts.get(u.id) ?? []).filter((x) => x > t - 24 * 3600_000);
+      if (mine.length >= 40) throw new AuthError(429, 'That is enough messages for today. Try again tomorrow.');
+      drafts.set(u.id, [...mine, t]);
+      const area = String(c.body?.place?.address ?? '').trim().slice(0, 120) || 'Lagos';
+      const d = await draftMessage(o.hunt.generate, { request, sellerName: seller.name, sellerKind: null, area, delivery: c.body?.delivery === 'self' ? 'self' : 'logistics' });
+      return { seller: { id: seller.id, name: seller.name, phone: seller.phone }, message: d.message, ai: d.ai, whatsappUrl: whatsappLink(seller.phone, d.message) };
+    }],
+    /** The map's search box: sellers anywhere (by name, kind, market or product) and places in Nigeria. Public. */
+    ['GET', /^\/api\/search$/, async (c) => {
+      const q = (c.url.searchParams.get('q') ?? '').trim().slice(0, 80), needle = q.toLowerCase();
+      if (q.length < 2) return { sellers: [], places: [] };
+      const lat = Number(c.url.searchParams.get('lat')), lng = Number(c.url.searchParams.get('lng'));
+      const from = IN_NIGERIA(lat, lng) ? { lat, lng } : { lat: 6.5244, lng: 3.3792 };      // Lagos when no pin
+      const has = (...xs: (string | null | undefined)[]) => xs.some((x) => x?.toLowerCase().includes(needle));
+      const found = o.hunt ? foundNear(o.hunt.db, from, 1000, 1000).filter((f) => has(f.name, f.kind?.replace(/_/g, ' '), f.address))
+        .map((f) => ({ id: f.id, name: f.name, kind: f.kind, address: f.address, lat: f.lat, lng: f.lng, phone: f.phone, source: f.source, sourceUrl: f.sourceUrl, km: f.km, demo: false })) : [];
+      const demo = loadSuppliers().filter((s) => has(s.name, s.market, ...s.stocks.map((st) => st.item)))
+        .map((s) => ({ id: s.id, name: s.name, kind: 'demo seller', address: s.market, lat: s.lat, lng: s.lng, phone: null, source: 'demo', sourceUrl: null, km: Math.round(haversineKm(from, s) * 10) / 10, demo: true }));
+      const sellers = [...found, ...demo].sort((a, b) => a.km - b.km).slice(0, 8);
+      let places: unknown[] = [];
+      if (o.geocoder && q.length >= 3) {
+        const t = Date.now(), mine = (searches.get(c.ip) ?? []).filter((x) => x > t - 3600_000);
+        if (mine.length < 60) {
+          searches.set(c.ip, [...mine, t]);
+          places = await o.geocoder.search(q).catch(() => []);
+        }
+      }
+      return { sellers, places };
+    }],
     /** Verified sellers near a point, with their latest prices. Public: anyone can look before signing in. */
     ['GET', /^\/api\/map$/, async (c) => {
       const lat = Number(c.url.searchParams.get('lat')), lng = Number(c.url.searchParams.get('lng'));
@@ -229,6 +272,8 @@ export function createApp(o: AppOptions): Server {
       const sellers = loadSuppliers().map((s) => ({ s, km: haversineKm({ lat, lng }, s) })).filter((x) => x.km <= radius).sort((a, b) => a.km - b.km).slice(0, 50);
       return {
         center: { lat, lng }, radiusKm: radius,
+        // Real businesses found on OpenStreetMap or by the AI hunt: not confirmed by StockRun.
+        found: o.hunt ? foundNear(o.hunt.db, { lat, lng }, radius).map((f) => ({ id: f.id, name: f.name, kind: f.kind, address: f.address, lat: f.lat, lng: f.lng, phone: f.phone, source: f.source, sourceUrl: f.sourceUrl, km: f.km })) : [],
         sellers: sellers.map(({ s, km }) => ({
           id: s.id, key: supplierKey(s.id), name: s.name, market: s.market, lat: s.lat, lng: s.lng, simulated: s.simulated, verified: buyers.sellerStatus(supplierKey(s.id)) === 1,
           km: Math.round(km * 10) / 10,
