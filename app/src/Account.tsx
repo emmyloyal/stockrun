@@ -411,6 +411,7 @@ function Orders({ cfg, onChange }: { cfg: Config; onChange: () => void }) {
   const [orders, setOrders] = useState<Order[] | null>(null);
   const [requests, setRequests] = useState<RequestRecord[]>([]);
   const [counts, setCounts] = useState<Record<string, string>>({});
+  const [confirming, setConfirming] = useState<string | null>(null);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const refresh = useCallback(() => Promise.all([server.orders().then(setOrders), server.requests().then(setRequests)]).catch((e) => setError(e.message)), []);
@@ -440,11 +441,32 @@ function Orders({ cfg, onChange }: { cfg: Config; onChange: () => void }) {
               )}
               {o.self && o.status === 'Locked' && (
                 <div className="stack">
-                  <p className="warn">Go to {o.supplier.name}. Count the good {o.unit}s you take: the seller is paid for that number, straight away.</p>
+                  <p className="warn">Go to {o.supplier.name}. Count the good {o.unit}s you take. Confirm only when they are in your hands, at the shop: the seller's payment is approved for that number (StockRun then sends it to the seller's bank) and the rest comes back to you.</p>
                   <div className="row wrap">
                     <label className="field"><span>{o.unit}s taken</span><input type="number" min={0} max={o.ordered} value={counts[`p${o.orderId}`] ?? String(o.ordered)} onChange={(e) => setCounts((c) => ({ ...c, [`p${o.orderId}`]: e.target.value }))} /></label>
-                    <button className="btn primary" disabled={!!busy} onClick={() => act('Paying the seller…', () => server.collect(o.orderId, count(`p${o.orderId}`, o.ordered)))}>Confirm and pay seller</button>
+                    {confirming !== o.orderId
+                      ? <button className="btn primary" disabled={!!busy} onClick={() => { setError(''); setConfirming(o.orderId); }}>I have the goods</button>
+                      : null}
                   </div>
+                  {confirming === o.orderId && (() => {
+                    const n = Number(counts[`p${o.orderId}`] ?? o.ordered);
+                    return (
+                      <div className="stack note">
+                        <p><strong>Confirm {n} {o.unit}{n === 1 ? '' : 's'} from {o.supplier.name}?</strong> This approves {naira(n * o.unitPriceNaira)} for the seller and cannot be undone. Your phone's location is checked: you must be at the shop.</p>
+                        <div className="row wrap">
+                          <button className="btn primary" disabled={!!busy} onClick={() => act('Checking your location and the count…', async () => {
+                            const at = await currentPosition().catch(() => null);
+                            const r = await server.collect(o.orderId, count(`p${o.orderId}`, o.ordered), at ?? undefined);
+                            setConfirming(null);
+                            if (r.location && !r.location.atSupplier) throw new Error(at
+                              ? `Your phone is ${r.location.metres !== null ? `${(r.location.metres / 1000).toFixed(1)} km` : 'too far'} from ${o.supplier.name}, so nothing was approved. Confirm again at the shop.`
+                              : 'We could not read your location, so nothing was approved. Allow location for this site and confirm again at the shop.');
+                          })}>Yes, I have them: approve payment</button>
+                          <button className="link" onClick={() => setConfirming(null)}>Not yet</button>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
               {o.logistics && <Logistics o={o} />}

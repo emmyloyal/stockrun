@@ -26,12 +26,12 @@ export const STATUS = { None: 0, AwaitingOwner: 1, Locked: 2, PickedUp: 3, Deliv
 
 /** Reason codes in plain words (app/README.md). */
 export const PICKUP_REASONS: Record<number, string> = {
-  0: 'All goods counted. Supplier paid in full.',
-  1: 'The handler is not at the supplier.',
+  0: 'All goods counted. The seller\'s payment for all of them is approved.',
+  1: 'Not at the seller, so nothing was approved. Confirm again when you are at the shop with the goods.',
   2: 'This shop no longer trusts that logistics company. Nothing was paid.',
   3: 'Damaged goods. The supplier should replace them.',
   4: 'No goods counted.',
-  5: 'Short supply. The supplier is paid for what was counted.',
+  5: 'Short supply. The seller\'s payment is approved for what was counted; the rest comes back to you.',
 };
 export const DELIVERY_REASONS: Record<number, string> = {
   0: 'Delivered. Logistics company paid.',
