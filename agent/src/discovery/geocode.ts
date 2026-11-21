@@ -19,6 +19,21 @@ export function lagosAreas(): Area[] {
   return areasCache;
 }
 
+const ALIASES: Record<string, string> = {
+  vi: 'victoria island', 'v i': 'victoria island', festac: 'festac town', 'phase 1': 'lekki phase 1', 'lekki 1': 'lekki phase 1',
+  'lekki phase one': 'lekki phase 1', gra: 'ikeja gra', 'ikeja g r a': 'ikeja gra', island: 'lagos island', 'satellite': 'satellite town',
+  'anthony': 'anthony village', 'ibeju': 'ibeju lekki', 'amuwo': 'amuwo odofin', 'iyana ipaja': 'iyana ipaja', 'ebute meta': 'ebute metta',
+};
+/** Letters to change, add or remove to turn one word into the other. */
+export function editDistance(a: string, b: string): number {
+  const d = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = d[0]; d[0] = i;
+    for (let j = 1; j <= b.length; j++) { const t = d[j]; d[j] = Math.min(d[j] + 1, d[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1)); prev = t; }
+  }
+  return d[b.length];
+}
+
 const ROAD = /^(road|rd|street|st|avenue|ave|way|expressway|express|close|crescent|lane|drive|motor|highway|bypass|link)\b/;
 
 /**
@@ -26,7 +41,21 @@ const ROAD = /^(road|rd|street|st|avenue|ave|way|expressway|express|close|cresce
  * does not count; addresses run street, area, city, so the area named last wins, then the longest ("Lekki Phase 1").
  */
 export function areaIn(address: string, areas: Area[] = lagosAreas()): PlaceHit | null {
-  const text = ` ${address.toLowerCase().replace(/[^a-z0-9]+/g, ' ')} `;
+  const words = address.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  // Short names people use for Lagos areas.
+  const expanded = ALIASES[words] ?? words;
+  const text = ` ${expanded} `;
+  const found = (a: Area): PlaceHit => ({ name: a.name, address: 'Lagos', lat: a.lat, lng: a.lng, kind: 'area (approximate)' });
+  // One or two words that are just an area: the full name, its first word ("Festac" -> Festac Town), or a small typo.
+  if (expanded.split(' ').length <= 2) {
+    const norm = (n: string) => n.toLowerCase().replace(/[^a-z0-9]+/g, ' ');
+    const exact = areas.find((a) => norm(a.name) === expanded) ?? areas.find((a) => norm(a.name).split(' ')[0] === expanded && expanded.length >= 4 && expanded !== 'lagos');   // "Lagos" is the city, not Lagos Island
+    if (exact) return found(exact);
+    if (expanded.length >= 5 && !expanded.includes(' ')) {
+      const near = areas.filter((a) => !norm(a.name).includes(' ') && editDistance(norm(a.name), expanded) <= 1);
+      if (near.length === 1) return found(near[0]);
+    }
+  }
   let best: { a: Area; at: number } | null = null;
   for (const a of areas) {
     const needle = ` ${a.name.toLowerCase().replace(/[^a-z0-9]+/g, ' ')} `;
@@ -52,7 +81,10 @@ export class Geocoder {
   /** Up to 5 places in Nigeria matching `q`, best first. Cached for a day. */
   async search(q: string): Promise<PlaceHit[]> {
     const key = q.trim().toLowerCase().replace(/\s+/g, ' ');
-    if (key.length < 3) return [];
+    if (key.length < 2) return [];
+    // Just an area ("Ikeja", "VI", "Festac"): use the Lagos list. Online search could pick a same-named place elsewhere.
+    const area = key.split(' ').length <= 3 ? areaIn(key) : null;
+    if (area) return [area];
     const cached = this.cache.get(key);
     if (cached && this.now() - cached.at < 24 * 3600_000) return cached.hits;
     let hits = await this.nominatim(key).catch((e) => { this.log(`Nominatim: ${(e as Error).message}`); return [] as PlaceHit[]; });

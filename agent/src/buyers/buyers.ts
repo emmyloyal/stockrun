@@ -61,7 +61,7 @@ export function validateRequest(i: Partial<RequestInput> & { place?: Partial<Pla
   if (!(budget >= 1_000 && budget <= MAX_BUDGET_NAIRA)) throw new AuthError(400, `Set a budget from ₦1,000 to ₦${MAX_BUDGET_NAIRA.toLocaleString('en-NG')}.`);
   const lat = Number(i.place?.lat), lng = Number(i.place?.lng), address = String(i.place?.address ?? '').trim();
   if (!IN_NIGERIA(lat, lng)) throw new AuthError(400, 'Put the delivery pin on the map, in Nigeria.');
-  if (address.length < 3 || address.length > 200) throw new AuthError(400, 'Type the delivery address (street, area, city).');
+  if (address.length < 2 || address.length > 200) throw new AuthError(400, 'Type where it should go: your area is enough, e.g. Ikeja.');
   const delivery: DeliveryChoice = i.delivery === 'self' ? 'self' : 'logistics';
   return { text, budgetNaira: budget, place: { lat, lng, address }, delivery, contactPhone: typeof i.contactPhone === 'string' ? i.contactPhone.trim() : undefined };
 }
@@ -155,7 +155,7 @@ export class Buyers {
     if (!Number.isInteger(price) || price < 1 || price * quantity > MAX_BUDGET_NAIRA) throw new AuthError(400, `Price per ${unit} in whole naira; the total can be up to ₦${MAX_BUDGET_NAIRA.toLocaleString('en-NG')}.`);
     if (!raw.category || !(raw.category in CATEGORIES)) throw new AuthError(400, 'Choose what kind of goods these are.');
     const lat = Number(raw.place?.lat), lng = Number(raw.place?.lng), address = String(raw.place?.address ?? '').trim();
-    if (!IN_NIGERIA(lat, lng) || address.length < 3) throw new AuthError(400, 'Put your delivery pin and address on the map first.');
+    if (!IN_NIGERIA(lat, lng) || address.length < 2) throw new AuthError(400, 'Type your area and tap Find sellers first, so the distance can be checked.');
     const delivery: DeliveryChoice = raw.delivery === 'self' ? 'self' : 'logistics';
     let contactPhone = user.phone ?? undefined;
     if (raw.contactPhone) { try { contactPhone = normalisePhone(String(raw.contactPhone)); } catch { throw new AuthError(400, 'Enter the rider contact number like 0803 123 4567.'); } }

@@ -276,8 +276,8 @@ function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me:
           <input className="money" inputMode="numeric" placeholder="150,000" value={b ? b.toLocaleString('en-NG') : ''} onChange={(e) => setBudget(e.target.value)} />
         </label>
         {b > available && <p className="warn">Your balance is {naira(available)}. <button className="link" onClick={goMoney}>Deposit naira</button> first.</p>}
-        <label className="field"><span>Deliver to (address)</span>
-          <input placeholder="12 Ikorodu Road, Ketu, Lagos" autoComplete="street-address" value={place.address}
+        <label className="field"><span>Deliver to (your area is enough)</span>
+          <input placeholder="Ikeja, or 12 Ikorodu Road, Ketu" autoComplete="street-address" value={place.address}
             onChange={(e) => setPlace({ lat: NaN, lng: NaN, address: e.target.value })} />
         </label>
         <button className="link" onClick={here}>Use where I am instead</button>
@@ -289,7 +289,7 @@ function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me:
         {delivery === 'logistics' && !user.phone && (
           <label className="field"><span>Phone number for the rider</span><input inputMode="tel" value={contact} onChange={(e) => setContact(e.target.value)} placeholder="0803 123 4567" /></label>
         )}
-        <button className="btn primary" disabled={!!busy || !cfg.sellerHunt || text.trim().length < 3 || (place.address.trim().length < 3 && !pinned)} onClick={findSellers}>Find sellers</button>
+        <button className="btn primary" disabled={!!busy || !cfg.sellerHunt || text.trim().length < 3 || (place.address.trim().length < 2 && !pinned)} onClick={findSellers}>Find sellers</button>
         <p className="fine">{cfg.sellerHunt
           ? 'The AI works out what kind of seller sells this, from your goods and budget, and finds the closest ones to your address that have a WhatsApp number. They are real businesses, not checked by StockRun.'
           : 'Seller search is not switched on yet on this server.'}</p>
@@ -372,7 +372,7 @@ function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me:
           <summary>Try the demo agent (demo sellers, it haggles for you)</summary>
           <div className="stack">
             <p className="fine">Six demo sellers answered by bots. The agent haggles on your behalf within your budget, then RestockGuard locks the money. Needs your address found on the map first (Find sellers, or Show on map).</p>
-            <button className="btn ghost" disabled={!!busy || text.trim().length < 3 || b < 1000 || !pinned || place.address.trim().length < 3} onClick={ask}>Ask the demo agent</button>
+            <button className="btn ghost" disabled={!!busy || text.trim().length < 3 || b < 1000 || !pinned || place.address.trim().length < 2} onClick={ask}>Ask the demo agent</button>
             {reply && <pre className="reply">{reply}</pre>}
           </div>
         </details>

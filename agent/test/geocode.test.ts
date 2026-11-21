@@ -22,12 +22,12 @@ describe('finding a delivery address', () => {
       return json({ features: [{ geometry: { coordinates: [3.3516, 6.6016] }, properties: { name: 'Ikeja', countrycode: 'NG', state: 'Lagos', osm_value: 'suburb' } }] });
     }) as unknown as typeof fetch;
     const g = new Geocoder({ fetch: f, now: () => t, sleep: async () => {}, log: (l) => logs.push(l) });
-    expect((await g.search('Ikeja'))[0]).toMatchObject({ name: 'Ikeja', lat: 6.6016, lng: 3.3516 });
+    expect((await g.search('Allen Avenue'))[0]).toMatchObject({ name: 'Ikeja', lat: 6.6016, lng: 3.3516 });
     expect(logs[0]).toMatch(/Nominatim: refused \(403\)/);
-    await g.search('Yaba');
+    await g.search('Herbert Macaulay Way');
     expect(urls.filter((u) => u.includes('nominatim'))).toHaveLength(1);          // skipped the second time
     t += 11 * 60_000;
-    await g.search('Surulere');
+    await g.search('Adeola Odeku Street');
     expect(urls.filter((u) => u.includes('nominatim'))).toHaveLength(2);          // tried again after 10 minutes
   });
 
@@ -55,5 +55,21 @@ describe('area names inside street names', () => {
     expect(areaIn('Agege Motor Road, Mushin, Lagos')?.name).toBe('Mushin');
     expect(areaIn('Ikorodu')?.name).toBe('Ikorodu');
     expect(areaIn('Ikeja Along, Ikorodu')?.name).toBe('Ikorodu');                  // the area named last
+  });
+});
+
+describe('one word is enough', () => {
+  it('finds Lagos areas from a single word, a short name or a small typo, without going online', async () => {
+    for (const [typed, area] of [['Ikeja', 'Ikeja'], ['yaba', 'Yaba'], ['VI', 'Victoria Island'], ['Festac', 'Festac Town'], ['Lekki', 'Lekki'],
+      ['phase 1', 'Lekki Phase 1'], ['GRA', 'Ikeja GRA'], ['Surulre', 'Surulere'], ['Mile 12', 'Mile 12'], ['Ajah', 'Ajah']] as const) {
+      expect(areaIn(typed)?.name, typed).toBe(area);
+    }
+    let online = 0;
+    const f = (async () => { online++; return json([]); }) as unknown as typeof fetch;
+    const g = new Geocoder({ fetch: f, ...quiet });
+    expect((await g.search('Ikeja'))[0].name).toBe('Ikeja');
+    expect((await g.search('VI'))[0].name).toBe('Victoria Island');
+    expect(online).toBe(0);
+    expect(areaIn('Ikejaaa')).toBeNull();                         // two letters off: not guessed
   });
 });

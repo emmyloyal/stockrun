@@ -216,11 +216,11 @@ export function createApp(o: AppOptions): Server {
       if (text.length < 3 || text.length > 200) throw new AuthError(400, 'Say what you want to buy (up to 200 characters).');
       // The delivery address decides where to look: find it on the map (with "Lagos" added if it needs it).
       if (!IN_NIGERIA(lat, lng)) {
-        if (address.length < 3) throw new AuthError(400, 'Type your delivery address, e.g. 12 Ikorodu Road, Ketu, Lagos.');
+        if (address.length < 2) throw new AuthError(400, 'Type where it should go: your area is enough, e.g. Ikeja.');
         if (!o.geocoder) throw new AuthError(503, 'Address search is not switched on yet on this server.');
         let hit = (await o.geocoder.search(address).catch(() => []))[0];
         if (!hit && !/lagos/i.test(address)) hit = (await o.geocoder.search(`${address}, Lagos`).catch(() => []))[0];
-        if (!hit || !IN_NIGERIA(hit.lat, hit.lng)) throw new AuthError(400, 'We could not find that address. Add the area and city, e.g. "Ikorodu Road, Ketu, Lagos".');
+        if (!hit || !IN_NIGERIA(hit.lat, hit.lng)) throw new AuthError(400, 'We could not find that place. Try your area name, e.g. "Ikeja", "Yaba" or "Lekki".');
         lat = hit.lat; lng = hit.lng; matched = [hit.name, hit.address].filter(Boolean).join(', ');
       }
       const t = Date.now(), day = t - 24 * 3600_000;
