@@ -537,6 +537,8 @@ function Money({ cfg, me, onChange }: { cfg: Config; me: Me; onChange: () => voi
   const [note, setNote] = useState('');
   const [sheet, setSheet] = useState<null | 'amount' | 'pay'>(null);
   const [amount, setAmount] = useState(0);
+  const [quote, setQuote] = useState<{ chargeNaira: number; totalNaira: number } | null>(null);
+  useEffect(() => { if (sheet === 'pay' && amount > 0) server.depositQuote(amount).then(setQuote).catch(() => setQuote(null)); else setQuote(null); }, [sheet, amount]);
   // Naira for people who signed in with email, dollars for people who signed in with a wallet.
   const how = load<'phone' | 'email' | 'wallet' | ''>('stockrun.signin', '');
   const currency: Currency = how === 'wallet' || (!how && !me.user?.phone && !me.user?.email && me.user?.wallet) ? 'usd' : 'ngn';
@@ -620,7 +622,8 @@ function Money({ cfg, me, onChange }: { cfg: Config; me: Me; onChange: () => voi
                   save('stockrun.email', email);
                   const r = await server.deposit(amount, email);
                   location.href = r.checkoutUrl;
-                })}>Pay {naira(amount)} with Paystack</button>
+                })}>Pay {naira(quote?.totalNaira ?? amount)} with Paystack</button>
+                {quote && quote.chargeNaira > 0 && <p className="fine">{naira(amount)} goes to your balance + {naira(quote.chargeNaira)} Paystack charge = {naira(quote.totalNaira)} to pay.</p>}
                 {cfg.naira.test && <p className="fine">Paystack is in test mode: use their test card, no real money moves.</p>}
               </>)}
               {!nairaOn && <p className="warn">Naira deposits are not switched on yet on this server.</p>}

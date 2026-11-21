@@ -16,7 +16,7 @@ import { IN_NIGERIA, type Buyers } from '../buyers/buyers.ts';
 import { tokenAbi, type Platform } from '../chain/platform.ts';
 import { verifySendrelayWebhook } from '../logistics/sendrelay.ts';
 import { kobo, toNaira, LedgerError, type Ledger } from '../money/ledger.ts';
-import { PaystackError, type Paystack } from '../money/paystack.ts';
+import { PaystackError, depositCharge, type Paystack } from '../money/paystack.ts';
 import { SELF_HANDLER } from '../orders/nairaOrders.ts';
 import { RESTOCK_REASONS } from '../tools/vault.ts';
 import { foundNear, foundSeller, huntEnabled, huntSellers, type HuntDeps } from '../discovery/hunt.ts';
@@ -147,7 +147,7 @@ export function createApp(o: AppOptions): Server {
     // ---------------------------------------------------------------- me
     ['GET', /^\/api\/config$/, async () => ({
       chainId: p.chain.id, network: p.name, token: p.token, tokenSymbol: p.tokenSymbol, explorerTx: p.explorerTx,
-      naira: { paystack: !!paystack, test: paystack?.test ?? true, testCredit: !!o.demoNaira || (!paystack && !!p.faucet),
+      naira: { paystack: !!paystack, test: paystack?.test ?? true, depositChargePaidByBuyer: !!paystack?.charge, testCredit: !!o.demoNaira || (!paystack && !!p.faucet),
         fee: { percent: buyers.orders.fee.bps / 100, minNaira: buyers.orders.fee.minKobo / 100, maxNaira: buyers.orders.fee.maxKobo / 100 } },
       logistics: p.carriers.map((x) => ({ id: x.id, name: x.name, api: !!x.connector })),
       emailSignIn: accounts.emailSignIn,
@@ -297,6 +297,11 @@ export function createApp(o: AppOptions): Server {
       if (hits.length >= 10) throw new AuthError(429, 'Too many tries. Try again in an hour.');
       codeRequests.set(`bank:${c.ip}`, [...hits, t]);
       return adminTryAsync(() => o.payouts!.sellerSubmitBank(c.m[1], c.body ?? {}));
+    }],
+    /** What a deposit costs: the deposit plus Paystack's charge (the balance gets the full deposit). */
+    ['GET', /^\/api\/naira\/deposit-quote$/, async (c) => {
+      const n = Math.round(Number(c.url.searchParams.get('amountNaira')) || 0), charge = depositCharge(kobo(n), paystack?.charge ?? null);
+      return { amountNaira: n, chargeNaira: charge / 100, totalNaira: n + charge / 100 };
     }],
     /** The buyer takes spendable naira out to their own bank. */
     ['POST', /^\/api\/naira\/withdraw$/, async (c) => {

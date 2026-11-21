@@ -23,6 +23,7 @@ import { Geocoder } from '../discovery/geocode.ts';
 import { Payouts, adminList } from '../admin/payouts.ts';
 import { Activity } from '../admin/activity.ts';
 import { Withdrawals } from '../money/withdrawals.ts';
+import { PAYSTACK_LOCAL } from '../money/paystack.ts';
 import { loadSuppliers, supplierKey } from '../tools/suppliers.ts';
 import type { Hash } from 'viem';
 import { WebSellerSearch } from '../discovery/webSearch.ts';
@@ -77,7 +78,9 @@ const publicUrl = envValue(env, 'PUBLIC_URL') ?? `http://localhost:${port}`;
 // Sign-in is by email or wallet. Phone sign-in is off (no SMS sender); accounts made earlier by phone still work.
 const noSms = { send: async () => { throw new AuthError(503, 'Phone sign-in is off. Use email or a wallet.'); } };
 const accounts = new Accounts(db, noSms, secret, Date.now, null, mail);
-const paystack = paystackKey ? new Paystack(db, ledger, { secretKey: paystackKey, callbackUrl: `${publicUrl}/?deposit=done` }) : null;
+// Paystack's fee on deposits is paid by the buyer on top (PAYSTACK_CHARGE_BUYER=0: StockRun absorbs it).
+const paystack = paystackKey ? new Paystack(db, ledger, { secretKey: paystackKey, callbackUrl: `${publicUrl}/?deposit=done`,
+  depositCharge: envValue(env, 'PAYSTACK_CHARGE_BUYER') === '0' ? null : PAYSTACK_LOCAL }) : null;
 
 // The AI seller hunt: OpenStreetMap shops (free; on unless SELLER_OSM=off), Google Maps listings (GOOGLE_MAPS_API_KEY) and Gemini web search (SELLER_WEB_SEARCH=on, needs
 // billing on the Gemini key). Both bill Google per search after their free allowances, so the hunt is capped per day.

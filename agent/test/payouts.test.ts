@@ -145,3 +145,38 @@ describe('buyer withdrawals', () => {
     expect(w.forUser(user).map((x) => x.status)).toEqual(expect.arrayContaining(['failed', 'failed']));
   });
 });
+
+describe('Paystack deposit charge paid by the buyer', () => {
+  it('adds just enough that StockRun receives the full deposit, with the cap and the small-payment waiver', async () => {
+    const { depositCharge, paystackFee, PAYSTACK_LOCAL: c } = await import('../src/money/paystack.ts');
+    for (const naira of [100, 1_000, 2_400, 2_500, 10_000, 50_000, 125_000, 500_000, 5_000_000]) {
+      const charge = depositCharge(kobo(naira), c), gross = kobo(naira) + charge;
+      expect(gross - paystackFee(gross, c), `₦${naira}`).toBeGreaterThanOrEqual(kobo(naira));     // never short
+      expect(gross - paystackFee(gross, c) - kobo(naira), `₦${naira}`).toBeLessThanOrEqual(2);     // and not overcharged
+    }
+    expect(depositCharge(kobo(50_000), c)).toBe(86_295);                  // ₦862.95 on ₦50,000
+    expect(depositCharge(kobo(500_000), c)).toBe(kobo(2_000));            // capped
+    expect(depositCharge(kobo(50_000), null)).toBe(0);                    // StockRun absorbs it
+  });
+
+  it('asks Paystack for deposit + charge, credits the full deposit, and refuses a payment of any other total', async () => {
+    const { PAYSTACK_LOCAL } = await import('../src/money/paystack.ts');
+    const db = openDb(), ledger = new Ledger(db);
+    let paid = 0; let asked = 0;
+    const f = (async (url: string, init: RequestInit) => {
+      if (url.includes('/transaction/initialize')) { asked = JSON.parse(String(init.body)).amount; return json({ authorization_url: 'https://checkout.example/x' }); }
+      const ref = url.split('/').pop();
+      return json({ status: 'success', amount: paid, currency: 'NGN', reference: ref, metadata: { userId: 7 } });
+    }) as unknown as typeof fetch;
+    const ps = new Paystack(db, ledger, { secretKey: 'sk_test_abc123', callbackUrl: 'https://x.example', fetch: f, depositCharge: PAYSTACK_LOCAL });
+    const { reference, chargeKobo } = await ps.start(7, kobo(50_000), 'ada@x.com');
+    expect(chargeKobo).toBe(86_295);
+    expect(asked).toBe(kobo(50_000) + 86_295);
+    paid = kobo(50_000);                                                   // only the deposit, without the charge
+    await expect(ps.confirm(reference, 7)).rejects.toThrow(/does not match/);
+    const { reference: r2 } = await ps.start(7, kobo(50_000), 'ada@x.com');
+    paid = kobo(50_000) + 86_295;
+    expect(await ps.confirm(r2, 7)).toEqual({ status: 'credited', amountKobo: kobo(50_000) });
+    expect(ledger.balance(7).availableKobo).toBe(kobo(50_000));           // the full deposit
+  });
+});

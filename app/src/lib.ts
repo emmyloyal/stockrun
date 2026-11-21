@@ -120,6 +120,7 @@ export const server = {
   sellerBankLink: (sellerId: string) => call<{ url: string; message: string; whatsappUrl: string | null }>(`/api/sellers/${sellerId}/bank-link`, {}),
   sellerBankInfo: (sellerId: string, t: string) => call<{ name: string; transfers: boolean; test: boolean }>(`/api/seller-bank/${sellerId}?t=${encodeURIComponent(t)}`),
   sellerBankSubmit: (sellerId: string, t: string, b: { bankCode: string; accountNumber: string }) => call<{ accountName: string; bankName: string }>(`/api/seller-bank/${sellerId}`, { t, ...b }),
+  depositQuote: (amountNaira: number) => call<{ amountNaira: number; chargeNaira: number; totalNaira: number }>(`/api/naira/deposit-quote?amountNaira=${amountNaira}`),
   withdraw: (amountNaira: number, bankCode: string, accountNumber: string) => call<Withdrawal>('/api/naira/withdraw', { amountNaira, bankCode, accountNumber }),
   withdrawals: () => call<Withdrawal[]>('/api/naira/withdrawals'),
   adminApproveBank: (orderId: number) => call<Payout>(`/api/admin/payouts/${orderId}/approve-bank`, {}),

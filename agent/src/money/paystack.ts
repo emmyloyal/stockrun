@@ -21,18 +21,44 @@ export function migratePaystack(db: DatabaseSync) {
   db.exec(`CREATE TABLE IF NOT EXISTS deposits (
     reference TEXT PRIMARY KEY, user_id INTEGER NOT NULL, amount_kobo INTEGER NOT NULL, status TEXT NOT NULL,
     created_at INTEGER NOT NULL, verified_at INTEGER)`);
+  const cols = db.prepare('PRAGMA table_info(deposits)').all() as unknown as { name: string }[];
+  if (!cols.some((c) => c.name === 'charge_kobo')) db.exec('ALTER TABLE deposits ADD COLUMN charge_kobo INTEGER NOT NULL DEFAULT 0');
 }
 
-export interface PaystackOptions { secretKey: string; callbackUrl: string; fetch?: typeof fetch }
+/**
+ * Paystack's fee on a local card payment, which the buyer pays on top of a deposit so their balance gets the full
+ * amount: `bps` of the payment plus `flatKobo` (waived under `waiveUnderKobo`), capped at `capKobo`.
+ * Defaults follow Paystack's published local pricing (1.5% + ₦100, ₦100 waived under ₦2,500, capped at ₦2,000).
+ */
+export interface DepositCharge { bps: number; flatKobo: number; waiveUnderKobo: number; capKobo: number }
+export const PAYSTACK_LOCAL: DepositCharge = { bps: 150, flatKobo: 100_00, waiveUnderKobo: 2_500_00, capKobo: 2_000_00 };
+
+/** What Paystack keeps from a payment of `grossKobo` (rounded up, so StockRun is never short). */
+export const paystackFee = (grossKobo: number, c: DepositCharge) =>
+  Math.min(c.capKobo, Math.ceil((grossKobo * c.bps) / 10_000) + (grossKobo >= c.waiveUnderKobo ? c.flatKobo : 0));
+
+/** The charge to add to a deposit of `amountKobo` so that, after Paystack's fee, StockRun receives at least the deposit. */
+export function depositCharge(amountKobo: number, c: DepositCharge | null): number {
+  if (!c || amountKobo <= 0) return 0;
+  let gross = Math.ceil((amountKobo * 10_000) / (10_000 - c.bps));
+  if (gross >= c.waiveUnderKobo) gross = Math.ceil(((amountKobo + c.flatKobo) * 10_000) / (10_000 - c.bps));
+  if (paystackFee(gross, c) >= c.capKobo) gross = Math.min(gross, amountKobo + c.capKobo);
+  while (gross - paystackFee(gross, c) < amountKobo) gross++;               // rounding: never short
+  return gross - amountKobo;
+}
+
+export interface PaystackOptions { secretKey: string; callbackUrl: string; fetch?: typeof fetch; depositCharge?: DepositCharge | null }
 
 export class Paystack {
   readonly test: boolean;
+  /** Paystack's fee the buyer pays on top of a deposit; null: StockRun absorbs it. */
+  readonly charge: DepositCharge | null;
   private key: string; private callbackUrl: string; private fetch: typeof fetch;
   private db: DatabaseSync; private ledger: Ledger;
   constructor(db: DatabaseSync, ledger: Ledger, o: PaystackOptions) {
     if (!/^sk_(test|live)_[A-Za-z0-9]+$/.test(o.secretKey)) throw new Error('PAYSTACK_SECRET_KEY does not look like a Paystack secret key (sk_test_... or sk_live_...)');
     this.key = o.secretKey; this.test = o.secretKey.startsWith('sk_test_'); this.callbackUrl = o.callbackUrl;
-    this.fetch = o.fetch ?? fetch; this.db = db; this.ledger = ledger;
+    this.fetch = o.fetch ?? fetch; this.db = db; this.ledger = ledger; this.charge = o.depositCharge ?? null;
     migratePaystack(db);
   }
 
@@ -44,16 +70,17 @@ export class Paystack {
   }
 
   /** Start a deposit: a reference only this person can complete, and Paystack's checkout link. */
-  async start(userId: number, amountKobo: number, email: string): Promise<{ reference: string; checkoutUrl: string }> {
+  async start(userId: number, amountKobo: number, email: string): Promise<{ reference: string; checkoutUrl: string; chargeKobo: number }> {
     if (!Number.isSafeInteger(amountKobo) || amountKobo < MIN_DEPOSIT_KOBO || amountKobo > MAX_DEPOSIT_KOBO) throw new PaystackError(400, 'Deposit between ₦100 and ₦5,000,000.');
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) throw new PaystackError(400, 'Enter your email: Paystack sends the receipt there.');
     const reference = `sr_${userId}_${randomBytes(9).toString('hex')}`;
-    this.db.prepare('INSERT INTO deposits (reference, user_id, amount_kobo, status, created_at) VALUES (?, ?, ?, ?, ?)').run(reference, userId, amountKobo, 'started', Date.now());
+    const charge = depositCharge(amountKobo, this.charge);
+    this.db.prepare('INSERT INTO deposits (reference, user_id, amount_kobo, charge_kobo, status, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(reference, userId, amountKobo, charge, 'started', Date.now());
     const d = await this.call<{ authorization_url: string }>('POST', '/transaction/initialize', {
-      email, amount: amountKobo, currency: 'NGN', reference, callback_url: this.callbackUrl,
-      metadata: { userId, purpose: 'StockRun naira balance' },
+      email, amount: amountKobo + charge, currency: 'NGN', reference, callback_url: this.callbackUrl,
+      metadata: { userId, purpose: 'StockRun naira balance', depositKobo: amountKobo, paystackChargeKobo: charge },
     });
-    return { reference, checkoutUrl: d.authorization_url };
+    return { reference, checkoutUrl: d.authorization_url, chargeKobo: charge };
   }
 
   /**
@@ -61,7 +88,7 @@ export class Paystack {
    * successful, in NGN, for the amount we asked. Safe to call any number of times (redirect, webhook, retries).
    */
   async confirm(reference: string, userId?: number): Promise<{ status: 'credited' | 'already' | 'pending' | 'failed'; amountKobo: number }> {
-    const dep = this.db.prepare('SELECT user_id, amount_kobo, status FROM deposits WHERE reference = ?').get(reference) as unknown as { user_id: number; amount_kobo: number; status: string } | undefined;
+    const dep = this.db.prepare('SELECT user_id, amount_kobo, charge_kobo, status FROM deposits WHERE reference = ?').get(reference) as unknown as { user_id: number; amount_kobo: number; charge_kobo: number; status: string } | undefined;
     if (!dep || (userId !== undefined && dep.user_id !== userId)) throw new PaystackError(404, 'No such deposit.');
     if (dep.status === 'credited') return { status: 'already', amountKobo: dep.amount_kobo };
     const d = await this.call<{ status: string; amount: number; currency: string; reference: string; metadata?: { userId?: number | string } }>('GET', `/transaction/verify/${encodeURIComponent(reference)}`);
@@ -72,7 +99,8 @@ export class Paystack {
       if (final) this.db.prepare('UPDATE deposits SET status = ? WHERE reference = ?').run(d.status, reference);
       return { status: final ? 'failed' : 'pending', amountKobo: dep.amount_kobo };
     }
-    if (d.currency !== 'NGN' || d.amount !== dep.amount_kobo || Number(d.metadata?.userId) !== dep.user_id) {
+    // Paystack must have taken the deposit plus the charge we asked for; the buyer's balance gets the deposit.
+    if (d.currency !== 'NGN' || d.amount !== dep.amount_kobo + dep.charge_kobo || Number(d.metadata?.userId) !== dep.user_id) {
       this.db.prepare('UPDATE deposits SET status = ? WHERE reference = ?').run('mismatch', reference);
       throw new PaystackError(409, 'This payment does not match the deposit we started. StockRun will check it by hand.');
     }
