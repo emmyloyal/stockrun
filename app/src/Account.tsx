@@ -130,7 +130,7 @@ function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me:
   const markers = useRef(new Map<string, L.CircleMarker>());
   const [draft, setDraft] = useState<{ id: string; name: string; phone: string; message: string; ai: boolean } | null>(null);
   const contactPanel = useRef<HTMLDivElement>(null);
-  const [deal, setDeal] = useState<{ id: string; name: string; seller: MySeller | null; item: string; quantity: string; unit: string; price: string; category: Category; result: DealResult | null } | null>(null);
+  const [deal, setDeal] = useState<{ id: string; name: string; seller: MySeller | null; item: string; quantity: string; unit: string; price: string; category: Category; result: DealResult | null; note: string } | null>(null);
   const dealPanel = useRef<HTMLDivElement>(null);
   const [reply, setReply] = useState('');
   const [showMap, setShowMap] = useState(false);
@@ -204,17 +204,45 @@ function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me:
   /** Record a deal agreed on WhatsApp: it becomes an order that RestockGuard decides, paid to the seller at pickup. */
   const openDeal = (id: string, name: string) => run(setBusy, setError, 'Checking your sellers…', async () => {
     const seller = await server.mySeller(id);
-    setDeal({ id, name, seller, item: '', quantity: '1', unit: 'carton', price: '', category: 'staples', result: null });
+    setDeal({ id, name, seller, item: '', quantity: '1', unit: 'carton', price: '', category: 'staples', result: null, note: '' });
     setTimeout(() => dealPanel.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
   });
   const dealRef = useRef(openDeal);
   dealRef.current = openDeal;
-  const addToMySellers = () => deal && run(setBusy, setError, 'Adding the seller…', async () => { const seller = await server.addSeller(deal.id); setDeal({ ...deal, seller }); });
-  const submitDeal = () => deal && run(setBusy, setError, 'RestockGuard is checking your deal…', async () => {
-    const result = await server.recordDeal({ sellerId: deal.id, item: deal.item.trim(), quantity: Number(deal.quantity), unit: deal.unit.trim(), unitPriceNaira: Number(deal.price.replace(/\D/g, '')),
-      category: deal.category, delivery, place, contactPhone: contact || undefined });
-    setDeal({ ...deal, result });
-  });
+  const addToMySellers = async () => {
+    if (!deal) return;
+    setBusy('Adding the seller…');
+    try { const seller = await server.addSeller(deal.id); setDeal({ ...deal, seller, note: '' }); }
+    catch (e) { setDeal({ ...deal, note: (e as Error).message }); }
+    finally { setBusy(''); }
+  };
+  /** What still stops this deal, in plain words; empty when it can be sent. */
+  const dealProblem = (d: NonNullable<typeof deal>): string => {
+    const price = Number(d.price.replace(/\D/g, '')), qty = Number(d.quantity);
+    if (d.seller?.status === 3) return 'You blocked this seller.';
+    if (d.seller?.status !== 1) return d.seller?.pendingStatus
+      ? `${d.name} is not on your sellers list yet: they join on ${lagosTime(d.seller.effectiveAt!)}. You can record the deal from then.`
+      : `Add ${d.name} to your sellers first (button above).`;
+    if (d.item.trim().length < 2) return 'Say what you agreed to buy.';
+    if (!Number.isInteger(qty) || qty < 1 || qty > 255) return 'Enter how many (1 to 255).';
+    if (!(price >= 1)) return `Enter the agreed price per ${d.unit || 'unit'}.`;
+    if (!pinned) return 'Type your delivery address and tap Find sellers first, so the distance can be checked.';
+    if (delivery === 'logistics' && !user.phone && contact.replace(/\D/g, '').length < 10) return 'Add a phone number for the rider (under "How should it reach you?"), or choose to collect it yourself.';
+    if (price * qty > available) return `This deal is ${naira(price * qty)} but your balance is ${naira(available)}. Deposit naira first.`;
+    return '';
+  };
+  const submitDeal = async () => {
+    if (!deal) return;
+    const problem = dealProblem(deal);
+    if (problem) { setDeal({ ...deal, note: problem, result: null }); return; }
+    setBusy('RestockGuard is checking your deal…');
+    try {
+      const result = await server.recordDeal({ sellerId: deal.id, item: deal.item.trim(), quantity: Number(deal.quantity), unit: deal.unit.trim(), unitPriceNaira: Number(deal.price.replace(/\D/g, '')),
+        category: deal.category, delivery, place, contactPhone: contact || undefined });
+      setDeal({ ...deal, result, note: '' });
+    } catch (e) { setDeal({ ...deal, note: (e as Error).message, result: null }); }
+    finally { setBusy(''); }
+  };
   const lagosTime = (t: number) => new Date(t).toLocaleString('en-NG', { timeZone: 'Africa/Lagos', weekday: 'short', hour: '2-digit', minute: '2-digit' });
   useEffect(() => {
     const box = el.current; if (!box) return;
@@ -319,7 +347,8 @@ function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me:
               </select>
             </label>
             {Number(deal.price.replace(/\D/g, '')) > 0 && Number(deal.quantity) > 0 && <p className="fine">Total {naira(Number(deal.price.replace(/\D/g, '')) * Number(deal.quantity))}{delivery === 'logistics' ? ' plus delivery' : ', you collect it'} · your balance {naira(available)}</p>}
-            <button className="btn primary" disabled={!!busy || deal.seller?.status !== 1 || deal.item.trim().length < 2 || !(Number(deal.quantity) >= 1) || !(Number(deal.price.replace(/\D/g, '')) >= 1) || !pinned} onClick={submitDeal}>Record deal and lock the money</button>
+            <button className="btn primary" disabled={!!busy} onClick={submitDeal}>{busy && busy.startsWith('RestockGuard') ? 'Checking…' : 'Record deal and lock the money'}</button>
+            {deal.note && <p className="alert">{deal.note}</p>}
             <p className="fine">RestockGuard, a circuit on X Layer, decides whether the money locks. {deal.name} is paid from it only at pickup, for the number of good {deal.unit || 'unit'}s counted ({delivery === 'self' ? 'by you' : 'by the logistics company'}). Uses your pickup or delivery choice above.</p>
             {deal.result && <pre className="reply">{deal.result.message}</pre>}
             {deal.result && (deal.result.status === 'locked' || deal.result.status === 'ask_owner') && <button className="btn ghost" onClick={onAsked}>See it in Orders</button>}
