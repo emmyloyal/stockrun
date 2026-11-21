@@ -1,0 +1,481 @@
+{
+ "_note": "Lagos areas and their centre points, for finding a delivery address when online address search is unavailable. Coordinates from OpenStreetMap (Nominatim). Checked by hand: \"Lekki\" means Lekki Phase 1; ambiguous names (Sabo, Oworonshoki, Isheri, Alaka) left out.",
+ "attribution": "© OpenStreetMap contributors (ODbL)",
+ "areas": [
+  {
+   "name": "Abule Egba",
+   "lat": 6.64789,
+   "lng": 3.30462
+  },
+  {
+   "name": "Agboyi",
+   "lat": 6.57798,
+   "lng": 3.4058
+  },
+  {
+   "name": "Agege",
+   "lat": 6.62525,
+   "lng": 3.31121
+  },
+  {
+   "name": "Agidingbi",
+   "lat": 6.62226,
+   "lng": 3.35561
+  },
+  {
+   "name": "Ago Palace",
+   "lat": 6.50304,
+   "lng": 3.30596
+  },
+  {
+   "name": "Aguda",
+   "lat": 6.63464,
+   "lng": 3.35401
+  },
+  {
+   "name": "Ajah",
+   "lat": 6.46947,
+   "lng": 3.56239
+  },
+  {
+   "name": "Ajegunle",
+   "lat": 6.44816,
+   "lng": 3.33351
+  },
+  {
+   "name": "Akoka",
+   "lat": 6.52874,
+   "lng": 3.39056
+  },
+  {
+   "name": "Alaba",
+   "lat": 6.46589,
+   "lng": 3.32297
+  },
+  {
+   "name": "Alagbado",
+   "lat": 6.6597,
+   "lng": 3.25577
+  },
+  {
+   "name": "Alausa",
+   "lat": 6.60961,
+   "lng": 3.35658
+  },
+  {
+   "name": "Alimosho",
+   "lat": 6.58439,
+   "lng": 3.25759
+  },
+  {
+   "name": "Amuwo Odofin",
+   "lat": 6.44706,
+   "lng": 3.26632
+  },
+  {
+   "name": "Anthony Village",
+   "lat": 6.55933,
+   "lng": 3.36822
+  },
+  {
+   "name": "Apapa",
+   "lat": 6.44519,
+   "lng": 3.36837
+  },
+  {
+   "name": "Ayobo",
+   "lat": 6.60203,
+   "lng": 3.24379
+  },
+  {
+   "name": "Badagry",
+   "lat": 6.43932,
+   "lng": 2.90603
+  },
+  {
+   "name": "Bariga",
+   "lat": 6.54073,
+   "lng": 3.38804
+  },
+  {
+   "name": "Berger",
+   "lat": 6.64156,
+   "lng": 3.36851
+  },
+  {
+   "name": "Chevron",
+   "lat": 6.44208,
+   "lng": 3.53109
+  },
+  {
+   "name": "CMS",
+   "lat": 6.53322,
+   "lng": 3.38786
+  },
+  {
+   "name": "Costain",
+   "lat": 6.48188,
+   "lng": 3.36925
+  },
+  {
+   "name": "Ebute Metta",
+   "lat": 6.48626,
+   "lng": 3.38561
+  },
+  {
+   "name": "Egbeda",
+   "lat": 6.59121,
+   "lng": 3.28896
+  },
+  {
+   "name": "Ejigbo",
+   "lat": 6.54945,
+   "lng": 3.29344
+  },
+  {
+   "name": "Epe",
+   "lat": 6.58573,
+   "lng": 3.97569
+  },
+  {
+   "name": "Fadeyi",
+   "lat": 6.52879,
+   "lng": 3.36198
+  },
+  {
+   "name": "Festac Town",
+   "lat": 6.46827,
+   "lng": 3.28394
+  },
+  {
+   "name": "Gbagada",
+   "lat": 6.55807,
+   "lng": 3.38362
+  },
+  {
+   "name": "Ibeju-Lekki",
+   "lat": 6.47113,
+   "lng": 3.81475
+  },
+  {
+   "name": "Idimu",
+   "lat": 6.57526,
+   "lng": 3.2839
+  },
+  {
+   "name": "Idumota",
+   "lat": 6.46294,
+   "lng": 3.38669
+  },
+  {
+   "name": "Ifako",
+   "lat": 6.56575,
+   "lng": 3.38749
+  },
+  {
+   "name": "Igando",
+   "lat": 6.54866,
+   "lng": 3.231
+  },
+  {
+   "name": "Iju",
+   "lat": 6.65075,
+   "lng": 3.32467
+  },
+  {
+   "name": "Ijesha",
+   "lat": 6.50037,
+   "lng": 3.32797
+  },
+  {
+   "name": "Ijora",
+   "lat": 6.4667,
+   "lng": 3.36782
+  },
+  {
+   "name": "Ikate",
+   "lat": 6.42928,
+   "lng": 3.48854
+  },
+  {
+   "name": "Ikeja",
+   "lat": 6.60163,
+   "lng": 3.3516
+  },
+  {
+   "name": "Ikeja GRA",
+   "lat": 6.58346,
+   "lng": 3.35716
+  },
+  {
+   "name": "Ikorodu",
+   "lat": 6.61912,
+   "lng": 3.50413
+  },
+  {
+   "name": "Ikota",
+   "lat": 6.45208,
+   "lng": 3.5683
+  },
+  {
+   "name": "Ikotun",
+   "lat": 6.5523,
+   "lng": 3.26827
+  },
+  {
+   "name": "Ikoyi",
+   "lat": 6.45234,
+   "lng": 3.42805
+  },
+  {
+   "name": "Ilasamaja",
+   "lat": 6.52046,
+   "lng": 3.33572
+  },
+  {
+   "name": "Ilupeju",
+   "lat": 6.55505,
+   "lng": 3.35928
+  },
+  {
+   "name": "Ipaja",
+   "lat": 6.60955,
+   "lng": 3.26729
+  },
+  {
+   "name": "Isolo",
+   "lat": 6.52851,
+   "lng": 3.31878
+  },
+  {
+   "name": "Itire",
+   "lat": 6.50814,
+   "lng": 3.33005
+  },
+  {
+   "name": "Iyana Ipaja",
+   "lat": 6.61731,
+   "lng": 3.29734
+  },
+  {
+   "name": "Jakande",
+   "lat": 6.43442,
+   "lng": 3.50802
+  },
+  {
+   "name": "Ketu",
+   "lat": 6.5928,
+   "lng": 3.39175
+  },
+  {
+   "name": "Kosofe",
+   "lat": 6.58197,
+   "lng": 3.41484
+  },
+  {
+   "name": "Lagos Island",
+   "lat": 6.45506,
+   "lng": 3.39418
+  },
+  {
+   "name": "Lawanson",
+   "lat": 6.51177,
+   "lng": 3.3453
+  },
+  {
+   "name": "Lekki",
+   "lat": 6.43356,
+   "lng": 3.44913
+  },
+  {
+   "name": "Lekki Phase 1",
+   "lat": 6.43356,
+   "lng": 3.44913
+  },
+  {
+   "name": "Magodo",
+   "lat": 6.61808,
+   "lng": 3.37778
+  },
+  {
+   "name": "Marina",
+   "lat": 6.44616,
+   "lng": 3.39503
+  },
+  {
+   "name": "Maryland",
+   "lat": 6.57715,
+   "lng": 3.36619
+  },
+  {
+   "name": "Mile 2",
+   "lat": 6.45879,
+   "lng": 3.3134
+  },
+  {
+   "name": "Mile 12",
+   "lat": 6.60589,
+   "lng": 3.39526
+  },
+  {
+   "name": "Mushin",
+   "lat": 6.52477,
+   "lng": 3.35163
+  },
+  {
+   "name": "Obalende",
+   "lat": 6.44908,
+   "lng": 3.40614
+  },
+  {
+   "name": "Ogba",
+   "lat": 6.63261,
+   "lng": 3.34078
+  },
+  {
+   "name": "Ogudu",
+   "lat": 6.575,
+   "lng": 3.39053
+  },
+  {
+   "name": "Ojo",
+   "lat": 6.4625,
+   "lng": 3.16571
+  },
+  {
+   "name": "Ojodu",
+   "lat": 6.64156,
+   "lng": 3.36851
+  },
+  {
+   "name": "Ojota",
+   "lat": 6.58707,
+   "lng": 3.37915
+  },
+  {
+   "name": "Ojuelegba",
+   "lat": 6.51077,
+   "lng": 3.3623
+  },
+  {
+   "name": "Okota",
+   "lat": 6.5129,
+   "lng": 3.32133
+  },
+  {
+   "name": "Omole",
+   "lat": 6.64178,
+   "lng": 3.36051
+  },
+  {
+   "name": "Oniru",
+   "lat": 6.43639,
+   "lng": 3.41823
+  },
+  {
+   "name": "Onipanu",
+   "lat": 6.53719,
+   "lng": 3.36033
+  },
+  {
+   "name": "Opebi",
+   "lat": 6.58933,
+   "lng": 3.3619
+  },
+  {
+   "name": "Oregun",
+   "lat": 6.601,
+   "lng": 3.36446
+  },
+  {
+   "name": "Orile",
+   "lat": 6.47733,
+   "lng": 3.34577
+  },
+  {
+   "name": "Osapa",
+   "lat": 6.44454,
+   "lng": 3.50831
+  },
+  {
+   "name": "Oshodi",
+   "lat": 6.55703,
+   "lng": 3.34944
+  },
+  {
+   "name": "Owode Onirin",
+   "lat": 6.60855,
+   "lng": 3.41489
+  },
+  {
+   "name": "Oyingbo",
+   "lat": 6.48344,
+   "lng": 3.38151
+  },
+  {
+   "name": "Palmgrove",
+   "lat": 6.54178,
+   "lng": 3.36741
+  },
+  {
+   "name": "Sangotedo",
+   "lat": 6.47102,
+   "lng": 3.63558
+  },
+  {
+   "name": "Satellite Town",
+   "lat": 6.44974,
+   "lng": 3.25584
+  },
+  {
+   "name": "Shomolu",
+   "lat": 6.53356,
+   "lng": 3.38416
+  },
+  {
+   "name": "Surulere",
+   "lat": 6.48557,
+   "lng": 3.35399
+  },
+  {
+   "name": "Victoria Island",
+   "lat": 6.43003,
+   "lng": 3.42599
+  },
+  {
+   "name": "Yaba",
+   "lat": 6.50682,
+   "lng": 3.37549
+  },
+  {
+   "name": "Idi Araba",
+   "lat": 6.51407,
+   "lng": 3.34823
+  },
+  {
+   "name": "Mende",
+   "lat": 6.57272,
+   "lng": 3.37413
+  },
+  {
+   "name": "Ogombo",
+   "lat": 6.45035,
+   "lng": 3.61374
+  },
+  {
+   "name": "Awoyaya",
+   "lat": 6.46971,
+   "lng": 3.70456
+  },
+  {
+   "name": "Agungi",
+   "lat": 6.447,
+   "lng": 3.51811
+  },
+  {
+   "name": "Ilasan",
+   "lat": 6.42883,
+   "lng": 3.49613
+  }
+ ]
+}
