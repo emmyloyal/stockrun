@@ -81,7 +81,7 @@ const hunt = {
   places: mapsKey ? new PlacesSearch({ apiKey: mapsKey }) : null,
   osm: envValue(env, 'SELLER_OSM') === 'off' ? null : new OsmSearch(),
   web: generate && envValue(env, 'SELLER_WEB_SEARCH') === 'on' ? new WebSellerSearch({ generate }) : null,
-  perUserDaily: Number(envValue(env, 'HUNT_PER_USER_DAILY') ?? 5), siteDaily: Number(envValue(env, 'HUNT_SITE_DAILY') ?? 50),
+  perUserDaily: Number(envValue(env, 'HUNT_PER_USER_DAILY') ?? 20), siteDaily: Number(envValue(env, 'HUNT_SITE_DAILY') ?? 300),
 };
 
 // The 41 Lagos businesses with a mobile number on OpenStreetMap (data/osm-lagos-sellers.json) start on the map.

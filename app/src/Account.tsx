@@ -133,6 +133,7 @@ function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me:
   const [deal, setDeal] = useState<{ id: string; name: string; seller: MySeller | null; item: string; quantity: string; unit: string; price: string; category: Category; result: DealResult | null } | null>(null);
   const dealPanel = useRef<HTMLDivElement>(null);
   const [reply, setReply] = useState('');
+  const [showMap, setShowMap] = useState(false);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const el = useRef<HTMLDivElement>(null), map = useRef<L.Map | null>(null), layer = useRef<L.LayerGroup | null>(null);
@@ -140,14 +141,15 @@ function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me:
   const available = me.naira?.availableNaira ?? 0;
 
   useEffect(() => {
-    if (!el.current || map.current) return;
+    if (!showMap || !el.current || map.current) return;
     const m = L.map(el.current).setView(pinned ? [place.lat, place.lng] : LAGOS, pinned ? 13 : 11);
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' }).addTo(m);
     layer.current = L.layerGroup().addTo(m);
     m.on('click', (e: L.LeafletMouseEvent) => setPlace((p) => ({ ...p, lat: e.latlng.lat, lng: e.latlng.lng })));
     map.current = m;
-    return () => { m.remove(); map.current = null; };
-  }, []);  // eslint-disable-line react-hooks/exhaustive-deps
+    if (hunt?.sellers.length) m.fitBounds(L.latLngBounds([[place.lat, place.lng], ...hunt.sellers.map((s): [number, number] => [s.lat, s.lng])]).pad(0.2));
+    return () => { m.remove(); map.current = null; layer.current = null; };
+  }, [showMap]);  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { save('stockrun.place', place); }, [place]);
   useEffect(() => {
     if (!pinned) return;
@@ -174,7 +176,7 @@ function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me:
     }
     if (pinned) L.circleMarker([place.lat, place.lng], { radius: 10, color: '#141B2E', weight: 3, fillColor: '#F4C20D', fillOpacity: 1 }).bindTooltip('Deliver here').addTo(g);
     if (picked) markers.current.get(picked.id)?.openPopup();
-  }, [sellers, found, hunt, picked, place.lat, place.lng, pinned]);
+  }, [sellers, found, hunt, picked, place.lat, place.lng, pinned, showMap]);
 
   const search = async (e?: { preventDefault(): void }) => {
     e?.preventDefault();
@@ -224,17 +226,19 @@ function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me:
     };
     box.addEventListener('click', onClick);
     return () => box.removeEventListener('click', onClick);
-  }, []);
+  }, [showMap]);
 
   const here = () => run(setBusy, setError, 'Finding you…', async () => {
     const p = await currentPosition();
     setPlace((x) => ({ ...x, lat: p.lat, lng: p.lng }));
     map.current?.setView([p.lat, p.lng], 15);
   });
-  const findReal = () => run(setBusy, setError, 'The AI is searching maps and the web for real sellers…', async () => {
-    const r = await server.hunt(text, place);
+  /** The AI decides what kind of seller sells this (from the goods and the budget) and finds the closest to the address. */
+  const findSellers = () => run(setBusy, setError, 'Finding your address and the right sellers near it…', async () => {
+    const r = await server.hunt(text, place, Number(budget.replace(/\D/g, '')) || 0);
+    setPlace((x) => ({ ...x, lat: r.place.lat, lng: r.place.lng }));
     setHunt(r);
-    if (r.sellers.length && map.current) map.current.fitBounds(L.latLngBounds([[place.lat, place.lng], ...r.sellers.map((s): [number, number] => [s.lat, s.lng])]).pad(0.2));
+    if (r.sellers.length && map.current) map.current.fitBounds(L.latLngBounds([[r.place.lat, r.place.lng], ...r.sellers.map((s): [number, number] => [s.lat, s.lng])]).pad(0.2));
   });
   const ask = () => run(setBusy, setError, 'The agent is finding sellers and haggling…', async () => {
     const r = await server.ask({ text, budgetNaira: Number(budget.replace(/\D/g, '')), place, delivery, contactPhone: contact || undefined });
@@ -254,32 +258,30 @@ function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me:
         </label>
         {b > available && <p className="warn">Your balance is {naira(available)}. <button className="link" onClick={goMoney}>Deposit naira</button> first.</p>}
         <label className="field"><span>Deliver to (address)</span>
-          <input placeholder="12 Ikorodu Road, Ketu, Lagos" value={place.address} onChange={(e) => setPlace((p) => ({ ...p, address: e.target.value }))} />
+          <input placeholder="12 Ikorodu Road, Ketu, Lagos" autoComplete="street-address" value={place.address}
+            onChange={(e) => setPlace({ lat: NaN, lng: NaN, address: e.target.value })} />
         </label>
-        <div className="map-wrap">
-          <div ref={el} className="map pick" />
-          <form className="map-search" role="search" onSubmit={search}>
-            <input type="search" aria-label="Search sellers or places" placeholder="Search sellers or places (e.g. Shoprite, Mile 12)" value={q}
-              onChange={(e) => { setQ(e.target.value); if (!e.target.value) setResults(null); }} />
-            <button className="btn primary" type="submit" disabled={searching || q.trim().length < 2}>{searching ? '…' : 'Search'}</button>
-          </form>
-          {results && (
-            <div className="map-results" role="listbox">
-              {!results.sellers.length && !results.places.length && <p className="muted">Nothing found for &ldquo;{q}&rdquo;.</p>}
-              {results.sellers.map((s) => (
-                <button key={s.id} type="button" className="map-hit" onClick={() => goSeller(s)}>
-                  <strong>{s.name}</strong><span className="fine">{s.demo ? 'demo seller' : `${(s.kind ?? 'seller').replace(/_/g, ' ')} · not confirmed`} · {s.km} km{s.address ? ` · ${s.address}` : ''}</span>
-                </button>
-              ))}
-              {results.places.map((p, i) => (
-                <button key={`p${i}`} type="button" className="map-hit place" onClick={() => goPlace(p)}>
-                  <strong>📍 {p.name}</strong><span className="fine">{p.kind}{p.address ? ` · ${p.address}` : ''} · tap to deliver here</span>
-                </button>
-              ))}
-              <button type="button" className="link" onClick={() => setResults(null)}>Close</button>
-            </div>
-          )}
-        </div>
+        <button className="link" onClick={here}>Use where I am instead</button>
+        <fieldset className="stack choice-group">
+          <legend className="fine">How should it reach you?</legend>
+          <label className="row"><input type="radio" checked={delivery === 'logistics'} onChange={() => setDelivery('logistics')} /> A verified logistics company delivers it</label>
+          <label className="row"><input type="radio" checked={delivery === 'self'} onChange={() => setDelivery('self')} /> I'll collect it from the seller (no delivery fee)</label>
+        </fieldset>
+        {delivery === 'logistics' && !user.phone && (
+          <label className="field"><span>Phone number for the rider</span><input inputMode="tel" value={contact} onChange={(e) => setContact(e.target.value)} placeholder="0803 123 4567" /></label>
+        )}
+        <button className="btn primary" disabled={!!busy || !cfg.sellerHunt || text.trim().length < 3 || (place.address.trim().length < 3 && !pinned)} onClick={findSellers}>Find sellers</button>
+        <p className="fine">{cfg.sellerHunt
+          ? 'The AI works out what kind of seller sells this, from your goods and budget, and finds the closest ones to your address that have a WhatsApp number. They are real businesses, not checked by StockRun.'
+          : 'Seller search is not switched on yet on this server.'}</p>
+        {busy && <p className="busy">{busy}</p>}
+        {error && <p className="alert">{error}</p>}
+        {hunt && (
+          <div className="stack">
+            <p className="fine">Near <strong>{hunt.place.matched || hunt.place.address}</strong> · looked for {hunt.shopTypes.map((t) => t.replace(/_/g, ' ')).join(', ')}</p>
+            <FoundList hunt={hunt} onContact={(id) => contactSeller(id)} onDeal={openDeal} />
+          </div>
+        )}
         {draft && (
           <div ref={contactPanel} className="stack note contact">
             <p><strong>Message to {draft.name}</strong> <span className="fine">· WhatsApp {draft.phone}</span></p>
@@ -318,36 +320,48 @@ function Ask({ cfg, user, me, onAsked, goMoney }: { cfg: Config; user: User; me:
             </label>
             {Number(deal.price.replace(/\D/g, '')) > 0 && Number(deal.quantity) > 0 && <p className="fine">Total {naira(Number(deal.price.replace(/\D/g, '')) * Number(deal.quantity))}{delivery === 'logistics' ? ' plus delivery' : ', you collect it'} · your balance {naira(available)}</p>}
             <button className="btn primary" disabled={!!busy || deal.seller?.status !== 1 || deal.item.trim().length < 2 || !(Number(deal.quantity) >= 1) || !(Number(deal.price.replace(/\D/g, '')) >= 1) || !pinned} onClick={submitDeal}>Record deal and lock the money</button>
-            <p className="fine">RestockGuard, a circuit on X Layer, decides whether the money locks. {deal.name} is paid from it only at pickup, for the number of good {deal.unit || 'unit'}s counted ({delivery === 'self' ? 'by you' : 'by the logistics company'}). Uses the pickup or delivery choice below.</p>
+            <p className="fine">RestockGuard, a circuit on X Layer, decides whether the money locks. {deal.name} is paid from it only at pickup, for the number of good {deal.unit || 'unit'}s counted ({delivery === 'self' ? 'by you' : 'by the logistics company'}). Uses your pickup or delivery choice above.</p>
             {deal.result && <pre className="reply">{deal.result.message}</pre>}
             {deal.result && (deal.result.status === 'locked' || deal.result.status === 'ask_owner') && <button className="btn ghost" onClick={onAsked}>See it in Orders</button>}
             <button className="link" onClick={() => setDeal(null)}>Close</button>
           </div>
         )}
-        <div className="row wrap">
-          <button className="btn ghost" onClick={here}>Use where I am</button>
-          <span className="fine">{pinned ? `Pin: ${place.lat.toFixed(4)}, ${place.lng.toFixed(4)} · ${sellers.length} demo and ${found.length} real seller(s) within 25 km` : 'Tap the map to drop the delivery pin.'}</span>
+        <button className="link" onClick={() => setShowMap((v) => !v)}>{showMap ? 'Hide the map' : 'Show on map'}</button>
+        {showMap && (<>
+        <div className="map-wrap">
+          <div ref={el} className="map pick" />
+          <form className="map-search" role="search" onSubmit={search}>
+            <input type="search" aria-label="Search sellers or places" placeholder="Search sellers or places (e.g. Shoprite, Mile 12)" value={q}
+              onChange={(e) => { setQ(e.target.value); if (!e.target.value) setResults(null); }} />
+            <button className="btn primary" type="submit" disabled={searching || q.trim().length < 2}>{searching ? '…' : 'Search'}</button>
+          </form>
+          {results && (
+            <div className="map-results" role="listbox">
+              {!results.sellers.length && !results.places.length && <p className="muted">Nothing found for &ldquo;{q}&rdquo;.</p>}
+              {results.sellers.map((s) => (
+                <button key={s.id} type="button" className="map-hit" onClick={() => goSeller(s)}>
+                  <strong>{s.name}</strong><span className="fine">{s.demo ? 'demo seller' : `${(s.kind ?? 'seller').replace(/_/g, ' ')} · not confirmed`} · {s.km} km{s.address ? ` · ${s.address}` : ''}</span>
+                </button>
+              ))}
+              {results.places.map((p, i) => (
+                <button key={`p${i}`} type="button" className="map-hit place" onClick={() => goPlace(p)}>
+                  <strong>📍 {p.name}</strong><span className="fine">{p.kind}{p.address ? ` · ${p.address}` : ''} · tap to deliver here</span>
+                </button>
+              ))}
+              <button type="button" className="link" onClick={() => setResults(null)}>Close</button>
+            </div>
+          )}
         </div>
-        {cfg.sellerHunt && (
-          <div className="stack note">
-            <button className="btn ghost" disabled={!!busy || text.trim().length < 3 || !pinned} onClick={findReal}>Find real sellers with AI</button>
-            <p className="fine">The AI searches maps and the web near your pin and keeps only sellers whose WhatsApp number it can prove from the source. They are not checked by StockRun.</p>
-            {hunt && <FoundList hunt={hunt} onContact={(id) => contactSeller(id)} onDeal={openDeal} />}
+          <span className="fine">{pinned ? `${found.length} real and ${sellers.length} demo seller(s) within 25 km · tap the map to move your pin` : 'Tap the map to drop your delivery pin.'}</span>
+        </>)}
+        <details className="supplier-list">
+          <summary>Try the demo agent (demo sellers, it haggles for you)</summary>
+          <div className="stack">
+            <p className="fine">Six demo sellers answered by bots. The agent haggles on your behalf within your budget, then RestockGuard locks the money. Needs your address found on the map first (Find sellers, or Show on map).</p>
+            <button className="btn ghost" disabled={!!busy || text.trim().length < 3 || b < 1000 || !pinned || place.address.trim().length < 3} onClick={ask}>Ask the demo agent</button>
+            {reply && <pre className="reply">{reply}</pre>}
           </div>
-        )}
-        <fieldset className="stack choice-group">
-          <legend className="fine">How should it reach you?</legend>
-          <label className="row"><input type="radio" checked={delivery === 'logistics'} onChange={() => setDelivery('logistics')} /> A verified logistics company delivers it</label>
-          <label className="row"><input type="radio" checked={delivery === 'self'} onChange={() => setDelivery('self')} /> I'll collect it from the seller (no delivery fee)</label>
-        </fieldset>
-        {delivery === 'logistics' && !user.phone && (
-          <label className="field"><span>Phone number for the rider</span><input inputMode="tel" value={contact} onChange={(e) => setContact(e.target.value)} placeholder="0803 123 4567" /></label>
-        )}
-        <button className="btn primary" disabled={!!busy || text.trim().length < 3 || b < 1000 || !pinned || place.address.trim().length < 3} onClick={ask}>Ask the agent</button>
-        <p className="fine">The agent only spends within your budget. A circuit on X Layer approves every payment, and the seller is paid only once the goods are picked up.</p>
-        {busy && <p className="busy">{busy}</p>}
-        {error && <p className="alert">{error}</p>}
-        {reply && <pre className="reply">{reply}</pre>}
+        </details>
       </div>
     </div>
   );
@@ -360,13 +374,13 @@ const CATEGORY_LABELS: [Category, string][] = [
   ['restricted', 'Alcohol or cigarettes (always needs your OK)'], ['highValue', 'Phones, electronics, anything else (always needs your OK)'],
 ];
 function FoundList({ hunt, onContact, onDeal }: { hunt: HuntResult; onContact: (id: string) => void; onDeal: (id: string, name: string) => void }) {
-  if (!hunt.sellers.length) return <p className="muted">No seller with a WhatsApp number turned up near your pin ({hunt.checked} checked). Try other words, or move the pin.</p>;
+  if (!hunt.sellers.length) return <p className="muted">No seller of this kind with a WhatsApp number turned up near your address. Try other words, or a nearby area.</p>;
   return (
     <ul className="cards">
       {hunt.sellers.map((f: FoundSeller) => (
         <li key={f.id} className="card stack tight">
           <span className="row between"><strong>{f.name}</strong><span className="pill found">found by AI</span></span>
-          <span className="fine">{f.km} km · {f.address}</span>
+          <span className="fine">{f.kind ? `${f.kind.replace(/_/g, ' ')} · ` : ''}{f.km} km · {f.address}</span>
           <span className="fine">WhatsApp {f.phone} · from {SOURCE_FROM[f.source]}{f.sourceUrl && <> · <a href={f.sourceUrl} target="_blank" rel="noreferrer">source</a></>}</span>
           <span className="row wrap"><button className="btn wa small" onClick={() => onContact(f.id)}>Message on WhatsApp</button><button className="btn ghost small" onClick={() => onDeal(f.id, f.name)}>Record the deal</button></span>
         </li>

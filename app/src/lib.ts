@@ -44,7 +44,7 @@ export interface PlaceHit { name: string; address: string; lat: number; lng: num
 export interface MySeller { sellerId: string; status: 0 | 1 | 3; pendingStatus: 1 | null; effectiveAt: number | null; addedAt: number }
 export type Category = 'staples' | 'drinks' | 'cooking' | 'toiletries' | 'snacks' | 'household' | 'restricted' | 'highValue';
 export interface DealResult { status: 'locked' | 'ask_owner' | 'rejected' | 'too_large' | 'circuit_failed' | 'no_rider'; orderId?: string; reason?: number; message: string }
-export interface HuntResult { searches: string[]; checked: number; dropped: number; sellers: FoundSeller[] }
+export interface HuntResult { place: Place & { matched: string }; searches: string[]; shopTypes: string[]; checked: number; dropped: number; sellers: FoundSeller[] }
 export interface Seller {
   id: string; name: string; market: string; lat: number; lng: number; simulated: boolean; verified: boolean; km: number;
   prices: { item: string; priceNaira: number; source: string; age: string | null }[];
@@ -93,7 +93,7 @@ export const server = {
   blockSeller: (id: string) => call<MySeller>(`/api/my-sellers/${id}/block`, {}),
   recordDeal: (d: { sellerId: string; item: string; quantity: number; unit: string; unitPriceNaira: number; category: Category; delivery: 'self' | 'logistics'; place: Place; contactPhone?: string }) =>
     call<DealResult>('/api/deals', d),
-  hunt: (text: string, place: Place) => call<HuntResult>('/api/hunt', { text, place }),
+  hunt: (text: string, place: Place, budgetNaira: number) => call<HuntResult>('/api/hunt', { text, place, budgetNaira }),
   emailCode: (email: string) => call<{ sent: true }>('/api/auth/email-code', { email }),
   emailVerify: (email: string, code: string) => signedIn(call('/api/auth/email-verify', { email, code })),
   walletMessage: (address: Address) => call<{ message: string }>(`/api/auth/wallet-message?address=${address}`),

@@ -174,3 +174,17 @@ describe('the OpenStreetMap Lagos sellers', () => {
     expect(near[0].sourceUrl).toMatch(/^https:\/\/www\.openstreetmap\.org\//);
   });
 });
+
+describe('hunting by the goods and the budget', () => {
+  it('tells the AI the budget, and adds stored sellers only when they are the kind that sells it, ranked by the plan', async () => {
+    const db = openDb();
+    seedOsmSellers(db);                                   // 41 Lagos businesses: supermarkets, clothes, beauty, a welding shop...
+    let prompt = '';
+    const gen = (async (p: any) => { prompt = p.contents[0].parts[0].text; return { text: JSON.stringify({ queries: ['Indomie wholesale'], markets: [], shopTypes: ['wholesale', 'supermarket'] }), candidates: [{ finishReason: 'STOP' }] }; }) as unknown as Generate;
+    const r = await huntSellers('20 cartons of Indomie', KETU, { db, generate: gen }, { budgetNaira: 300_000, max: 50 });
+    expect(prompt).toContain('<budget>₦300,000</budget>');
+    expect(r.sellers.length).toBeGreaterThan(0);
+    for (const s of r.sellers) expect(s.kind).toBe('supermarket');           // no clothes, beauty or welding shops
+    for (let i = 1; i < r.sellers.length; i++) expect(r.sellers[i].km).toBeGreaterThanOrEqual(r.sellers[i - 1].km);
+  });
+});

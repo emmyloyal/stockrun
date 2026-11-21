@@ -210,19 +210,29 @@ export function createApp(o: AppOptions): Server {
     ['POST', /^\/api\/hunt$/, async (c) => {
       const u = need(c), h = o.hunt;
       if (!h || !huntEnabled(h)) throw new AuthError(503, 'The AI seller search is not switched on yet on this server.');
-      const text = String(c.body?.text ?? '').trim(), lat = Number(c.body?.place?.lat), lng = Number(c.body?.place?.lng);
-      const address = String(c.body?.place?.address ?? '').trim();
+      const text = String(c.body?.text ?? '').trim(), address = String(c.body?.place?.address ?? '').trim().slice(0, 200);
+      let lat = Number(c.body?.place?.lat), lng = Number(c.body?.place?.lng), matched = address;
+      const budgetNaira = Math.max(0, Math.round(Number(c.body?.budgetNaira) || 0));
       if (text.length < 3 || text.length > 200) throw new AuthError(400, 'Say what you want to buy (up to 200 characters).');
-      if (!IN_NIGERIA(lat, lng)) throw new AuthError(400, 'Put the delivery pin on the map, in Nigeria.');
+      // The delivery address decides where to look: find it on the map (with "Lagos" added if it needs it).
+      if (!IN_NIGERIA(lat, lng)) {
+        if (address.length < 3) throw new AuthError(400, 'Type your delivery address, e.g. 12 Ikorodu Road, Ketu, Lagos.');
+        if (!o.geocoder) throw new AuthError(503, 'Address search is not switched on yet on this server.');
+        let hit = (await o.geocoder.search(address).catch(() => []))[0];
+        if (!hit && !/lagos/i.test(address)) hit = (await o.geocoder.search(`${address}, Lagos`).catch(() => []))[0];
+        if (!hit || !IN_NIGERIA(hit.lat, hit.lng)) throw new AuthError(400, 'We could not find that address. Add the area and city, e.g. "Ikorodu Road, Ketu, Lagos".');
+        lat = hit.lat; lng = hit.lng; matched = [hit.name, hit.address].filter(Boolean).join(', ');
+      }
       const t = Date.now(), day = t - 24 * 3600_000;
       const mine = (hunts.get(u.id) ?? []).filter((x) => x > day), all = [...hunts.values()].flat().filter((x) => x > day);
-      if (mine.length >= (h.perUserDaily ?? 5)) throw new AuthError(429, "You have used today's AI seller searches. Try again tomorrow.");
-      if (all.length >= (h.siteDaily ?? 50)) throw new AuthError(429, "The AI seller search has reached today's limit. Try again tomorrow.");
+      if (mine.length >= (h.perUserDaily ?? 20)) throw new AuthError(429, "You have used today's AI seller searches. Try again tomorrow.");
+      if (all.length >= (h.siteDaily ?? 300)) throw new AuthError(429, "The AI seller search has reached today's limit. Try again tomorrow.");
       hunts.set(u.id, [...mine, t]);
-      const r = await huntSellers(text, { lat, lng, address: address || `${lat.toFixed(4)}, ${lng.toFixed(4)}` }, h);
+      const r = await huntSellers(text, { lat, lng, address: address || `${lat.toFixed(4)}, ${lng.toFixed(4)}` }, h, { budgetNaira });
       return {
-        searches: r.plan.queries, checked: r.checked, dropped: r.dropped,
-        sellers: r.sellers.map((s) => ({ id: s.id, name: s.name, address: s.address, lat: s.lat, lng: s.lng, phone: s.phone, source: s.source, sourceUrl: s.sourceUrl, km: s.km })),
+        place: { lat, lng, address: address || matched, matched },
+        searches: r.plan.queries, shopTypes: r.plan.shopTypes, checked: r.checked, dropped: r.dropped,
+        sellers: r.sellers.map((s) => ({ id: s.id, name: s.name, kind: s.kind ?? null, address: s.address, lat: s.lat, lng: s.lng, phone: s.phone, source: s.source, sourceUrl: s.sourceUrl, km: s.km })),
       };
     }],
 
