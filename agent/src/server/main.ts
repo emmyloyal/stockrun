@@ -20,6 +20,9 @@ import { PlacesSearch } from '../discovery/places.ts';
 import { OsmSearch } from '../discovery/osm.ts';
 import { seedOsmSellers } from '../discovery/hunt.ts';
 import { Geocoder } from '../discovery/geocode.ts';
+import { Payouts, adminList } from '../admin/payouts.ts';
+import { loadSuppliers, supplierKey } from '../tools/suppliers.ts';
+import type { Hash } from 'viem';
 import { WebSellerSearch } from '../discovery/webSearch.ts';
 import { geminiClient } from '../llm.ts';
 import { circuitEvaluator, envValue, localPlatform, xlayerPlatform, type Platform } from '../chain/platform.ts';
@@ -87,9 +90,23 @@ const hunt = {
 // The 41 Lagos businesses with a mobile number on OpenStreetMap (data/osm-lagos-sellers.json) start on the map.
 log(`OpenStreetMap sellers loaded: ${seedOsmSellers(db)} new`);
 
+// Admin: email accounts in ADMIN_EMAILS watch orders and record the bank transfers that pay naira sellers.
+const sellerNames = new Map<string, { name: string; phone: string | null }>();
+const sellerOf = (key: Hash) => {
+  const k = key.toLowerCase();
+  if (!sellerNames.has(k)) {                       // refresh: demo sellers plus every seller found so far
+    for (const s of loadSuppliers()) sellerNames.set(supplierKey(s.id).toLowerCase(), { name: `${s.name} (demo)`, phone: null });
+    for (const f of db.prepare('SELECT id, name, phone FROM found_sellers').all() as unknown as { id: string; name: string; phone: string }[])
+      sellerNames.set(supplierKey(f.id).toLowerCase(), { name: f.name, phone: f.phone });
+  }
+  return sellerNames.get(k) ?? null;
+};
+const payouts = new Payouts({ db, ledger, sellerOf });
+const admins = adminList(envValue(env, 'ADMIN_EMAILS'));
+
 const staticDir = fileURLToPath(new URL('../../../app/dist/', import.meta.url));
 const server = createApp({
-  platform: p, accounts, buyers, ledger, prices, paystack, hunt, geocoder: new Geocoder({ log: (l) => log(`address search: ${l}`) }), demoNaira: network === 'local' || envValue(env, 'DEMO_NAIRA') === '1',
+  platform: p, accounts, buyers, ledger, prices, paystack, hunt, payouts, admins, geocoder: new Geocoder({ log: (l) => log(`address search: ${l}`) }), demoNaira: network === 'local' || envValue(env, 'DEMO_NAIRA') === '1',
   staticDir: existsSync(staticDir) ? staticDir : undefined,
   secureCookies: envValue(env, 'SECURE_COOKIES') === '1', log,
   sendrelayWebhookSecret: envValue(env, 'SENDRELAY_WEBHOOK_SECRET'),
@@ -110,7 +127,7 @@ server.listen(port, async () => {
   console.log(`StockRun on http://localhost:${port}  (${network === 'xlayer' ? 'X LAYER MAINNET, real money' : 'local test chain, test money'})`);
   console.log(`Deployer ${p.deployer.account.address}: ${formatEther(await p.pub.getBalance({ address: p.deployer.account.address }))} OKB/ETH for vaults and gas top-ups`);
   console.log(`Seller hunt: OpenStreetMap ${hunt.osm ? 'on' : 'off'}, Google Maps ${hunt.places ? 'on' : 'off (set GOOGLE_MAPS_API_KEY)'}, web search ${hunt.web ? 'on' : 'off'}.`);
-  console.log(`Email: ${mailKind}. Reader: ${extractor instanceof RuleExtractor ? 'rule-based' : `Gemini (${model()})`}.`);
+  console.log(`Admins: ${admins.size ? [...admins].join(', ') : 'none (set ADMIN_EMAILS)'}. Email: ${mailKind}. Reader: ${extractor instanceof RuleExtractor ? 'rule-based' : `Gemini (${model()})`}.`);
   console.log(`Naira: ${paystack ? `Paystack (${paystack.test ? 'TEST mode, no real money' : 'LIVE'}), held by StockRun in a ledger` : network === 'local' ? 'test naira button (local only)' : 'deposits OFF (set PAYSTACK_SECRET_KEY)'}`);
   console.log(`Demo naira (free, not real money): ${network === 'local' || envValue(env, 'DEMO_NAIRA') === '1' ? 'ON' : 'off'}. Database: ${dbFile}. Sellers: simulated bots.`);
   console.log(`Logistics: ${p.carriers.map((c) => `${c.name}${c.connector ? '' : ' (no booking API)'}`).join(', ') || 'none (self-pickup only)'}`);

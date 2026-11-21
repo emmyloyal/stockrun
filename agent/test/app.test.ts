@@ -18,6 +18,8 @@ import { Ledger } from '../src/money/ledger.ts';
 import { NairaOrders } from '../src/orders/nairaOrders.ts';
 import { foundTable } from '../src/discovery/hunt.ts';
 import { SELLER_APPROVAL_DELAY_MS } from '../src/buyers/buyers.ts';
+import { Payouts } from '../src/admin/payouts.ts';
+import { supplierKey } from '../src/tools/suppliers.ts';
 
 const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(200, 9)]).toString('base64');
 const MILE12 = { lat: 6.6045, lng: 3.3891, address: '12 Ikorodu Road, Ketu, Lagos' };
@@ -56,7 +58,8 @@ describe.skipIf(!localChainAvailable())('StockRun server', () => {
     const orders = new NairaOrders({ db, ledger, evalCircuit: circuitEvaluator(p), supplierStatus: (k, u) => buyers.sellerStatus(k, u), carriers: () => buyers.carrierKeys() });
     buyers = new Buyers(db, p, ledger, orders, { extractor: new RuleExtractor(), channel: new BotChannel(), prices: new PriceBook(), foundDb: db, now: () => clock });
     hunt = { db, places: null, osm: null, web: null, generate: null };
-    server = createApp({ hunt, platform: p, accounts: new Accounts(db, new ConsoleSms(), 'x'.repeat(40), Date.now, null, mail), buyers, ledger, prices: new PriceBook(), paystack: null, allowedOrigins: [SITE], log: (l) => process.env.DEBUG_SERVER && console.error(l) });
+    const payouts = new Payouts({ db, ledger, sellerOf: (k) => (k.toLowerCase() === supplierKey('found-00000000000000a1').toLowerCase() ? { name: 'Agora Marketplace', phone: '+2349079579400' } : null) });
+    server = createApp({ hunt, payouts, admins: new Set(['boss@example.com']), platform: p, accounts: new Accounts(db, new ConsoleSms(), 'x'.repeat(40), Date.now, null, mail), buyers, ledger, prices: new PriceBook(), paystack: null, allowedOrigins: [SITE], log: (l) => process.env.DEBUG_SERVER && console.error(l) });
     await new Promise<void>((r) => server.listen(0, r));
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   }, 60_000);
@@ -191,6 +194,41 @@ describe.skipIf(!localChainAvailable())('StockRun server', () => {
     const other = person(); await other.email('other@example.com');
     expect((await other.call('/api/my-sellers/found-00000000000000a1')).json.status).toBe(0);
   }, 120_000);
+
+  it('an admin records the bank transfer that pays the seller, only for what PickupCheck approved', async () => {
+    const boss = person(); await boss.email('boss@example.com');
+    const buyer = person(); await buyer.email('just-a-buyer@example.com');
+    expect((await buyer.call('/api/admin/overview')).status).toBe(404);           // buyers cannot see the admin page
+    expect((await buyer.call('/api/admin/payouts/1/paid', { reference: 'TRF12345' })).status).toBe(404);
+    expect((await buyer.call('/api/me')).json.admin).toBe(false);
+    expect((await boss.call('/api/me')).json.admin).toBe(true);
+
+    const ov = (await boss.call('/api/admin/overview')).json;
+    const p0 = ov.payouts.find((x: any) => x.seller.name === 'Agora Marketplace');
+    expect(p0).toMatchObject({ status: 'owed', amountNaira: 42_000, buyer: 'gbenga@example.com', bank: null });   // 3 cartons at ₦14,000
+    expect(ov.totals.owedSellersNaira).toBeGreaterThanOrEqual(42_000);
+    const id = p0.orderId, owedBefore = ov.totals.owedSellersNaira;
+    expect((await boss.call('/api/admin/orders')).json.find((o: any) => o.orderId === id)).toMatchObject({ status: 'Delivered', picked: 3, seller: 'Agora Marketplace', circuits: ['restock', 'pickup'] });
+
+    expect((await boss.call(`/api/admin/payouts/${id}/paid`, { reference: 'TRF12345' })).json.error).toMatch(/bank account first/);
+    expect((await boss.call(`/api/admin/payouts/${id}/bank`, { bankName: 'GTBank', accountNumber: '01234', accountName: 'Agora' })).status).toBe(400);
+    expect((await boss.call(`/api/admin/payouts/${id}/bank`, { bankName: 'GTBank', accountNumber: '0123456789', accountName: 'Agora Marketplace Ltd' })).json.bank)
+      .toEqual({ bankName: 'GTBank', accountNumber: '0123456789', accountName: 'Agora Marketplace Ltd' });
+    expect((await boss.call(`/api/admin/payouts/${id}/hold`, { note: 'checking the account name' })).json.status).toBe('held');
+    expect((await boss.call(`/api/admin/payouts/${id}/paid`, { reference: 'TRF12345' })).json.error).toMatch(/held/);
+    expect((await boss.call(`/api/admin/payouts/${id}/hold`, { hold: false })).json.status).toBe('owed');
+    expect((await boss.call(`/api/admin/payouts/${id}/paid`, { reference: 'x' })).status).toBe(400);
+    const paid = (await boss.call(`/api/admin/payouts/${id}/paid`, { reference: 'TRF-2026-0042' })).json;
+    expect(paid).toMatchObject({ status: 'paid', reference: 'TRF-2026-0042', paidBy: 'boss@example.com' });
+    expect((await boss.call(`/api/admin/payouts/${id}/paid`, { reference: 'TRF-2026-0043' })).status).toBe(409);   // once only
+
+    const after = (await boss.call('/api/admin/overview')).json;
+    expect(after.totals.owedSellersNaira).toBe(owedBefore - 42_000);
+    expect(after.totals.paidOutNaira).toBe(42_000);
+    expect(after.log[0]).toMatchObject({ admin: 'boss@example.com', action: 'paid', orderId: id });
+    expect(ledger.check().ok).toBe(true);
+    expect((await boss.call('/api/admin/payouts/999999/paid', { reference: 'TRF12345' })).status).toBe(404);     // no approved payment, nothing to pay
+  });
 
   it('a server can still make new sellers wait (SELLER_APPROVAL_DELAY_HOURS), like the vault', async () => {
     const orders = new NairaOrders({ db, ledger, evalCircuit: circuitEvaluator(p), supplierStatus: () => 0, carriers: () => [] });

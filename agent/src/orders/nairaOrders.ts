@@ -59,6 +59,8 @@ export class NairaOrders {
   }
 
   get(id: number | bigint | string): Row | null { return (this.db.prepare('SELECT * FROM naira_orders WHERE id = ?').get(Number(id)) as unknown as Row | undefined) ?? null; }
+  /** Everyone's latest orders (the admin page). */
+  recent(limit = 100): Row[] { return this.db.prepare('SELECT * FROM naira_orders ORDER BY id DESC LIMIT ?').all(limit) as unknown as Row[]; }
   forUser(userId: number): Row[] { return this.db.prepare('SELECT * FROM naira_orders WHERE user_id = ? ORDER BY id DESC').all(userId) as unknown as Row[]; }
   trusted(h: string): boolean { return isSelf(h) || this.carriers().some((c) => c.toLowerCase() === h.toLowerCase()); }
 

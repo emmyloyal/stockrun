@@ -9,8 +9,9 @@ import {
   type Category, type Coins, type Config, type DealResult, type FoundSeller, type HuntResult, type Me, type MySeller, type PlaceHit, type SellerHit, type Movement, type Order, type Place, type RequestRecord, type Seller, type User,
 } from './lib';
 import { CircuitTrail, Outcome, StatusPill } from './ui';
+import { Admin } from './Admin';
 
-type Tab = 'ask' | 'orders' | 'money' | 'me';
+type Tab = 'ask' | 'orders' | 'money' | 'me' | 'admin';
 const LAGOS: [number, number] = [6.55, 3.37];
 const run = async (setBusy: (s: string) => void, setError: (s: string) => void, label: string, f: () => Promise<void>) => {
   setBusy(label); setError('');
@@ -43,13 +44,14 @@ export function AccountApp({ cfg }: { cfg: Config }) {
       </header>
       {!u.username && <p className="note">Choose a username in <button className="link" onClick={() => setTab('me')}>Me</button>.</p>}
       <nav className="tabs" role="tablist">
-        {([['ask', 'Ask'], ['orders', 'Orders'], ['money', 'Money'], ['me', 'Me']] as const).map(([k, l]) => (
+        {([['ask', 'Ask'], ['orders', 'Orders'], ['money', 'Money'], ['me', 'Me'], ...(me.admin ? [['admin', 'Admin']] as const : [])] as const).map(([k, l]) => (
           <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{l}</button>
         ))}
       </nav>
       {tab === 'ask' && <Ask cfg={cfg} user={u} me={me} onAsked={() => { reload(); setTab('orders'); }} goMoney={() => setTab('money')} />}
       {tab === 'orders' && <Orders cfg={cfg} onChange={reload} />}
       {tab === 'money' && <Money cfg={cfg} me={me} onChange={reload} />}
+      {tab === 'admin' && me.admin && <Admin />}
       {tab === 'me' && <Profile user={u} onChange={() => { setBust(Date.now()); reload(); }} />}
     </section>
   );

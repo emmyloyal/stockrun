@@ -11,7 +11,17 @@ export interface Config {
 }
 export interface User { id: number; phone: string | null; email: string | null; wallet: Address | null; username: string | null; displayName: string | null; hasAvatar: boolean; createdAt: number }
 export interface NairaBalance { availableNaira: number; heldNaira: number }
-export interface Me { user: User | null; naira?: NairaBalance }
+export interface Me { user: User | null; naira?: NairaBalance; admin?: boolean }
+export interface Bank { bankName: string; accountNumber: string; accountName: string }
+export interface Payout {
+  orderId: number; amountNaira: number; approvedAt: number; status: 'owed' | 'held' | 'paid'; buyer: string;
+  seller: { key: string; name: string; phone: string | null }; bank: Bank | null; reference: string | null; note: string | null; paidAt: number | null; paidBy: string | null;
+}
+export interface AdminOverview {
+  totals: { lockedNaira: number; buyersAvailableNaira: number; owedSellersNaira: number; owedLogisticsNaira: number; paidOutNaira: number; heldPayouts: number };
+  payouts: Payout[]; log: { admin: string; action: string; orderId: number | null; detail: string; at: number }[];
+}
+export interface AdminOrder { orderId: number; buyerId: number; status: string; ordered: number; picked: number; unitPriceNaira: number; totalNaira: number; deliveryFeeNaira: number; self: boolean; createdAt: number; circuits: string[]; seller: string }
 export interface Place { lat: number; lng: number; address: string }
 export interface CheckResult {
   status: 'retake' | 'waiting_rider' | 'settled' | 'mismatch' | 'error';
@@ -93,6 +103,11 @@ export const server = {
   blockSeller: (id: string) => call<MySeller>(`/api/my-sellers/${id}/block`, {}),
   recordDeal: (d: { sellerId: string; item: string; quantity: number; unit: string; unitPriceNaira: number; category: Category; delivery: 'self' | 'logistics'; place: Place; contactPhone?: string }) =>
     call<DealResult>('/api/deals', d),
+  adminOverview: () => call<AdminOverview>('/api/admin/overview'),
+  adminOrders: () => call<AdminOrder[]>('/api/admin/orders'),
+  adminBank: (orderId: number, b: Bank) => call<Payout>(`/api/admin/payouts/${orderId}/bank`, b),
+  adminHold: (orderId: number, hold: boolean, note: string) => call<Payout>(`/api/admin/payouts/${orderId}/hold`, { hold, note }),
+  adminPaid: (orderId: number, reference: string) => call<Payout>(`/api/admin/payouts/${orderId}/paid`, { reference }),
   hunt: (text: string, place: Place, budgetNaira: number) => call<HuntResult>('/api/hunt', { text, place, budgetNaira }),
   emailCode: (email: string) => call<{ sent: true }>('/api/auth/email-code', { email }),
   emailVerify: (email: string, code: string) => signedIn(call('/api/auth/email-verify', { email, code })),

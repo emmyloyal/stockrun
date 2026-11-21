@@ -21,6 +21,7 @@ import { SELF_HANDLER } from '../orders/nairaOrders.ts';
 import { RESTOCK_REASONS } from '../tools/vault.ts';
 import { foundNear, foundSeller, huntEnabled, huntSellers, type HuntDeps } from '../discovery/hunt.ts';
 import { Geocoder } from '../discovery/geocode.ts';
+import { AdminError, type Payouts } from '../admin/payouts.ts';
 import { draftMessage, whatsappLink } from '../discovery/draft.ts';
 import { PICKUP_REASONS, DELIVERY_REASONS } from '../check/checkService.ts';
 
@@ -40,6 +41,9 @@ export interface AppOptions {
   allowedOrigins?: string[];
   /** The AI seller hunt (Google Maps + web search); absent or with neither search: off. */
   hunt?: Omit<HuntDeps, 'db'> & { db: HuntDeps['db']; perUserDaily?: number; siteDaily?: number };
+  /** Seller payouts and the admin page; `admins` are the email accounts allowed in (ADMIN_EMAILS). */
+  payouts?: Payouts | null;
+  admins?: Set<string>;
   /** Place search for the map's search box (OpenStreetMap Nominatim); absent: sellers only. */
   geocoder?: Geocoder | null;
   /** whsec_... from registering /api/webhooks/sendrelay with Sendrelay; webhooks are refused without it. */
@@ -66,9 +70,13 @@ export function createApp(o: AppOptions): Server {
   const searches = new Map<string, number[]>();              // per-IP place searches (they go to OpenStreetMap)                 // per-user hunt times (each hunt costs Google lookups)
 
   const need = (c: Ctx): User => { if (!c.user) throw new AuthError(401, 'Sign in first.'); return c.user; };
+  const isAdmin = (u: User | null) => !!u?.email && !!o.admins?.has(u.email.toLowerCase());
+  /** The signed-in admin's email; anyone else gets 404, so the admin pages do not show they exist. */
+  const admin = (c: Ctx): string => { const u = need(c); if (!isAdmin(u) || !o.payouts) throw new AuthError(404, 'Not found.'); return u.email!; };
+  const adminTry = <T>(f: () => T): T => { try { return f(); } catch (e) { if (e instanceof AdminError) throw new AuthError(e.status, e.message); throw e; } };
   const signedIn = (res: ServerResponse, r: { user: User; token: string }) => {
     res.setHeader('Set-Cookie', cookie(r.token, 365 * 24 * 3600, o.secureCookies));   // signed in for a year on this device
-    log(`signed in: user ${r.user.id} (${r.user.phone ? 'phone' : 'wallet'})`);
+    log(`signed in: user ${r.user.id} (${r.user.phone ? 'phone' : r.user.email ? 'email' : 'wallet'})`);
     return { user: r.user, token: r.token };   // the token is for apps on another origin (DeWEB): `Authorization: Bearer`
   };
   const money = (userId: number) => { const b = ledger.balance(userId); return { availableNaira: toNaira(b.availableKobo), heldNaira: toNaira(b.heldKobo) }; };
@@ -126,7 +134,7 @@ export function createApp(o: AppOptions): Server {
       emailSignIn: accounts.emailSignIn,
       sellerHunt: !!o.hunt && huntEnabled(o.hunt),
     })],
-    ['GET', /^\/api\/me$/, async (c) => (c.user ? { user: c.user, naira: money(c.user.id) } : { user: null })],
+    ['GET', /^\/api\/me$/, async (c) => (c.user ? { user: c.user, naira: money(c.user.id), admin: isAdmin(c.user) } : { user: null })],
     ['POST', /^\/api\/me\/profile$/, async (c) => ({ user: accounts.setProfile(need(c), c.body ?? {}) })],
     ['POST', /^\/api\/me\/avatar$/, async (c) => {
       const u = need(c);
@@ -235,6 +243,30 @@ export function createApp(o: AppOptions): Server {
         sellers: r.sellers.map((s) => ({ id: s.id, name: s.name, kind: s.kind ?? null, address: s.address, lat: s.lat, lng: s.lng, phone: s.phone, source: s.source, sourceUrl: s.sourceUrl, km: s.km })),
       };
     }],
+
+    // ---------------------------------------------------------------- admin: watch orders, send seller payouts
+    ['GET', /^\/api\/admin\/overview$/, async (c) => {
+      admin(c);
+      const t = o.payouts!.totals(), k = (x: number) => x / 100;
+      return {
+        totals: { lockedNaira: k(t.lockedKobo), buyersAvailableNaira: k(t.buyersAvailableKobo), owedSellersNaira: k(t.owedSellersKobo), owedLogisticsNaira: k(t.owedLogisticsKobo), paidOutNaira: k(t.paidOutKobo), heldPayouts: t.heldPayouts },
+        payouts: o.payouts!.list().map((p) => ({ ...p, amountNaira: k(p.amountKobo) })),
+        log: o.payouts!.recentLog(30),
+      };
+    }],
+    ['GET', /^\/api\/admin\/orders$/, async (c) => {
+      admin(c);
+      return o.buyers.orders.recent(100).map((r) => ({
+        orderId: r.id, buyerId: r.user_id, status: STATUS_NAME[r.status] ?? String(r.status), ordered: r.ordered, picked: r.picked,
+        unitPriceNaira: r.unit_price / 100, totalNaira: (r.ordered * r.unit_price) / 100, deliveryFeeNaira: r.rider_fee / 100,
+        self: r.rider.toLowerCase() === SELF_HANDLER.toLowerCase(), createdAt: r.created_at,
+        circuits: (JSON.parse(r.evidence) as { circuit: string }[]).map((e) => e.circuit),
+        seller: o.payouts!.sellerName(r.supplier_key),
+      }));
+    }],
+    ['POST', /^\/api\/admin\/payouts\/(\d+)\/bank$/, async (c) => { const a = admin(c); return adminTry(() => o.payouts!.setBank(a, Number(c.m[1]), c.body ?? {})); }],
+    ['POST', /^\/api\/admin\/payouts\/(\d+)\/hold$/, async (c) => { const a = admin(c); return adminTry(() => o.payouts!.hold(a, Number(c.m[1]), c.body?.hold !== false, String(c.body?.note ?? ''))); }],
+    ['POST', /^\/api\/admin\/payouts\/(\d+)\/paid$/, async (c) => { const a = admin(c); return adminTry(() => o.payouts!.markPaid(a, Number(c.m[1]), String(c.body?.reference ?? ''))); }],
 
     // ---------------------------------------------------------------- the buyer's sellers and recorded deals
     ['GET', /^\/api\/my-sellers\/(found-[0-9a-f]{16})$/, async (c) => buyers.sellerFor(need(c).id, c.m[1])],

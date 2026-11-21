@@ -6,11 +6,12 @@
 // and returns the original result.
 //
 // Per person: `available` (can be spent) and `held` (locked for open orders). System: `paystack` (money in),
-// `sellers` and `logistics` (what StockRun owes them and pays out by bank transfer).
+// `sellers` and `logistics` (what StockRun owes them and pays out by bank transfer), `paid_out` (seller payouts an admin
+// sent by bank transfer and recorded with its reference).
 import type { DatabaseSync } from 'node:sqlite';
 
 export type Kind = 'available' | 'held';
-export type SystemAccount = 'paystack' | 'sellers' | 'logistics';
+export type SystemAccount = 'paystack' | 'sellers' | 'logistics' | 'paid_out';
 export class LedgerError extends Error {
   readonly status: number;
   constructor(status: number, message: string) { super(message); this.name = 'LedgerError'; this.status = status; }
@@ -27,7 +28,7 @@ export function migrateLedger(db: DatabaseSync) {
     CREATE TABLE IF NOT EXISTS ledger_entries (
       id INTEGER PRIMARY KEY, tx_id INTEGER NOT NULL REFERENCES ledger_tx(id), account_id INTEGER NOT NULL REFERENCES ledger_accounts(id),
       amount INTEGER NOT NULL, balance_after INTEGER NOT NULL);
-    INSERT OR IGNORE INTO ledger_accounts (owner, kind, allow_negative) VALUES ('system', 'paystack', 1), ('system', 'sellers', 0), ('system', 'logistics', 0);
+    INSERT OR IGNORE INTO ledger_accounts (owner, kind, allow_negative) VALUES ('system', 'paystack', 1), ('system', 'sellers', 0), ('system', 'logistics', 0), ('system', 'paid_out', 0);
   `);
 }
 
@@ -96,6 +97,10 @@ export class Ledger {
   /** Locked money now owed to the seller (a circuit decided). */
   paySeller(userId: number, key: string, kobo: number): boolean {
     return this.post(`seller:${key}`, 'pay_seller', userId, kobo, [`user:${userId}`, 'held'], ['system', 'sellers'], key);
+  }
+  /** An admin sent a seller's money by bank transfer: it leaves "sellers" (owed) for "paid_out", once per order. */
+  recordSellerPayout(orderKey: string, kobo: number, reference: string): boolean {
+    return this.post(`payout:${orderKey}`, 'seller_payout', null, kobo, ['system', 'sellers'], ['system', 'paid_out'], reference);
   }
   /** Locked money now owed to the logistics company (a circuit decided). */
   payLogistics(userId: number, key: string, kobo: number): boolean {
