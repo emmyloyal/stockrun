@@ -10,6 +10,7 @@
     "count": "node src/count.ts",
     "app": "node src/server/demoServer.ts",
     "rehearse:xlayer": "node src/rehearseXLayer.ts",
+    "rehearse:coins": "node src/rehearseCoins.ts",
     "serve": "node src/server/main.ts",
     "serve:xlayer": "node src/server/main.ts --network=xlayer",
     "gmail:auth": "node src/accounts/gmailAuth.ts",

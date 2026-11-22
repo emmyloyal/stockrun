@@ -34,8 +34,8 @@ Details: [TapeOut on X Layer](#tapeout-on-x-layer). Check any order yourself: [V
   `eval` again and confirm it. One command does it: `node scripts/verify-order.mjs <orderId>`.
 - **Even the admin is bound.** Only a circuit decision moves locked money. An admin can send an approved payout, but
   can't create, change or redirect one.
-- **The next step is the vault.** It moves the money itself, on-chain, using the same circuits. It's written and
-  fork-tested, but not deployed yet.
+- **Coins don't need StockRun at all.** A buyer who pays in USD₮0 uses their own vault contract on X Layer, which
+  calls the same circuits and moves the coins itself. StockRun can't touch them.
 
 <p align="center">
   <img src="docs/images/01-welcome.png" width="260" alt="StockRun welcome screen" />
@@ -236,7 +236,7 @@ When a logistics company delivers, the buyer pays its delivery fee to the compan
 | The three circuits' rules | X Layer, taped out (fixed NAND netlists; the processor is frozen) | Nobody can change them |
 | Each payment decision | Asked of the circuit with `eval` on X Layer (read-only; no gas, no wallet). The input, output, circuit ID and block are saved with the order, so anyone can ask the circuit again and check | — |
 | Naira balances and locked money | **StockRun's double-entry ledger** (integer kobo), backed by StockRun's Paystack account. **Not on-chain.** | Only circuit decisions move locked money; an admin can send approved payouts but can't create, change or redirect them |
-| Coins (wallet users) | The buyer's own vault contract ([`contracts/src/StockRunVault.sol`](contracts/src/StockRunVault.sol)), which calls the circuits itself | **Not live yet**: the vault is written and fork-tested, not deployed on mainnet |
+| Coins (wallet users) | The buyer's own vault contract on X Layer ([`contracts/src/StockRunVault.sol`](contracts/src/StockRunVault.sol)), owned by their wallet, which calls the circuits itself | Only the circuits, inside the vault. The buyer's wallet signs deposits, withdrawals, seller approvals and the count. **Capped at $50 per vault**, because the vault is not audited |
 
 ## TapeOut on X Layer
 
@@ -251,7 +251,7 @@ collection.
 | PickupCheck #2: how much is the seller paid? (27 in → 13 out, 210 NAND) | tapeout tx [`0x24b80f4d…38bacae`](https://www.oklink.com/xlayer/tx/0x24b80f4d29c57371c33357cd9b9ece03038d9016ade3e296620747c5e18bacae) |
 | DeliveryCheck #3: did everything arrive? Recorded only, no money moves (21 in → 13 out, 141 NAND) | tapeout tx [`0x0249042e…e86d66d2`](https://www.oklink.com/xlayer/tx/0x0249042e8918f77cbe4056880fc10a0d54ab3bdb4599f47fe66fa313e86d66d2) |
 | Transistor token (NAND) | [`0xe63af1B06D02Bb1B44741C0459d4083ec5b440d4`](https://www.oklink.com/xlayer/address/0xe63af1B06D02Bb1B44741C0459d4083ec5b440d4) |
-| Vault | not deployed yet |
+| Vault | one per buyer, deployed by StockRun when they set up coins (owner = their wallet) |
 
 - **Used:** X Layer, the Processor Factory, NAND transistor tokens, tapeout, `eval`.
 - **Not used:** DeWEB (the app runs on an AWS server), TapeSend, REF (the circuits are flat netlists), circuit
@@ -295,6 +295,10 @@ The rules each circuit implements are in [`docs/CIRCUITS.md`](docs/CIRCUITS.md).
 - AI seller search by address
 - AI-written WhatsApp messages
 - record a deal → RestockGuard → money locked
+- **paying with USD₮0 from the buyer's own vault on X Layer mainnet** (up to $50 per vault): set up, deposit,
+  approve the seller, RestockGuard locks the coins in the vault, the buyer's wallet signs the count, PickupCheck pays
+  through the vault. Rehearsed end to end on a mainnet fork with the real circuits and real USD₮0
+  (`npm run rehearse:coins`)
 - collect and count → PickupCheck → seller's payment approved, the rest refunded
 - automatic seller payouts through Paystack (test)
 - registered stores with in-app chat
@@ -302,7 +306,9 @@ The rules each circuit implements are in [`docs/CIRCUITS.md`](docs/CIRCUITS.md).
 - an admin page for orders, money held and payouts
 
 **Not yet:**
-- **Paying with coins through the vault:** written and fork-tested, not deployed.
+- **Coin orders with delivery:** coin orders are collect-it-yourself for now.
+- **Paying sellers their naira for coin orders automatically:** the vault pays StockRun's payout wallet on-chain;
+  StockRun then pays the seller in naira by hand (the admin page lists who is owed).
 - **Delivery by a logistics company:** built and tested with Sendrelay's test mode; needs a live Sendrelay account.
   The buyer pays the delivery fee to the company directly.
 - **Google Maps sellers:** built; needs billing.

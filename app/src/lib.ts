@@ -1,5 +1,6 @@
 // API, wallet and device helpers for the StockRun app.
-import type { Address, Hex } from 'viem';
+import { createPublicClient, createWalletClient, custom, parseAbi, toHex, type Address, type Chain, type Hash, type Hex } from 'viem';
+import { anvil, xLayer } from 'viem/chains';
 
 // ---------------------------------------------------------------- types (mirror agent/src/server/app.ts)
 export interface Config {
@@ -7,6 +8,8 @@ export interface Config {
   naira: { paystack: boolean; test: boolean; testCredit: boolean; fee?: { percent: number; minNaira: number; maxNaira: number } };
   logistics: { id: string; name: string; api: boolean }[];
   emailSignIn: boolean;
+  /** Coin orders through the buyer's own vault on X Layer; null when coins are read-only. */
+  coins?: { cap: number; capNaira: number; symbol: string; token: Address; chainId: number; payout: Address } | null;
   /** Where people email for help; null when none is set. */
   supportEmail?: string | null;
   chat?: boolean;
@@ -53,6 +56,9 @@ export interface Order {
   ordered: number; unitPriceNaira: number; serviceFeeNaira?: number;
   /** The logistics company's quoted delivery fee. The buyer pays it to them directly; StockRun never holds it. */
   courierFeeNaira: number | null;
+  /** Coin orders only: the vault order number, the vault, the coin price, and the on-chain transactions. */
+  coinOrderId?: number; vault?: Address; unitPriceToken?: number; tokenSymbol?: string;
+  txs?: { label: string; hash: Hash }[]; sellerOwedNaira?: number; sellerPaidAt?: number | null;
   pickup: { picked: number; riderCount: number };
   delivery: { delivered: number; aiCounted: boolean; ownerOk: boolean };
   evidence: Evidence[];
@@ -84,7 +90,16 @@ export interface Seller {
   prices: { item: string; priceNaira: number; source: string; age: string | null }[];
 }
 export interface Movement { key: string; type: string; amountNaira: number; memo: string | null; at: number }
-export interface Coins { wallet: Address | null; network?: string; okb?: string; token?: { symbol: string; amount: string; naira: number } }
+export interface CoinVault {
+  vault: Address; owner: Address; payout: Address; token: Address; symbol: string;
+  balance: number; locked: number; free: number; cap: number; room: number; spentThisWeek: number; weeklyBudget: number;
+  naira: { balance: number; free: number };
+}
+export interface Coins { wallet: Address | null; network?: string; okb?: string; token?: { symbol: string; amount: string; naira: number }; vault?: CoinVault | null }
+export type CoinDealResult =
+  | { status: 'needs_seller'; seller: { key: Hex; name: string }; payout: Address; message: string }
+  | { status: 'locked' | 'ask_owner' | 'rejected' | 'too_large' | 'circuit_failed'; orderId?: string; reason?: number; tx?: Hash; message: string };
+export interface CoinOwed { vault: Address; orderId: number; seller: string; sellerId: string; item: string; owedNaira: number; settleTx: Hash | null; createdAt: number }
 
 // ---------------------------------------------------------------- where the server is
 // Served by the StockRun server itself: same origin, session cookie. Hosted elsewhere (DeWEB): `stockrun-config.json`
@@ -168,6 +183,11 @@ export const server = {
   avatar: (mediaType: string, data: string) => call<{ user: User }>('/api/me/avatar', { mediaType, data }),
   addWallet: (message: string, signature: Hex) => call<{ user: User }>('/api/me/wallet', { message, signature }),
   coins: () => call<Coins>('/api/me/coins'),
+  coinVault: () => call<{ vault: Address; created: boolean; gasTopUpTx: Hash | null }>('/api/coins/vault', {}),
+  coinDeal: (d: { sellerId: string; item: string; quantity: number; unit: string; unitPriceNaira: number; category: Category; place: Place }) => call<CoinDealResult>('/api/coins/deals', d),
+  coinSettlePickup: (coinOrderId: number) => call<CheckResult & { tx: Hash }>(`/api/coins/orders/${coinOrderId}/settle-pickup`, {}),
+  adminCoinOwed: () => call<CoinOwed[]>('/api/admin/coin-owed'),
+  adminCoinPaid: (vault: Address, orderId: number) => call<{ ok: true }>(`/api/admin/coin-owed/${vault}/${orderId}/paid`, {}),
   deposit: (amountNaira: number, email: string) => call<{ reference: string; checkoutUrl: string }>('/api/naira/deposit', { amountNaira, email }),
   confirmDeposit: (reference: string) => call<{ status: string; amountNaira: number; naira: NairaBalance }>('/api/naira/confirm', { reference }),
   testNaira: (amountNaira: number) => call<{ naira: NairaBalance }>('/api/dev/naira', { amountNaira }),
@@ -203,10 +223,48 @@ export async function signWithWallet(getMessage: (a: Address) => Promise<string>
   return { message, signature, address };
 }
 
+// ---------------------------------------------------------------- the buyer's wallet signs vault steps
+export const vaultUserAbi = parseAbi([
+  'function approve(address spender, uint256 amount) returns (bool)',
+  'function deposit(uint256 amount)', 'function withdraw(uint256 amount)',
+  'function queueSupplier(bytes32 id, uint8 status_, address payout_)',
+  'function riderPickup(uint256 id, bool atSupplier, uint8 riderCount)', 'function approveOrder(uint256 id)',
+  'error NotAuthorized()', 'error BadStatus()', 'error CircuitFailed()', 'error Rejected(uint8 reason)', 'error OverCap()',
+]);
+type VaultFn = 'approve' | 'deposit' | 'withdraw' | 'queueSupplier' | 'riderPickup' | 'approveOrder';
+const chainFor = (id: number): Chain => (id === xLayer.id ? xLayer : { ...anvil, id });
+
+/**
+ * Ask the browser wallet to send one transaction (on X Layer, switching or adding the network if needed) and wait for
+ * it. `from` must be the vault owner: the wallet that signed in. Returns the transaction hash.
+ */
+export async function walletSend(chainId: number, from: Address, address: Address, functionName: VaultFn, args: readonly unknown[]): Promise<Hash> {
+  const w = injected();
+  if (!w) throw new Error('No wallet found. Open StockRun inside the OKX Wallet or MetaMask app, or install their browser extension.');
+  const [account] = await w.request({ method: 'eth_requestAccounts' }) as Address[];
+  if (!account || account.toLowerCase() !== from.toLowerCase()) throw new Error(`Switch your wallet to ${from.slice(0, 6)}…${from.slice(-4)}, the one connected to StockRun.`);
+  const chain = chainFor(chainId);
+  try { await w.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: toHex(chain.id) }] }); }
+  catch (e) {
+    if ((e as { code?: number }).code !== 4902) throw new Error('Switch your wallet to the X Layer network, then try again.');
+    await w.request({ method: 'wallet_addEthereumChain', params: [{ chainId: toHex(chain.id), chainName: chain.name, nativeCurrency: chain.nativeCurrency,
+      rpcUrls: chain.rpcUrls.default.http, blockExplorerUrls: chain.blockExplorers ? [chain.blockExplorers.default.url] : undefined }] });
+  }
+  const wallet = createWalletClient({ account, chain, transport: custom(w) });
+  const pub = createPublicClient({ chain, transport: custom(w) });
+  let hash: Hash;
+  try { hash = await wallet.writeContract({ address, abi: vaultUserAbi, functionName, args: args as never, chain }); }
+  catch (e) { throw new Error(/denied|rejected/i.test((e as Error).message) ? 'You cancelled it in your wallet. Nothing was sent.' : (e as { shortMessage?: string }).shortMessage ?? (e as Error).message); }
+  const r = await pub.waitForTransactionReceipt({ hash });
+  if (r.status !== 'success') throw new Error(`The transaction failed on X Layer (${hash}). Nothing moved.`);
+  return hash;
+}
+
 // ---------------------------------------------------------------- explorer links
 let explorerTx: string | null = null;
 export const setExplorer = (base: string | null) => { explorerTx = base; };
 export const txUrl = (hash: string) => (explorerTx && /^0x[0-9a-f]{64}$/i.test(hash) ? `${explorerTx}${hash}` : null);
+export const addressUrl = (a: string) => (explorerTx && /^0x[0-9a-fA-F]{40}$/.test(a) ? `${explorerTx.replace(/tx\/$/, 'address/')}${a}` : null);
 
 // ---------------------------------------------------------------- device helpers
 export function currentPosition(): Promise<{ lat: number; lng: number; accuracy: number }> {

@@ -5,15 +5,17 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import {
+  walletSend, type CoinVault,
   avatarUrl, currentPosition, hasWallet, load, naira, preparePhoto, save, server, serviceFee, short, signWithWallet, whatsappLink,
   type Category, type Coins, type Config, type DealResult, type FoundSeller, type HuntResult, type Me, type MySeller, type PlaceHit, type SellerHit, type Movement, type Order, type Place, type RequestRecord, type Seller, type User,
 } from './lib';
-import { CircuitTrail, Outcome, Sheet, StatusPill } from './ui';
+import { CircuitTrail, Outcome, Sheet, StatusPill, Tx } from './ui';
 import { Admin } from './Admin';
 import { WithdrawPanel } from './Banks';
 import { ChatsTab, MyStore } from './Store';
 import { FeedTab } from './Feed';
 import { Icon } from './icons';
+import { CoinsPanel, depositCoins } from './Coins';
 
 type Tab = 'feed' | 'ask' | 'orders' | 'chats' | 'money' | 'me' | 'admin';
 /** The Route S mark: a solid dot at pickup, an open ring at the shop. Ink on light, danfo yellow on dark. */
@@ -82,7 +84,7 @@ export function AccountApp({ cfg }: { cfg: Config }) {
           {!u.username && tab !== 'me' && <button className="nudge" onClick={() => go('me')}><Icon.user size={18} /> Choose a username so sellers know who you are <Icon.chevron size={16} /></button>}
           {tab === 'chats' && cfg.chat && <ChatsTab openId={openChat} onOpened={() => setOpenChat(null)} />}
           {tab === 'ask' && <Ask onChat={startChat} cfg={cfg} user={u} me={me} onAsked={() => { reload(); go('orders'); }} goMoney={() => go('money')} />}
-          {tab === 'orders' && <Orders cfg={cfg} onChange={reload} goAsk={() => go('ask')} />}
+          {tab === 'orders' && <Orders cfg={cfg} wallet={u.wallet} onChange={reload} goAsk={() => go('ask')} />}
           {tab === 'money' && <Money cfg={cfg} me={me} onChange={reload} />}
           {tab === 'admin' && me.admin && <Admin />}
           {tab === 'me' && me.admin && <button className="nudge admin-link" onClick={() => go('admin')}><Icon.admin size={18} /> Admin: orders, payouts and stores <Icon.chevron size={16} /></button>}
@@ -192,7 +194,9 @@ function Ask({ cfg, user, me, onAsked, goMoney, onChat }: { cfg: Config; user: U
   const markers = useRef(new Map<string, L.CircleMarker>());
   const [draft, setDraft] = useState<{ id: string; name: string; phone: string; message: string; ai: boolean } | null>(null);
   const contactPanel = useRef<HTMLDivElement>(null);
-  const [deal, setDeal] = useState<{ id: string; name: string; seller: MySeller | null; item: string; quantity: string; unit: string; price: string; category: Category; result: DealResult | null; note: string } | null>(null);
+  const [deal, setDeal] = useState<{ id: string; name: string; seller: MySeller | null; item: string; quantity: string; unit: string; price: string; category: Category; result: DealResult | null; note: string; pay: 'naira' | 'coins' } | null>(null);
+  /** The buyer's coin vault, when coins are on and set up: lets a deal be paid from it. */
+  const [coinVault, setCoinVault] = useState<CoinVault | null>(null);
   const dealPanel = useRef<HTMLDivElement>(null);
   const [reply, setReply] = useState('');
   const [showMap, setShowMap] = useState(false);
@@ -266,7 +270,9 @@ function Ask({ cfg, user, me, onAsked, goMoney, onChat }: { cfg: Config; user: U
   /** Record a deal agreed on WhatsApp: it becomes an order that RestockGuard decides, paid to the seller at pickup. */
   const openDeal = (id: string, name: string) => run(setBusy, setError, 'Checking your sellers…', async () => {
     const seller = await server.mySeller(id);
-    setDeal({ id, name, seller, item: '', quantity: '1', unit: 'carton', price: '', category: 'staples', result: null, note: '' });
+    const v = cfg.coins && user.wallet ? (await server.coins().catch(() => null))?.vault ?? null : null;
+    setCoinVault(v);
+    setDeal({ id, name, seller, item: '', quantity: '1', unit: 'carton', price: '', category: 'staples', result: null, note: '', pay: 'naira' });
     setTimeout(() => dealPanel.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
   });
   const dealRef = useRef(openDeal);
@@ -280,6 +286,12 @@ function Ask({ cfg, user, me, onAsked, goMoney, onChat }: { cfg: Config; user: U
     if (!Number.isInteger(qty) || qty < 1 || qty > 255) return 'Enter how many (1 to 255).';
     if (!(price >= 1)) return `Enter the agreed price per ${d.unit || 'unit'}.`;
     if (!pinned) return 'Type your delivery address and tap Find sellers first, so the distance can be checked.';
+    if (d.pay === 'coins') {
+      if (!coinVault) return 'Set up your coin vault in Money first.';
+      if (delivery === 'logistics') return 'Coin orders are collect-it-yourself for now. Choose "I\'ll collect".';
+      if (price * qty > coinVault.naira.free) return `This deal is ${naira(price * qty)}, but your vault has ${naira(coinVault.naira.free)} free. Add coins in Money first.`;
+      return '';
+    }
     if (delivery === 'logistics' && !user.phone && contact.replace(/\D/g, '').length < 10) return 'Add a phone number for the rider (under "How should it reach you?"), or choose to collect it yourself.';
     const total = price * qty + serviceFee(price * qty, cfg.naira.fee);
     if (total > available) return `This deal is ${naira(total)} with StockRun's fee, but your balance is ${naira(available)}. Deposit naira first.`;
@@ -291,6 +303,20 @@ function Ask({ cfg, user, me, onAsked, goMoney, onChat }: { cfg: Config; user: U
     if (problem) { setDeal({ ...deal, note: problem, result: null }); return; }
     setBusy('RestockGuard is checking your deal…');
     try {
+      if (deal.pay === 'coins') {
+        const d = { sellerId: deal.id, item: deal.item.trim(), quantity: Number(deal.quantity), unit: deal.unit.trim(), unitPriceNaira: Number(deal.price.replace(/\D/g, '')), category: deal.category, place };
+        let r = await server.coinDeal(d);
+        if (r.status === 'needs_seller') {
+          // The seller isn't in the vault yet: the buyer's wallet approves them (instant: paid through StockRun's payout wallet).
+          setBusy(`Approve ${r.seller.name} in your wallet…`);
+          await walletSend(cfg.coins!.chainId, user.wallet!, coinVault!.vault, 'queueSupplier', [r.seller.key, 1, r.payout]);
+          setBusy('RestockGuard is checking your deal…');
+          r = await server.coinDeal(d);
+        }
+        if (r.status === 'needs_seller') throw new Error(r.message);
+        setDeal({ ...deal, result: { status: r.status, orderId: r.orderId, reason: r.reason, message: r.message } as DealResult, note: '' });
+        return;
+      }
       const result = await server.recordDeal({ sellerId: deal.id, item: deal.item.trim(), quantity: Number(deal.quantity), unit: deal.unit.trim(), unitPriceNaira: Number(deal.price.replace(/\D/g, '')),
         category: deal.category, delivery, place, contactPhone: contact || undefined });
       setDeal({ ...deal, result, note: '' });
@@ -472,7 +498,24 @@ function Ask({ cfg, user, me, onAsked, goMoney, onChat }: { cfg: Config; user: U
                 {CATEGORY_LABELS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
               </select>
             </label>
-            {Number(deal.price.replace(/\D/g, '')) > 0 && Number(deal.quantity) > 0 && (() => {
+            {cfg.coins && coinVault && !deal.result && (
+              <div className="seg two" role="radiogroup" aria-label="Pay with">
+                <button role="radio" aria-checked={deal.pay === 'naira'} className={deal.pay === 'naira' ? 'on' : ''} onClick={() => setDeal({ ...deal, pay: 'naira', note: '' })}>Naira balance</button>
+                <button role="radio" aria-checked={deal.pay === 'coins'} className={deal.pay === 'coins' ? 'on' : ''} onClick={() => setDeal({ ...deal, pay: 'coins', note: '' })}>{cfg.coins.symbol} vault</button>
+              </div>
+            )}
+            {Number(deal.price.replace(/\D/g, '')) > 0 && Number(deal.quantity) > 0 && deal.pay === 'coins' && coinVault && (() => {
+              const goods = Number(deal.price.replace(/\D/g, '')) * Number(deal.quantity), dollars = goods * (cfg.coins!.cap / cfg.coins!.capNaira);
+              return (
+                <dl className="receipt">
+                  <div><dt>Goods</dt><dd>{naira(goods)}</dd></div>
+                  <div className="total"><dt>Locked in your vault</dt><dd>≈ ${dollars.toFixed(2)} {cfg.coins!.symbol}</dd></div>
+                  <div className="fine-row"><dt>Free in your vault</dt><dd>${coinVault.free.toFixed(2)} ≈ {naira(coinVault.naira.free)}</dd></div>
+                  <div className="fine-row"><dt>Collection</dt><dd>you collect · on-chain, signed in your wallet</dd></div>
+                </dl>
+              );
+            })()}
+            {Number(deal.price.replace(/\D/g, '')) > 0 && Number(deal.quantity) > 0 && deal.pay === 'naira' && (() => {
               const goods = Number(deal.price.replace(/\D/g, '')) * Number(deal.quantity), fee = serviceFee(goods, cfg.naira.fee);
               return (
                 <dl className="receipt">
@@ -547,7 +590,7 @@ function FoundList({ hunt, onContact, onDeal, onChat }: { hunt: HuntResult; onCo
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
 // ---------------------------------------------------------------- orders
-function Orders({ cfg, onChange, goAsk }: { cfg: Config; onChange: () => void; goAsk: () => void }) {
+function Orders({ cfg, wallet, onChange, goAsk }: { cfg: Config; wallet: User['wallet']; onChange: () => void; goAsk: () => void }) {
   const [orders, setOrders] = useState<Order[] | null>(null);
   const [requests, setRequests] = useState<RequestRecord[]>([]);
   const [counts, setCounts] = useState<Record<string, string>>({});
@@ -596,6 +639,7 @@ function Orders({ cfg, onChange, goAsk }: { cfg: Config; onChange: () => void; g
             <dl className="receipt compact">
               <div><dt>{naira(o.unitPriceNaira)} × {qty}{settled && qty < o.ordered ? ` of ${o.ordered}` : ''}</dt><dd>{naira(qty * o.unitPriceNaira)}</dd></div>
               {fee ? <div><dt>StockRun fee</dt><dd>{naira(fee)}</dd></div> : null}
+              {o.money === 'coins' && <div className="fine-row"><dt>Paid in</dt><dd>{o.tokenSymbol} from your vault · ${((o.unitPriceToken ?? 0) * qty).toFixed(2)}</dd></div>}
               <div className="total"><dt>{settled ? 'Paid' : o.status === 'Refunded' ? 'Refunded' : 'Locked'}</dt><dd>{naira(settled ? paid : total)}</dd></div>
               {settled && total - paid > 0 && <div className="fine-row"><dt>Came back to you</dt><dd>{naira(total - paid)}</dd></div>}
               {!o.self && <div className="fine-row"><dt>Delivery fee</dt><dd>{o.courierFeeNaira ? `${naira(o.courierFeeNaira)}, ` : ''}paid to {o.logistics?.carrierName ?? 'the courier'} directly</dd></div>}
@@ -606,7 +650,9 @@ function Orders({ cfg, onChange, goAsk }: { cfg: Config; onChange: () => void; g
         {o.status === 'AwaitingOwner' && (
           <div className="next">
             <p><strong>Needs your OK.</strong> <span className="fine">Approving never overrides a "no" from the circuit.</span></p>
-            <button className="btn primary" disabled={!!busy} onClick={() => act('Approving…', () => server.approve(o.orderId))}>Approve</button>
+            <button className="btn primary" disabled={!!busy} onClick={() => act(o.money === 'coins' ? 'Approve in your wallet…' : 'Approving…', () => o.money === 'coins'
+              ? walletSend(cfg.coins!.chainId, wallet!, o.vault!, 'approveOrder', [BigInt(o.coinOrderId!)])
+              : server.approve(o.orderId))}>{o.money === 'coins' ? 'Approve in your wallet' : 'Approve'}</button>
           </div>
         )}
         {o.self && o.status === 'Locked' && (
@@ -630,7 +676,14 @@ function Orders({ cfg, onChange, goAsk }: { cfg: Config; onChange: () => void; g
                   <p><strong>Approve {naira(n * o.unitPriceNaira)} for {o.supplier.name}?</strong> <span className="fine">For {n} {o.unit}{n === 1 ? '' : 's'}. This can't be undone, so only confirm once the goods are collected.</span></p>
                   <div className="row wrap">
                     <button className="btn primary grow" disabled={!!busy} onClick={() => act('PickupCheck is deciding…', async () => {
-                      await server.collect(o.orderId, count(`p${o.orderId}`, o.ordered));
+                      const n = count(`p${o.orderId}`, o.ordered);
+                      if (o.money === 'coins') {
+                        // The count is the vault owner's: their wallet signs it, then PickupCheck pays through the vault.
+                        setBusy('Sign your count in your wallet…');
+                        await walletSend(cfg.coins!.chainId, wallet!, o.vault!, 'riderPickup', [BigInt(o.coinOrderId!), true, n]);
+                        setBusy('PickupCheck is deciding…');
+                        await server.coinSettlePickup(o.coinOrderId!);
+                      } else await server.collect(o.orderId, n);
                       setConfirming(null);
                     })}>Yes, approve payment</button>
                     <button className="btn ghost" onClick={() => setConfirming(null)}>Not yet</button>
@@ -650,7 +703,12 @@ function Orders({ cfg, onChange, goAsk }: { cfg: Config; onChange: () => void; g
             </div>
           </div>
         )}
-        <CircuitTrail evidence={o.evidence} network={cfg.network} orderId={o.orderId} />
+        {o.money === 'coins' ? (
+          <div className="stack tight">
+            <p className="fine"><Icon.shield size={14} /> Decided by TapeOut circuits inside your vault on X Layer:</p>
+            {o.txs?.map((t) => <p key={t.hash} className="fine">{t.label}: <Tx hash={t.hash} /></p>)}
+          </div>
+        ) : <CircuitTrail evidence={o.evidence} network={cfg.network} orderId={o.orderId} />}
       </li>
     );
   };
@@ -731,7 +789,8 @@ function Money({ cfg, me, onChange }: { cfg: Config; me: Me; onChange: () => voi
   }, []);  // eslint-disable-line react-hooks/exhaustive-deps
   const walletDollars = Number(coins?.token?.amount ?? 0);
   const nairaOn = cfg.naira.paystack || cfg.naira.testCredit;
-  const max = currency === 'usd' ? (Number.isFinite(walletDollars) ? walletDollars : 0) : cfg.naira.paystack ? 0 : 500_000;
+  const vault = coins?.vault ?? null;
+  const max = currency === 'usd' ? Math.max(0, Math.min(Number.isFinite(walletDollars) ? walletDollars : 0, vault ? vault.room : Infinity)) : cfg.naira.paystack ? 0 : 500_000;
 
   const MOVE: Record<string, [string, 'in' | 'out' | 'lock']> = {
     deposit: ['Deposit', 'in'], demo: ['Demo naira (not real money)', 'in'], hold: ['Locked for an order', 'lock'], release: ['Came back to you', 'in'],
@@ -774,15 +833,8 @@ function Money({ cfg, me, onChange }: { cfg: Config; me: Me; onChange: () => voi
       </section>
 
       <section className="panel stack">
-        <div className="row between"><h2>Coins</h2><span className="pill muted">Wallet</span></div>
-        {me.user?.wallet ? (coins?.wallet ? (<>
-          <p className="fine">Wallet {short(coins.wallet)} on {coins.network === 'xlayer' ? 'X Layer' : 'the local test chain'}, read from the chain. StockRun never holds it.</p>
-          <dl className="money-grid">
-            <div><dt>{coins.token?.symbol}</dt><dd>{coins.token?.amount} <span className="fine">≈ {naira(coins.token?.naira ?? 0)}</span></dd></div>
-            <div><dt>OKB (gas)</dt><dd>{Number(coins.okb).toFixed(5)}</dd></div>
-          </dl>
-          <p className="fine">Paying with coins from your wallet isn't live yet. Orders are paid from your naira balance.</p>
-        </>) : <p className="muted">Reading your wallet…</p>) : <p className="muted">Connect a wallet in <strong>Me</strong> to see your coins.</p>}
+        <div className="row between"><h2>Coins</h2><span className="pill muted">{cfg.coins ? `${cfg.coins.symbol} · X Layer` : 'Wallet'}</span></div>
+        <CoinsPanel cfg={cfg} me={me} coins={coins} onChange={refresh} />
       </section>
 
       {sheet === 'withdraw' && (
@@ -799,9 +851,22 @@ function Money({ cfg, me, onChange }: { cfg: Config; me: Me; onChange: () => voi
         <Sheet title={`Add ${money(currency, amount)}`} onClose={close} onBack={() => setSheet('amount')}>
           {currency === 'usd' ? (
             <div className="stack">
-              <p>Moving {coins?.token?.symbol ?? 'coins'} from your wallet into StockRun is the next step being built, so this deposit can't be made yet.</p>
-              <p className="fine">Nothing has been taken from your wallet.</p>
-              <button className="btn ghost" onClick={close}>Close</button>
+              {!cfg.coins ? (<>
+                <p>Paying with coins isn't switched on on this server. Nothing has been taken from your wallet.</p>
+                <button className="btn ghost" onClick={close}>Close</button>
+              </>) : !vault || !me.user?.wallet ? (<>
+                <p>Set up your coin vault first: it's under <strong>Coins</strong> on this page. StockRun creates it and pays that gas.</p>
+                <button className="btn ghost" onClick={close}>Close</button>
+              </>) : (<>
+                <p>{money(currency, amount)} of {vault.symbol} goes from your wallet into your own vault on X Layer. Your wallet asks you twice: once to allow it, once to deposit.</p>
+                <button className="btn primary" disabled={!!busy} onClick={() => run(setBusy, setError, 'Waiting for your wallet…', async () => {
+                  await depositCoins(cfg, me.user!.wallet!, vault.vault, amount, setBusy);
+                  setNote(`${money(currency, amount)} added to your vault.`); refresh(); close();
+                })}><Icon.lock size={18} /> Deposit {money(currency, amount)}</button>
+                <p className="fine">Your vault holds at most {money(currency, vault.cap)} for now (it's new and not yet audited).</p>
+                {busy && <p className="busy">{busy}</p>}
+                {error && <p className="alert">{error}</p>}
+              </>)}
             </div>
           ) : (
             <div className="stack">

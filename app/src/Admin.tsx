@@ -2,10 +2,34 @@
 // The admin never decides a payment: PickupCheck approved each payout and its amount. The admin sends the bank
 // transfer from StockRun's account, then records the reference here (or holds the payout for review).
 import { useCallback, useEffect, useState } from 'react';
-import { naira, server, whatsappLink, type AdminOrder, type AdminOverview, type Contact, type Payout } from './lib';
+import { naira, server, whatsappLink, type AdminOrder, type AdminOverview, type CoinOwed, type Contact, type Payout } from './lib';
+import { Tx } from './ui';
 import { BankFields, useBanks } from './Banks';
 import { STORE_KINDS } from './Store';
 import type { Business } from './lib';
+
+/** Coin pickups: the buyer's vault paid StockRun's payout wallet in USD₮0; the seller is owed that in naira. */
+function CoinOwedPanel() {
+  const [rows, setRows] = useState<CoinOwed[] | null>(null);
+  const [error, setError] = useState('');
+  const load = useCallback(() => server.adminCoinOwed().then(setRows).catch((e) => setError(e.message)), []);
+  useEffect(() => { load(); }, [load]);
+  if (!rows?.length && !error) return null;
+  return (
+    <div className="panel stack">
+      <h2>Coin pickups: sellers to pay in naira</h2>
+      <p className="fine">The buyer's vault paid StockRun's payout wallet on X Layer (transaction below). Send the seller that amount in naira from StockRun's account, then mark it paid.</p>
+      {error && <p className="alert">{error}</p>}
+      <ul className="cards">{(rows ?? []).map((r) => (
+        <li key={`${r.vault}-${r.orderId}`} className="card stack">
+          <strong>{r.seller}: {naira(r.owedNaira)}</strong>
+          <span className="fine">{r.item} · {when(r.createdAt)} {r.settleTx && <>· <Tx hash={r.settleTx} /></>}</span>
+          <button className="btn primary" onClick={() => server.adminCoinPaid(r.vault, r.orderId).then(load).catch((e) => setError(e.message))}>I paid the seller</button>
+        </li>
+      ))}</ul>
+    </div>
+  );
+}
 
 const when = (t: number) => new Date(t).toLocaleString('en-NG', { timeZone: 'Africa/Lagos', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 
@@ -38,6 +62,8 @@ export function Admin() {
       </div>
 
       <Stores />
+
+      <CoinOwedPanel />
 
       <div className="panel stack">
         <h2>Seller payouts</h2>

@@ -82,8 +82,7 @@ try {
   await send(ow.writeContract({ address: p.token, abi: tokenAbi, functionName: 'approve', args: [vault, 2n ** 255n] }));
   await send(ow.writeContract({ address: vault, abi: vaultAbi, functionName: 'deposit', args: [150_000_000n] }));
   await send(ow.writeContract({ address: vault, abi: vaultAbi, functionName: 'queueSupplier', args: [supplierKey('sim-mile12-adeyemi'), 1, p.supplierPayout] }));
-  await test.increaseTime({ seconds: 86_400 }); await test.mine({ blocks: 1 });
-  await send(ow.writeContract({ address: vault, abi: vaultAbi, functionName: 'applySupplier', args: [supplierKey('sim-mile12-adeyemi')] }));
+  // Paid through StockRun's payout wallet (fixed in the vault): the approval is instant, no 24 h wait.
 
   // 3. Logistics company: trusted by this vault from set-up; no bond.
   const rw = createWalletClient({ account: rider, chain: xLayerChain, transport: http(url, FORK_HTTP) });
