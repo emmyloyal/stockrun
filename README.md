@@ -16,6 +16,15 @@
   &nbsp;·&nbsp; Naira runs in Paystack <strong>test mode</strong>: no real money moves
 </p>
 
+| TapeOut on X Layer mainnet (chain 196) | |
+| --- | --- |
+| **Processor contract** | [`0x34efCc0a3191A48Feec787252E6d817b063A4017`](https://www.oklink.com/xlayer/address/0x34efCc0a3191A48Feec787252E6d817b063A4017) |
+| **Circuit ID 1**: RestockGuard (may the money lock?) | tapeout tx [`0xaf6429bf…d2a0feca6fd`](https://www.oklink.com/xlayer/tx/0xaf6429bf2e4a7bc4e435ca493815b8b868d7728389ed904e5eb0dd2a0feca6fd) |
+| **Circuit ID 2**: PickupCheck (how much is the seller paid?) | tapeout tx [`0x24b80f4d…38bacae`](https://www.oklink.com/xlayer/tx/0x24b80f4d29c57371c33357cd9b9ece03038d9016ade3e296620747c5e18bacae) |
+| **Circuit ID 3**: DeliveryCheck (is the logistics fee paid?) | tapeout tx [`0x0249042e…e86d66d2`](https://www.oklink.com/xlayer/tx/0x0249042e8918f77cbe4056880fc10a0d54ab3bdb4599f47fe66fa313e86d66d2) |
+
+Details: [TapeOut on X Layer](#tapeout-on-x-layer).
+
 <p align="center">
   <img src="docs/images/01-welcome.png" width="260" alt="StockRun welcome screen" />
 </p>
