@@ -78,7 +78,7 @@ describe.skipIf(!localChainAvailable())('photo check on a local chain', () => {
     counter.queue.push(report({ count: 4 }));
     // 4 of 5: nothing is recorded until the rider retakes or confirms.
     expect(await svc.pickup(id, PHOTO)).toMatchObject({ status: 'mismatch', aiCount: 4, expected: 5, message: expect.stringMatching(/shows 4 of 5 cartons/) });
-    expect((await svc.order(id))[13]).toBe(false); // aiCounted still false
+    expect((await svc.order(id))[12]).toBe(false); // aiCounted still false
     const r = await svc.confirmShort(id, 'pickup');
     expect(r).toMatchObject({ status: 'settled', outcome: 'paid_part', qty: 4, reason: 5, aiCount: 4 });
     expect(await balance(accounts.payout.address) - before).toBe(4n * 13_300n * TOKEN_PER_NAIRA);
@@ -89,11 +89,12 @@ describe.skipIf(!localChainAvailable())('photo check on a local chain', () => {
     counter.queue.push(report({ count: 4 }));
     const d1 = await svc.delivery(id, PHOTO);
     expect(d1).toMatchObject({ status: 'settled', outcome: 'held', reason: 5 });
-    // Owner confirms -> anyone may settle again -> rider paid.
+    // Owner confirms -> anyone may settle again -> delivery recorded. No money moves: the fee is paid outside StockRun.
     await send(wallet(accounts.owner).writeContract({ address: chain.vault, abi: riderAbi, functionName: 'ownerConfirm', args: [id, true, false] }));
     const riderBefore = await balance(accounts.rider.address);
-    expect(await svc.settle(id, 'delivery')).toMatchObject({ outcome: 'rider_paid' });
-    expect(await balance(accounts.rider.address) - riderBefore).toBe(2_300n * TOKEN_PER_NAIRA);
+    expect(await svc.settle(id, 'delivery')).toMatchObject({ outcome: 'delivered' });
+    expect(await balance(accounts.rider.address)).toBe(riderBefore);
+    expect((await svc.order(id))[23]).toBe(2);                    // deliveryVerdict: delivered in full
   }, 60_000);
 
   it('photo first, rider second: waits for the rider, then settles in full', async () => {
@@ -104,7 +105,7 @@ describe.skipIf(!localChainAvailable())('photo check on a local chain', () => {
     expect(await svc.settle(id, 'pickup')).toMatchObject({ outcome: 'paid', qty: 5, reason: 0 });
   }, 60_000);
 
-  it('short delivery: 5 picked up, photo at the shop shows 3 -> delivery fee held back for the owner', async () => {
+  it('short delivery: 5 picked up, photo at the shop shows 3 -> DeliveryCheck records 2 short', async () => {
     const id = await order('5 cartons of Indomie within 5 km');
     await riderPickup(id, 5);
     counter.queue.push(report({ count: 5 }));
@@ -113,6 +114,8 @@ describe.skipIf(!localChainAvailable())('photo check on a local chain', () => {
     counter.queue.push(report({ count: 3 }));
     expect(await svc.delivery(id, PHOTO)).toMatchObject({ status: 'mismatch', aiCount: 3, expected: 5 });
     expect(await svc.confirmShort(id, 'delivery')).toMatchObject({ status: 'settled', outcome: 'short', qty: 2, reason: 4 });
+    const o = await svc.order(id);
+    expect([o[23], o[24]]).toEqual([1, 2]);                        // deliveryVerdict short, shortQty 2
   }, 60_000);
 
   it('a short photo followed by a better photo settles in full; confirming needs a pending short count', async () => {
@@ -139,7 +142,7 @@ describe.skipIf(!localChainAvailable())('photo check on a local chain', () => {
     const id = await order('5 cartons of Indomie within 5 km');
     counter.queue.push(report({ photoProblem: 'too_dark' }));
     expect(await svc.pickup(id, PHOTO)).toMatchObject({ status: 'retake' });
-    expect((await svc.order(id))[13]).toBe(false); // aiCounted still false
+    expect((await svc.order(id))[12]).toBe(false); // aiCounted still false
     expect(await svc.pickup(id, { data: new Uint8Array(), mediaType: 'image/jpeg' })).toMatchObject({ status: 'retake' });
     expect(await svc.pickup(999n, PHOTO)).toMatchObject({ status: 'error' });
     expect(await svc.delivery(id, PHOTO)).toMatchObject({ status: 'error', message: expect.stringMatching(/not waiting for a delivery/) });

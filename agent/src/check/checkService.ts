@@ -9,15 +9,14 @@ import { decideCount, checkPhoto, type Photo, type PhotoCounter } from './photoC
 import type { JobStore } from './jobs.ts';
 
 export const checkAbi = parseAbi([
-  'function orders(uint256) view returns (bytes32 supplierId, address payout, address rider, uint8 ordered, uint8 cat, uint8 dist, uint256 unitPrice, uint256 riderFee, uint8 status, uint64 createdAt, bool atSupplier, bool riderCounted, uint8 riderCount, bool aiCounted, uint8 aiCount, bool pickupDamage, uint8 picked, bool atShop, uint64 arrivedAt, bool aiDelivered, uint8 delivered, bool deliveryDamage, bool ownerOk, bool ownerIssue)',
+  'function orders(uint256) view returns (bytes32 supplierId, address payout, address rider, uint8 ordered, uint8 cat, uint8 dist, uint256 unitPrice, uint8 status, uint64 createdAt, bool atSupplier, bool riderCounted, uint8 riderCount, bool aiCounted, uint8 aiCount, bool pickupDamage, uint8 picked, bool atShop, uint64 arrivedAt, bool aiDelivered, uint8 delivered, bool deliveryDamage, bool ownerOk, bool ownerIssue, uint8 deliveryVerdict, uint8 shortQty)',
   'function attestPickup(uint256 id, uint8 aiCount, bool damage)',
   'function attestDelivery(uint256 id, uint8 delivered, bool damage)',
   'function settlePickup(uint256 id)',
   'function settleDelivery(uint256 id)',
   'event SupplierPaid(uint256 indexed id, address payout, uint8 qty, uint256 amount, uint8 reason)',
   'event PickupHeld(uint256 indexed id, uint8 reason)',
-  'event RiderPaid(uint256 indexed id, address rider, uint256 amount)',
-  'event DeliveryShort(uint256 indexed id, uint8 shortQty, uint256 feeWithheld)',
+  'event DeliveryRecorded(uint256 indexed id, uint8 verdict, uint8 shortQty, uint8 reason)',
   'event DeliveryHeld(uint256 indexed id, uint8 reason)',
   'error NotAuthorized()', 'error BadStatus()', 'error CircuitFailed()',
 ]);
@@ -34,18 +33,18 @@ export const PICKUP_REASONS: Record<number, string> = {
   5: 'Short supply. The seller\'s payment is approved for what was counted; the rest comes back to you.',
 };
 export const DELIVERY_REASONS: Record<number, string> = {
-  0: 'Delivered. Logistics company paid.',
+  0: 'Delivered in full. The delivery fee is between you and the logistics company; StockRun does not hold it.',
   1: 'The rider is not at the shop yet.',
   2: 'The owner reported a problem. Under review.',
   3: 'Damage reported. Under review.',
-  4: 'Short delivery. The delivery fee is held back for the owner; StockRun claims the rest from the logistics company.',
+  4: 'Short delivery, recorded by DeliveryCheck. The seller was only paid for what was picked up; claim the missing goods from the logistics company with this record.',
   5: "Waiting for the owner's confirmation.",
 };
 
 export type CheckResult =
   | { status: 'retake'; message: string }
   | { status: 'waiting_rider'; aiCount: number; damage: boolean; attestTx: Hash; message: string }
-  | { status: 'settled'; outcome: 'paid' | 'paid_part' | 'held' | 'rider_paid' | 'short'; qty: number; reason: number;
+  | { status: 'settled'; outcome: 'paid' | 'paid_part' | 'held' | 'delivered' | 'short'; qty: number; reason: number;
       aiCount: number; damage: boolean; attestTx: Hash; settleTx: Hash; message: string }
   | { status: 'mismatch'; aiCount: number; expected: number; damage: boolean; message: string }
   | { status: 'error'; message: string };
@@ -74,7 +73,7 @@ export class CheckService {
     return this.run(orderId, photo, 'pickup');
   }
 
-  /** Delivery photo -> attestDelivery -> settleDelivery (DeliveryCheck pays the rider, compensates, or waits). */
+  /** Delivery photo -> attestDelivery -> settleDelivery (DeliveryCheck records delivered, short, or waits; no money moves). */
   async delivery(orderId: bigint, photo: Photo): Promise<CheckResult> {
     return this.run(orderId, photo, 'delivery');
   }
@@ -84,8 +83,8 @@ export class CheckService {
     const job = this.jobs.get(orderId);
     if (!job) return { status: 'error', message: `Order ${orderId} is not a known job.` };
     const o = await this.order(orderId);
-    const statusNow = o[8], riderCounted = o[11];
-    const expectedMax = stage === 'pickup' ? o[3] : o[16]; // ordered, or picked at pickup
+    const statusNow = o[7], riderCounted = o[10];
+    const expectedMax = stage === 'pickup' ? o[3] : o[15]; // ordered, or picked at pickup
     const wanted = stage === 'pickup' ? STATUS.Locked : STATUS.PickedUp;
     if (statusNow !== wanted) return { status: 'error', message: `Order ${orderId} is not waiting for a ${stage} check.` };
 
@@ -113,9 +112,9 @@ export class CheckService {
     const p = this.pending.get(key);
     if (!p) return { status: 'error', message: 'There is no short count waiting to be confirmed. Take the photo again.' };
     const o = await this.order(orderId);
-    if (o[8] !== (stage === 'pickup' ? STATUS.Locked : STATUS.PickedUp)) return { status: 'error', message: `Order ${orderId} is not waiting for a ${stage} check.` };
+    if (o[7] !== (stage === 'pickup' ? STATUS.Locked : STATUS.PickedUp)) return { status: 'error', message: `Order ${orderId} is not waiting for a ${stage} check.` };
     this.pending.delete(key);
-    return this.attestAndSettle(orderId, stage, p.aiCount, p.damage, o[11]);
+    return this.attestAndSettle(orderId, stage, p.aiCount, p.damage, o[10]);
   }
 
   private async attestAndSettle(orderId: bigint, stage: Stage, aiCount: number, damage: boolean, riderCounted: boolean): Promise<CheckResult> {
@@ -140,8 +139,9 @@ export class CheckService {
         return { status: 'settled' as const, outcome: reason === 0 ? 'paid' as const : 'paid_part' as const, qty, reason, settleTx, message: PICKUP_REASONS[reason] ?? '' };
       }
       if (l.eventName === 'PickupHeld') return { status: 'settled' as const, outcome: 'held' as const, qty: 0, reason: l.args.reason, settleTx, message: PICKUP_REASONS[l.args.reason] ?? '' };
-      if (l.eventName === 'RiderPaid') return { status: 'settled' as const, outcome: 'rider_paid' as const, qty: 0, reason: 0, settleTx, message: DELIVERY_REASONS[0] };
-      if (l.eventName === 'DeliveryShort') return { status: 'settled' as const, outcome: 'short' as const, qty: l.args.shortQty, reason: 4, settleTx, message: DELIVERY_REASONS[4] };
+      if (l.eventName === 'DeliveryRecorded') return l.args.verdict === 1
+        ? { status: 'settled' as const, outcome: 'short' as const, qty: l.args.shortQty, reason: 4, settleTx, message: DELIVERY_REASONS[4] }
+        : { status: 'settled' as const, outcome: 'delivered' as const, qty: 0, reason: 0, settleTx, message: DELIVERY_REASONS[0] };
       if (l.eventName === 'DeliveryHeld') return { status: 'settled' as const, outcome: 'held' as const, qty: 0, reason: l.args.reason, settleTx, message: DELIVERY_REASONS[l.args.reason] ?? '' };
     }
     throw new Error('settlement emitted no result');

@@ -365,7 +365,7 @@ function Ask({ cfg, user, me, onAsked, goMoney, onChat }: { cfg: Config; user: U
               <Icon.walk /><span><strong>I'll collect</strong><span className="fine">You or someone you send · no delivery fee</span></span>
             </button>
             <button role="radio" aria-checked={delivery === 'logistics'} className={`option${delivery === 'logistics' ? ' on' : ''}`} onClick={() => setDelivery('logistics')}>
-              <Icon.truck /><span><strong>Deliver it</strong><span className="fine">A verified logistics company</span></span>
+              <Icon.truck /><span><strong>Deliver it</strong><span className="fine">A verified logistics company · you pay their fee to them directly</span></span>
             </button>
           </div>
         )}
@@ -477,8 +477,8 @@ function Ask({ cfg, user, me, onAsked, goMoney, onChat }: { cfg: Config; user: U
                 <dl className="receipt">
                   <div><dt>Goods</dt><dd>{naira(goods)}</dd></div>
                   {fee > 0 && <div><dt>StockRun fee ({cfg.naira.fee!.percent}%)</dt><dd>{naira(fee)}</dd></div>}
-                  {delivery === 'logistics' && <div><dt>Delivery</dt><dd>quoted next</dd></div>}
                   <div className="total"><dt>Locked now</dt><dd>{naira(goods + fee)}</dd></div>
+                  {delivery === 'logistics' && <div className="fine-row"><dt>Delivery fee</dt><dd>quoted next · paid to the courier directly, not locked</dd></div>}
                   <div className="fine-row"><dt>Your balance</dt><dd>{naira(available)}</dd></div>
                 </dl>
               );
@@ -566,7 +566,7 @@ function Orders({ cfg, onChange, goAsk }: { cfg: Config; onChange: () => void; g
   const active = orders.filter((o) => o.status === 'AwaitingOwner' || o.status === 'Locked' || o.status === 'PickedUp');
   const past = orders.filter((o) => !active.includes(o));
   const card = (o: Order) => {
-    const total = o.ordered * o.unitPriceNaira + (o.serviceFeeNaira ?? 0) + (o.self ? 0 : o.riderFeeNaira);
+    const total = o.ordered * o.unitPriceNaira + (o.serviceFeeNaira ?? 0);     // what StockRun locked: never the delivery fee
     const stage = o.status === 'AwaitingOwner' ? 0 : o.status === 'Locked' ? 1 : o.status === 'PickedUp' ? 2 : o.status === 'Delivered' ? 3 : -1;
     const steps = o.self ? ['Locked', 'Collected', 'Seller paid'] : ['Locked', 'Picked up', 'Delivered'];
     return (
@@ -590,14 +590,14 @@ function Orders({ cfg, onChange, goAsk }: { cfg: Config; onChange: () => void; g
           const settled = o.status === 'PickedUp' || o.status === 'Delivered';
           const qty = settled ? o.pickup.picked : o.ordered;
           const fee = !o.serviceFeeNaira ? 0 : qty === o.ordered ? o.serviceFeeNaira : Math.floor((o.serviceFeeNaira * 100 * qty) / o.ordered) / 100;
-          const paid = qty * o.unitPriceNaira + fee + (o.self ? 0 : o.riderFeeNaira);
+          const paid = qty * o.unitPriceNaira + fee;
           return (
             <dl className="receipt compact">
               <div><dt>{naira(o.unitPriceNaira)} × {qty}{settled && qty < o.ordered ? ` of ${o.ordered}` : ''}</dt><dd>{naira(qty * o.unitPriceNaira)}</dd></div>
               {fee ? <div><dt>StockRun fee</dt><dd>{naira(fee)}</dd></div> : null}
-              {!o.self && <div><dt>Delivery</dt><dd>{naira(o.riderFeeNaira)}</dd></div>}
               <div className="total"><dt>{settled ? 'Paid' : o.status === 'Refunded' ? 'Refunded' : 'Locked'}</dt><dd>{naira(settled ? paid : total)}</dd></div>
               {settled && total - paid > 0 && <div className="fine-row"><dt>Came back to you</dt><dd>{naira(total - paid)}</dd></div>}
+              {!o.self && <div className="fine-row"><dt>Delivery fee</dt><dd>{o.courierFeeNaira ? `${naira(o.courierFeeNaira)}, ` : ''}paid to {o.logistics?.carrierName ?? 'the courier'} directly</dd></div>}
             </dl>
           );
         })()}
@@ -642,7 +642,7 @@ function Orders({ cfg, onChange, goAsk }: { cfg: Config; onChange: () => void; g
         {o.logistics && <Logistics o={o} />}
         {o.logistics && o.status === 'PickedUp' && o.logistics.ownerCount === undefined && (
           <div className="next">
-            <p><strong>When the rider arrives, count before you give the code.</strong> <span className="fine">Fewer than {o.pickup.picked} means the delivery fee comes back to you.</span></p>
+            <p><strong>When the rider arrives, count before you give the code.</strong> <span className="fine">Fewer than {o.pickup.picked} is recorded by DeliveryCheck as a short delivery: your proof for a claim against {o.logistics.carrierName}.</span></p>
             <div className="row wrap">
               <label className="field"><span>{o.unit}s that arrived</span><input inputMode="numeric" value={counts[`d${o.orderId}`] ?? String(o.pickup.picked)} onChange={(e) => setCounts((c) => ({ ...c, [`d${o.orderId}`]: e.target.value.replace(/\D/g, '') }))} /></label>
               <button className="btn primary grow" disabled={!!busy} onClick={() => act('Recording…', () => server.received(o.orderId, count(`d${o.orderId}`, o.pickup.picked)))}>Confirm what arrived</button>

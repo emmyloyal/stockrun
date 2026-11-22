@@ -192,15 +192,15 @@ export class Buyers {
 
     const km = haversineKm(place, s);
     const result = await rt.naira.propose({ supplierKey: supplierKey(s.id), ordered: quantity, unitPrice: BigInt(price) * 100n,
-      cat: CATEGORIES[raw.category], dist: distBucket(km), rider: booked.rider.address, riderFee: BigInt(booked.feeNaira) * 100n });
+      cat: CATEGORIES[raw.category], dist: distBucket(km), rider: booked.rider.address });
     if (result.status === 'locked' || result.status === 'ask_owner') {
       rt.jobs.add({ orderId: String(result.orderId), item, unit, quantity, rider: booked.rider.address,
         supplier: { name: `${s.name}, ${s.address || 'Lagos'}`, lat: s.lat, lng: s.lng }, shop: { name: address, lat, lng }, createdAt: this.now(),
-        ...(booked.delivery ? { logistics: booked.delivery } : {}) });
+        ...(booked.delivery ? { logistics: booked.delivery } : {}), ...(booked.feeNaira ? { courierFeeNaira: booked.feeNaira } : {}) });
       if (delivery === 'logistics') await this.dispatcher.bookPending(rt.dispatch).catch((e) => this.services.log?.(`booking: ${(e as Error).message}`));
     }
     const ngn = (n: number) => `₦${n.toLocaleString('en-NG')}`;
-    const what = `${quantity} ${unit}(s) of ${item} from ${s.name} at ${ngn(price)} each (${ngn(price * quantity)}${fee ? ` + ${ngn(fee / 100)} StockRun fee` : ''}${booked.feeNaira ? ` + ${ngn(booked.feeNaira)} delivery` : ', you collect it'})`;
+    const what = `${quantity} ${unit}(s) of ${item} from ${s.name} at ${ngn(price)} each (${ngn(price * quantity)}${fee ? ` + ${ngn(fee / 100)} StockRun fee` : ''}${booked.feeNaira ? `; delivery ${ngn(booked.feeNaira)}, paid to the courier directly` : ', you collect it'})`;
     if (result.status === 'locked') return { status: 'locked', orderId: String(result.orderId), message: `✓ ${what}. RestockGuard approved it; the money is locked. ${s.name} is paid only when ${delivery === 'self' ? 'you count the goods at pickup' : 'the logistics company checks the goods at pickup'}.` };
     if (result.status === 'ask_owner') return { status: 'ask_owner', orderId: String(result.orderId), reason: result.reason, message: `? ${what}. RestockGuard wants your OK because ${RESTOCK_REASONS[result.reason] ?? `reason ${result.reason}`}. Approve it in Orders.` };
     if (result.status === 'rejected') return { status: 'rejected', reason: result.reason, message: `✗ ${what}. RestockGuard rejected it: ${RESTOCK_REASONS[result.reason] ?? `reason ${result.reason}`}. Nothing was charged.` };

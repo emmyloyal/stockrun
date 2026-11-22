@@ -28,21 +28,22 @@ function setup(evalCircuit: EvalCircuit = referenceEval) {
   let t = 1_800_000_000_000;
   const db = openDb(), ledger = new Ledger(db);
   const orders = new NairaOrders({ db, ledger, evalCircuit, supplierStatus: (k) => (k === SUP ? 1 : 0), carriers: () => [COMPANY], now: () => t });
-  const args = (o: Partial<{ ordered: number; unitNaira: number; feeNaira: number; rider: `0x${string}`; cat: number; supplier: Hash }> = {}) => ({
+  const args = (o: Partial<{ ordered: number; unitNaira: number; rider: `0x${string}`; cat: number; supplier: Hash }> = {}) => ({
     supplierKey: o.supplier ?? SUP, ordered: o.ordered ?? 5, unitPrice: BigInt(kobo(o.unitNaira ?? 13_300)), cat: o.cat ?? 0, dist: 1,
-    rider: o.rider ?? COMPANY, riderFee: BigInt(kobo(o.feeNaira ?? 2_950)),
+    rider: o.rider ?? COMPANY,
   });
   return { ledger, orders, args, tick: (ms: number) => { t += ms; } };
 }
 
 describe('naira orders (ledger), decided by the circuits', () => {
-  it('logistics: lock goods + fee, pay the seller at pickup, the company on delivery; every call recorded', async () => {
+  it('logistics: lock the goods only, pay the seller at pickup, record the delivery; every call recorded', async () => {
     const { ledger, orders, args } = setup();
     ledger.deposit(1, 'p1', kobo(100_000));
     const r = await orders.propose(1, args(), kobo(80_000));
     expect(r.status).toBe('locked');
     const id = Number((r as { orderId: bigint }).orderId);
-    expect(ledger.balance(1)).toEqual({ availableKobo: kobo(100_000 - 66_500 - 2_950), heldKobo: kobo(69_450) });
+    expect(ledger.balance(1)).toEqual({ availableKobo: kobo(100_000 - 66_500), heldKobo: kobo(66_500) });   // no delivery fee held
+    expect(orders.get(id)!.rider_fee).toBe(0);
 
     orders.handlerPickup(COMPANY, id, true, 5);
     expect(await orders.settlePickup(id)).toEqual({ kind: 'paid', qty: 5, reason: 0 });
@@ -50,18 +51,18 @@ describe('naira orders (ledger), decided by the circuits', () => {
     orders.handlerArrive(COMPANY, id);
     orders.attestDelivery(id, 5, false);
     orders.ownerConfirm(1, id, true, false);
-    expect(await orders.settleDelivery(id)).toEqual({ kind: 'logistics_paid' });
-    expect(ledger.system('logistics')).toBe(kobo(2_950));
-    expect(ledger.balance(1)).toEqual({ availableKobo: kobo(30_550), heldKobo: 0 });
+    expect(await orders.settleDelivery(id)).toEqual({ kind: 'delivered' });
+    expect(ledger.system('logistics')).toBe(0);
+    expect(ledger.balance(1)).toEqual({ availableKobo: kobo(33_500), heldKobo: 0 });
     expect(orders.get(id)!.status).toBe(STATUS.Delivered);
     expect(JSON.parse(orders.get(id)!.evidence).map((e: { circuit: string }) => e.circuit)).toEqual(['restock', 'pickup', 'delivery']);
     expect(ledger.check().ok).toBe(true);
   });
 
-  it('self-pickup: no fee, the buyer\'s count pays the seller, unpicked money comes back, done at pickup', async () => {
+  it('self-pickup: the buyer\'s count pays the seller, unpicked money comes back, done at pickup', async () => {
     const { ledger, orders, args } = setup();
     ledger.deposit(2, 'p', kobo(70_000));
-    const r = await orders.propose(2, args({ rider: SELF_HANDLER, feeNaira: 0 }), kobo(70_000));
+    const r = await orders.propose(2, args({ rider: SELF_HANDLER }), kobo(70_000));
     const id = Number((r as { orderId: bigint }).orderId);
     expect(() => orders.handlerPickup(COMPANY, id, true, 4)).toThrow(/handler/);
     orders.handlerPickup(SELF_HANDLER, id, true, 4);
@@ -69,10 +70,9 @@ describe('naira orders (ledger), decided by the circuits', () => {
     expect(ledger.system('sellers')).toBe(kobo(53_200));
     expect(ledger.balance(2)).toEqual({ availableKobo: kobo(16_800), heldKobo: 0 });
     expect(orders.get(id)!.status).toBe(STATUS.Delivered);
-    expect((await orders.propose(2, args({ rider: SELF_HANDLER, feeNaira: 500 }), kobo(70_000))).status).toBe('rejected');   // self-pickup has no fee
   });
 
-  it('short delivery holds the fee back for the buyer; a photo count can only lower the seller\'s pay', async () => {
+  it('short delivery is recorded, nothing moves; a photo count can only lower the seller\'s pay', async () => {
     const { ledger, orders, args } = setup();
     ledger.deposit(3, 'p', kobo(200_000));
     const id = Number(((await orders.propose(3, args({ ordered: 10, unitNaira: 13_000 }), kobo(200_000))) as { orderId: bigint }).orderId);
@@ -81,9 +81,36 @@ describe('naira orders (ledger), decided by the circuits', () => {
     expect(await orders.settlePickup(id)).toMatchObject({ kind: 'paid', qty: 9 });
     orders.attestDelivery(id, 7, false);
     orders.handlerArrive(COMPANY, id);
+    const before = ledger.balance(3);
     expect(await orders.settleDelivery(id)).toEqual({ kind: 'short', shortQty: 2 });
+    expect(ledger.balance(3)).toEqual(before);                                      // the verdict moves no money
     expect(ledger.system('logistics')).toBe(0);
-    expect(ledger.balance(3).availableKobo).toBe(kobo(200_000 - 9 * 13_000));      // fee and the 10th unit came back
+    expect(ledger.balance(3).availableKobo).toBe(kobo(200_000 - 9 * 13_000));      // the 10th unit came back at pickup
+    expect(orders.get(id)!.status).toBe(STATUS.Delivered);
+    expect(ledger.check().ok).toBe(true);
+  });
+
+  it('delivery settlement never moves money, for every verdict', async () => {
+    const { ledger, orders, args, tick } = setup();
+    ledger.deposit(7, 'p', kobo(300_000));
+    const atShop = async (delivered: number, ownerOk: boolean) => {
+      const id = Number(((await orders.propose(7, args({ ordered: 5, unitNaira: 10_000 }), kobo(300_000))) as { orderId: bigint }).orderId);
+      orders.handlerPickup(COMPANY, id, true, 5);
+      await orders.settlePickup(id);
+      orders.handlerArrive(COMPANY, id);
+      orders.attestDelivery(id, delivered, false);
+      if (ownerOk) orders.ownerConfirm(7, id, true, false);
+      return id;
+    };
+    const full = await atShop(5, true), short = await atShop(3, false), wait = await atShop(5, false);
+    const snapshot = () => JSON.stringify([ledger.balance(7), ledger.system('sellers'), ledger.system('logistics'), ledger.system('fees'), ledger.system('paystack')]);
+    const before = snapshot();
+    expect(await orders.settleDelivery(full)).toEqual({ kind: 'delivered' });
+    expect(await orders.settleDelivery(short)).toEqual({ kind: 'short', shortQty: 2 });
+    expect((await orders.settleDelivery(wait)).kind).toBe('held');
+    tick(24 * 3600_000);
+    expect(await orders.settleDelivery(wait)).toEqual({ kind: 'delivered' });       // owner timeout
+    expect(snapshot()).toBe(before);
     expect(ledger.check().ok).toBe(true);
   });
 
@@ -113,7 +140,7 @@ describe('naira orders (ledger), decided by the circuits', () => {
     expect((await broken.orders.propose(6, broken.args({ ordered: 1 }), kobo(50_000))).status).toBe('circuit_failed');
     expect(broken.ledger.balance(6).heldKobo).toBe(0);
 
-    const ok = await orders.propose(5, args({ ordered: 1, unitNaira: 1_000, feeNaira: 0, rider: SELF_HANDLER }), kobo(5_000));
+    const ok = await orders.propose(5, args({ ordered: 1, unitNaira: 1_000, rider: SELF_HANDLER }), kobo(5_000));
     const oid = Number((ok as { orderId: bigint }).orderId);
     expect(() => orders.refundStale(oid)).toThrow(/Not refundable yet/);
     tick(48 * 3600_000);
@@ -129,7 +156,7 @@ describe.skipIf(!onMainnet)('the real circuits on X Layer agree with the referen
     const pub = createPublicClient({ chain: xLayer, transport: http('https://rpc.xlayer.tech', { timeout: 20_000, retryCount: 3 }) });
     const abi = parseAbi(['function eval(uint256 circuitId, bytes input) view returns (bytes)']);
     for (const i of [
-      { total: 14, budget: 16, limit: 16, sup: 1, cat: 0, dist: 1, ownerOk: false },   // ₦69,450 of ₦80,000: approve
+      { total: 14, budget: 16, limit: 16, sup: 1, cat: 0, dist: 1, ownerOk: false },   // ₦66,500 of ₦80,000: approve
       { total: 14, budget: 8, limit: 8, sup: 1, cat: 0, dist: 1, ownerOk: false },     // over budget: reject 2
       { total: 1, budget: 10, limit: 10, sup: 0, cat: 0, dist: 1, ownerOk: false },    // unknown seller: reject 1
       { total: 1, budget: 10, limit: 10, sup: 1, cat: 6, dist: 1, ownerOk: false },    // special category: ask 4
@@ -146,7 +173,7 @@ describe("StockRun's service fee", () => {
     const db = openDb(), ledger = new Ledger(db);
     const orders = new NairaOrders({ db, ledger, evalCircuit: referenceEval, supplierStatus: (k) => (k === SUP ? 1 : 0), carriers: () => [COMPANY],
       fee: { bps: 150, minKobo: kobo(100), maxKobo: kobo(10_000) } });
-    const self = (ordered: number, unitNaira: number) => ({ supplierKey: SUP, ordered, unitPrice: BigInt(kobo(unitNaira)), cat: 0, dist: 1, rider: SELF_HANDLER, riderFee: 0n });
+    const self = (ordered: number, unitNaira: number) => ({ supplierKey: SUP, ordered, unitPrice: BigInt(kobo(unitNaira)), cat: 0, dist: 1, rider: SELF_HANDLER });
     return { ledger, orders, self };
   };
 

@@ -6,7 +6,6 @@ import { checkAbi, type CheckService } from '../check/checkService.ts';
 import type { ProposeArgs, ProposeResult } from '../tools/vault.ts';
 import type { Wallet } from '../chain/platform.ts';
 import type { Money } from '../chain/money.ts';
-import { toNaira } from '../money/ledger.ts';
 import { NairaOrders } from './nairaOrders.ts';
 
 /** What the agent needs to place an order. VaultClient already has this shape. */
@@ -16,8 +15,8 @@ export interface ProposeTarget {
   propose(a: ProposeArgs): Promise<ProposeResult>;
 }
 
-export interface OrderState { status: number; ordered: number; picked: number; feeNaira: number }
-export type Settled = { outcome: 'paid' | 'paid_part' | 'held' | 'rider_paid' | 'short'; qty: number; reason: number; tx: string };
+export interface OrderState { status: number; ordered: number; picked: number }
+export type Settled = { outcome: 'paid' | 'paid_part' | 'held' | 'delivered' | 'short'; qty: number; reason: number; tx: string };
 
 /** What the dispatcher needs to move an order along. `handler` is the logistics company's desk key. */
 export interface OrderBackend {
@@ -40,7 +39,7 @@ export class VaultBackend implements OrderBackend {
   constructor(vault: Address, pub: PublicClient, settler: CheckService, money: Money) { this.vault = vault; this.pub = pub; this.settler = settler; this.money = money; }
   async order(id: string): Promise<OrderState> {
     const o = await this.pub.readContract({ address: this.vault, abi: checkAbi, functionName: 'orders', args: [BigInt(id)] });
-    return { status: Number(o[8]), ordered: Number(o[3]), picked: Number(o[16]), feeNaira: this.money.toNaira(o[7]) };
+    return { status: Number(o[7]), ordered: Number(o[3]), picked: Number(o[15]) };
   }
   private async sign(w: Wallet, functionName: 'riderPickup' | 'riderArrive', args: readonly unknown[]) {
     const { request } = await this.pub.simulateContract({ address: this.vault, abi: handlerAbi, functionName, args: args as never, account: w.account });
@@ -67,7 +66,7 @@ export class NairaBackend implements OrderBackend, ProposeTarget {
   propose(a: ProposeArgs) { return this.orders.propose(this.userId, a, this.budgetKobo); }
 
   private mine(id: string) { const o = this.orders.get(id); if (!o || o.user_id !== this.userId) throw new Error('No such order.'); return o; }
-  async order(id: string): Promise<OrderState> { const o = this.mine(id); return { status: o.status, ordered: o.ordered, picked: o.picked, feeNaira: toNaira(o.rider_fee) }; }
+  async order(id: string): Promise<OrderState> { const o = this.mine(id); return { status: o.status, ordered: o.ordered, picked: o.picked }; }
   async handlerPickup(w: Wallet, id: string, count: number) { this.mine(id); this.orders.handlerPickup(w.account.address, Number(id), true, count); }
   async handlerArrive(w: Wallet, id: string) { this.mine(id); this.orders.handlerArrive(w.account.address, Number(id)); }
   async settlePickup(id: string): Promise<Settled> {
@@ -87,6 +86,6 @@ export class NairaBackend implements OrderBackend, ProposeTarget {
     const r = await this.orders.settleDelivery(Number(id));
     if (r.kind === 'held') return { outcome: 'held', qty: 0, reason: r.reason, tx: `ledger:${id}` };
     if (r.kind === 'short') return { outcome: 'short', qty: r.shortQty, reason: 4, tx: `ledger:${id}` };
-    return { outcome: 'rider_paid', qty: 0, reason: 0, tx: `ledger:${id}` };
+    return { outcome: 'delivered', qty: 0, reason: 0, tx: `ledger:${id}` };
   }
 }

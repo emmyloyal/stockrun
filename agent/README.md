@@ -60,7 +60,7 @@ For "send it with a logistics company" orders:
 1. **Quote:** the agent asks every connected company the shop's vault trusts for a price (Sendrelay: one quote per vehicle that can carry the load; the cheapest wins). RestockGuard checks goods plus delivery; both are locked in escrow.
 2. **Book:** after the money is locked, at no more than the locked fee (a dearer fresh quote is refused) and once per order (the booking is keyed to the order).
 3. **Pickup:** when the company reports "picked up", StockRun's key for that company (its dispatch desk) confirms the ordered quantity on-chain, and PickupCheck pays the supplier. The company's rider checked the goods against the order details; the app says "confirmed by <company>", never "AI-verified".
-4. **Delivery:** the owner counts at the door ("How many arrived?", attested by the check service), then gives the rider the delivery code. When the company reports "completed" (code entered), the desk key marks arrival and DeliveryCheck pays the fee, or holds it back for the owner if goods are short.
+4. **Delivery:** the owner counts at the door ("How many arrived?", attested by the check service), then gives the rider the delivery code. When the company reports "completed" (code entered), the desk key marks arrival and DeliveryCheck records the delivery as complete or short. No money moves: the buyer pays the delivery fee to the company directly.
 
 Status comes from signed webhooks (`POST /api/webhooks/sendrelay`, verified with `SENDRELAY_WEBHOOK_SECRET`) and from a check every 20 s. On the local server a Sendrelay **test** key books simulated Sendrelay riders for real (`npm run serve` with `SENDRELAY_API_KEY=sk_test_...`); mainnet refuses a test key. `npm run carrier:try` tries the connector on its own.
 
@@ -84,7 +84,7 @@ The check service holds the **check key**. That key can only call `attestPickup`
 2. **Code decides.** `decideCount` only attests a clear count. Anything doubtful asks the rider for a new photo, and the order holds meanwhile.
 3. **The circuit pays.** After attesting, the service calls `settlePickup` or `settleDelivery`.
    - PickupCheck pays the supplier for the lower of the photo count and the rider's count.
-   - DeliveryCheck pays the logistics company, holds its fee back for the owner when goods arrive short, or waits.
+   - DeliveryCheck records delivered in full, short (the buyer's evidence for a claim against the company), or waits. It never moves money: the delivery fee is paid to the company directly.
 - `JobStore` keeps what the chain does not: the item, the unit, and the supplier and shop locations. All money figures are read from the vault.
 - **Try it on a real photo:** `npm run count -- photo.jpg "Indomie noodles carton (40 x 70g)" carton 5`. The last number is the order size, used only by code. This needs `GEMINI_API_KEY`. Nothing is attested.
 - **Photo test, 19 Nov 2026** (gemini-3.5-flash-lite; 5 public Wikimedia Commons photos plus 1 drawn test image; the photos are not in the repo):

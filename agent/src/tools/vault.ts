@@ -5,7 +5,7 @@ import {
 } from 'viem';
 
 export const vaultAbi = parseAbi([
-  'function proposeOrder(bytes32 supplierId, uint8 ordered, uint256 unitPrice, uint8 cat, uint8 dist, address rider, uint256 riderFee) returns (uint256)',
+  'function proposeOrder(bytes32 supplierId, uint8 ordered, uint256 unitPrice, uint8 cat, uint8 dist, address rider) returns (uint256)',
   'function supplierStatus(bytes32) view returns (uint8)',
   'function trustedHandler(address) view returns (bool)',
   'function unit() view returns (uint256)',
@@ -14,7 +14,7 @@ export const vaultAbi = parseAbi([
   'function limit() view returns (uint256)',
   'event OrderProposed(uint256 indexed id, uint8 decision, uint8 reason)',
   'event OrderLocked(uint256 indexed id, uint256 amount)',
-  'error NotAuthorized()', 'error BadStatus()', 'error CircuitFailed()', 'error Rejected(uint8 reason)', 'error OrderTooLarge()', 'error NoPayout()', 'error UntrustedHandler()', 'error SelfPickupHasNoFee()',
+  'error NotAuthorized()', 'error BadStatus()', 'error CircuitFailed()', 'error Rejected(uint8 reason)', 'error OrderTooLarge()', 'error NoPayout()', 'error UntrustedHandler()',
 ]);
 
 /** RestockGuard reason codes (docs/CIRCUITS.md), worded for the shop owner. */
@@ -34,7 +34,8 @@ export type ProposeResult =
   | { status: 'too_large' }
   | { status: 'circuit_failed' };
 
-export interface ProposeArgs { supplierKey: Hash; ordered: number; unitPrice: bigint; cat: number; dist: number; rider: Address; riderFee: bigint }
+/** Orders lock goods money only: a delivery fee is paid by the buyer directly to the logistics company. */
+export interface ProposeArgs { supplierKey: Hash; ordered: number; unitPrice: bigint; cat: number; dist: number; rider: Address }
 
 export class VaultClient {
   readonly address: Address;
@@ -49,7 +50,7 @@ export class VaultClient {
   trustedHandler(who: Address) { return this.pub.readContract({ address: this.address, abi: vaultAbi, functionName: 'trustedHandler', args: [who] }); }
 
   async propose(a: ProposeArgs): Promise<ProposeResult> {
-    const args = [a.supplierKey, a.ordered, a.unitPrice, a.cat, a.dist, a.rider, a.riderFee] as const;
+    const args = [a.supplierKey, a.ordered, a.unitPrice, a.cat, a.dist, a.rider] as const;
     try {
       // Simulate first: a REJECT reverts (nothing is stored), so it costs no gas and we learn the reason.
       const { request } = await this.pub.simulateContract({ address: this.address, abi: vaultAbi, functionName: 'proposeOrder', args, account: this.agent.account });

@@ -12,7 +12,7 @@ Decides whether an order may lock funds.
 
 | Bits | Name | Meaning | Source |
 | --- | --- | --- | --- |
-| 8 | `total` | Order total (units of ₦5,000, 0–255) | Negotiated price saved to the order |
+| 8 | `total` | Order total (units of ₦5,000, 0–255): the goods, plus StockRun's fee for naira orders. **Never a delivery fee** (paid to the courier directly) | Negotiated price saved to the order |
 | 8 | `budget` | Remaining weekly budget | Vault storage |
 | 8 | `limit` | Owner's auto-approve limit | Vault storage (owner-set, 24 h delay) |
 | 2 | `sup` | 00 unknown, 01 approved, 10 preferred, 11 blocked | Supplier registry |
@@ -51,9 +51,12 @@ Rules (first match wins):
 Outputs: `decision` (2), `payQty` (8; 0 when HOLD), `reason` (3).
 
 ## 3. DeliveryCheck — 21 inputs → 13 outputs
-Pays the logistics company's fee, or withholds it for the owner when goods arrive short. Not used for self-pickup.
-There are no bonds: on COMPENSATE the vault keeps the fee for the owner and the shortfall is claimed off-chain from
-the company; `shortQty` is recorded in the `DeliveryShort` event.
+Records whether the goods arrived in full or short. **It moves no money.** The buyer pays the delivery fee to the
+logistics company directly, outside StockRun, and the seller was already paid at pickup. Not used for self-pickup.
+The vault stores the verdict on the order (`deliveryVerdict`: 2 in full, 1 short; `shortQty`) and emits
+`DeliveryRecorded(id, verdict, shortQty, reason)`. Naira orders save the same call in their circuit evidence. On
+COMPENSATE (a short delivery), the record is the buyer's evidence for a claim against the company. The netlist is
+unchanged (taped out); only what the vault does with the output changed.
 
 | Bits | Name | Meaning |
 | --- | --- | --- |
@@ -70,7 +73,7 @@ Rules (first match wins):
 2. `damage` → HOLD (00), reason 3
 3. `delivered < picked` → COMPENSATE (01), reason 4, `shortQty = picked − delivered`
 4. `ownerIssue` → HOLD (00), reason 2
-5. `ownerOk || timeout` → PAY_RIDER (10), reason 0
+5. `ownerOk || timeout` → PAY_RIDER (10), reason 0. The name is from the netlist; today it means "delivered in full"
 6. otherwise → WAIT (00), reason 5
 
 Outputs: `decision` (2), `shortQty` (8; 0 unless COMPENSATE), `reason` (3).

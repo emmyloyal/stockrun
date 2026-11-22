@@ -37,10 +37,10 @@ describe.skipIf(!localChainAvailable())('agent end to end on a local chain', () 
     expect(o.deal.supplier.id).toBe('sim-mile12-adeyemi');
     expect(o.deal.unitPriceNaira).toBe(13300);
     expect(o.result.status).toBe('locked');
-    // Mile 12 -> Ojota is 2.98 km: delivery ₦1,500 + 250 x 2.98 = ₦2,245 -> ₦2,300.
-    // 5 x ₦13,300 + ₦2,300 = ₦68,800 locked in escrow.
+    // Mile 12 -> Ojota is 2.98 km: delivery quoted ₦1,500 + 250 x 2.98 = ₦2,245 -> ₦2,300, paid to the company directly.
+    // Only the goods are locked in escrow: 5 x ₦13,300 = ₦66,500.
     expect(o.riderFeeNaira).toBe(2300);
-    expect(await pub.readContract({ address: vault, abi: vaultAdminAbi, functionName: 'locked' })).toBe(68_800n * TOKEN_PER_NAIRA);
+    expect(await pub.readContract({ address: vault, abi: vaultAdminAbi, functionName: 'locked' })).toBe(66_500n * TOKEN_PER_NAIRA);
     // The agent moved no money: the supplier is paid only after the pickup check.
     expect(await pub.readContract({ address: token, abi: tokenAbi, functionName: 'balanceOf', args: [payout.address] })).toBe(0n);
     expect(report.message).toMatch(/RestockGuard approved; funds locked in escrow\. Order #0, tx 0x[0-9a-f]{64}/);

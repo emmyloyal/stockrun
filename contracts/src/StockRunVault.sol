@@ -9,6 +9,8 @@ import {ITapeOutCircuits, IERC20Min} from "./interfaces/ITapeOutCircuits.sol";
 ///      input itself; a failed circuit call holds the order; owner approval never overrides a reject.
 ///      Goods are collected by a trusted handler, never by a stranger: the owner (self-pickup) or a
 ///      logistics company the owner approved. There are no bonds. Skeleton for the hackathon — not audited.
+///      Orders lock goods money only. The delivery fee is paid by the buyer directly to the logistics company,
+///      outside StockRun: settleDelivery records DeliveryCheck's verdict and never moves funds.
 contract StockRunVault {
     // ---------------------------------------------------------------- types
     enum Status { None, AwaitingOwner, Locked, PickedUp, Delivered, Refunded }
@@ -21,7 +23,6 @@ contract StockRunVault {
         uint8 cat;
         uint8 dist;
         uint256 unitPrice;     // token units per order unit
-        uint256 riderFee;      // token units
         Status status;
         uint64 createdAt;
         // pickup evidence
@@ -32,6 +33,8 @@ contract StockRunVault {
         bool atShop; uint64 arrivedAt;
         bool aiDelivered; uint8 delivered; bool deliveryDamage;
         bool ownerOk; bool ownerIssue;
+        // DeliveryCheck's verdict (recorded only; no funds move): 0 none yet, 1 short, 2 delivered in full
+        uint8 deliveryVerdict; uint8 shortQty;
     }
 
     // ---------------------------------------------------------------- config
@@ -69,14 +72,14 @@ contract StockRunVault {
     event OrderLocked(uint256 indexed id, uint256 amount);
     event SupplierPaid(uint256 indexed id, address payout, uint8 qty, uint256 amount, uint8 reason);
     event PickupHeld(uint256 indexed id, uint8 reason);
-    event RiderPaid(uint256 indexed id, address rider, uint256 amount);
-    event DeliveryShort(uint256 indexed id, uint8 shortQty, uint256 feeWithheld);
+    /// DeliveryCheck's final verdict: 2 delivered in full, 1 short by `shortQty`. Recorded only: no funds move.
+    event DeliveryRecorded(uint256 indexed id, uint8 verdict, uint8 shortQty, uint8 reason);
     event DeliveryHeld(uint256 indexed id, uint8 reason);
     event Refunded(uint256 indexed id, uint256 amount);
     event SelfCollected(uint256 indexed id, uint8 qty);
 
     error NotAuthorized(); error BadStatus(); error CircuitFailed(); error Rejected(uint8 reason); error OrderTooLarge(); error NoPayout();
-    error UntrustedHandler(); error SelfPickupHasNoFee();
+    error UntrustedHandler();
 
     modifier only(address who) { if (msg.sender != who) revert NotAuthorized(); _; }
 
@@ -139,15 +142,15 @@ contract StockRunVault {
     function trustedHandler(address h) public view returns (bool) { return h == owner || carrier[h]; }
 
     // ================================================================ 1. order → RestockGuard
+    /// @notice Locks goods money only. A delivery fee, if any, is paid by the buyer to the logistics company directly.
     function proposeOrder(
-        bytes32 supplierId, uint8 ordered, uint256 unitPrice, uint8 cat, uint8 dist, address rider, uint256 riderFee
+        bytes32 supplierId, uint8 ordered, uint256 unitPrice, uint8 cat, uint8 dist, address rider
     ) external only(agent) returns (uint256 id) {
         if (!trustedHandler(rider)) revert UntrustedHandler();
-        if (rider == owner && riderFee != 0) revert SelfPickupHasNoFee();
         id = orders.length;
         Order storage o = orders.push();
         o.supplierId = supplierId; o.payout = supplierPayout[supplierId]; o.ordered = ordered; o.unitPrice = unitPrice;
-        o.cat = cat; o.dist = dist; o.rider = rider; o.riderFee = riderFee; o.createdAt = uint64(block.timestamp);
+        o.cat = cat; o.dist = dist; o.rider = rider; o.createdAt = uint64(block.timestamp);
         _guard(id, false);
     }
 
@@ -159,7 +162,7 @@ contract StockRunVault {
     function _guard(uint256 id, bool ownerOk) internal {
         _rollWeek();
         Order storage o = orders[id];
-        uint256 amount = _orderValue(o) + o.riderFee;
+        uint256 amount = _orderValue(o);      // goods only: the delivery fee is not StockRun's to hold
         uint256 remaining = weeklyBudget > spentThisWeek ? weeklyBudget - spentThisWeek : 0;
 
         // Rounding never favours spending: the order total rounds UP, budget and limit round DOWN.
@@ -222,7 +225,7 @@ contract StockRunVault {
         if (unused > 0) spentThisWeek -= unused;
         require(token.transfer(o.payout, pay));
         emit SupplierPaid(id, o.payout, qty, pay, reason);
-        // Self-pickup: the owner has the goods in hand, so there is no delivery step and no fee.
+        // Self-pickup: the owner has the goods in hand, so there is no delivery step.
         if (o.rider == owner) { o.status = Status.Delivered; emit SelfCollected(id, qty); }
     }
 
@@ -258,25 +261,21 @@ contract StockRunVault {
         uint8 decision = uint8(out[0]); uint8 shortQty = uint8(out[1]); uint8 reason = uint8(out[2]);
 
         if (decision == 0) { emit DeliveryHeld(id, reason); return; }        // WAIT / HOLD
-        o.status = Status.Delivered;
-        locked -= o.riderFee;
-        if (decision == 2) {                                                 // PAY_RIDER
-            require(token.transfer(o.rider, o.riderFee));
-            emit RiderPaid(id, o.rider, o.riderFee);
-        } else if (decision == 1) {                                          // SHORT: delivery fee withheld
-            // No bonds: the fee stays in the vault for the owner, and the shortfall is claimed off-chain from
-            // the logistics company (insurance or dispute). Circuit #3's COMPENSATE decision lands here.
-            if (shortQty == 0 || shortQty > o.picked) revert CircuitFailed();
-            spentThisWeek = spentThisWeek > o.riderFee ? spentThisWeek - o.riderFee : 0;
-            emit DeliveryShort(id, shortQty, o.riderFee);
-        } else revert CircuitFailed();
+        // Record the verdict only. The supplier was paid at pickup and the buyer pays the logistics company
+        // directly, so nothing here touches the vault's funds. A short delivery (decision 1, circuit #3's
+        // COMPENSATE) is the buyer's evidence for a claim against the logistics company, made off-chain.
+        if (decision == 1) { if (shortQty == 0 || shortQty > o.picked) revert CircuitFailed(); }
+        else if (decision == 2) { shortQty = 0; }
+        else revert CircuitFailed();
+        o.status = Status.Delivered; o.deliveryVerdict = decision; o.shortQty = shortQty;
+        emit DeliveryRecorded(id, decision, shortQty, reason);
     }
 
     /// @notice Refund an order whose pickup never happened.
     function refundStale(uint256 id) external {
         Order storage o = orders[id];
         if (o.status != Status.Locked || block.timestamp < o.createdAt + PICKUP_TIMEOUT) revert BadStatus();
-        uint256 amount = _orderValue(o) + o.riderFee;
+        uint256 amount = _orderValue(o);
         o.status = Status.Refunded; locked -= amount;
         spentThisWeek = spentThisWeek > amount ? spentThisWeek - amount : 0;
         emit Refunded(id, amount);

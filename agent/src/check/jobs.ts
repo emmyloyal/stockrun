@@ -16,6 +16,8 @@ export interface Job {
   createdAt: number;
   /** Set when a logistics company delivers (absent for self-pickup and the simulated company). */
   logistics?: JobDelivery;
+  /** The delivery fee the logistics company quoted. The buyer pays it to them directly: StockRun never holds it. */
+  courierFeeNaira?: number;
 }
 
 /** Booking with a logistics company. Off-chain only: the vault holds the fee and decides who is paid. */

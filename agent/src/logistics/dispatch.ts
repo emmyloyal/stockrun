@@ -53,26 +53,28 @@ export class Dispatcher {
       if (!j.logistics || j.logistics.bookingId || j.logistics.error?.startsWith('Booking refused')) continue;
       const o = await s.backend.order(j.orderId).catch(() => null);
       if (!o || o.status !== STATUS.Locked) continue;
-      await this.book(s, j, o.feeNaira).catch((e) => {
+      await this.book(s, j).catch((e) => {
         s.jobs.updateDelivery(j.orderId, { error: `Booking failed: ${(e as Error).message}` });
         this.log(`order ${j.orderId}: booking failed: ${(e as Error).message}`);
       });
     }
   }
 
-  /** Book at no more than the fee locked for delivery. An expired quote is refreshed; a dearer one is refused. */
-  private async book(s: DispatchShop, j: Job, lockedFeeNaira: number) {
+  /** Book at no more than the fee the buyer was quoted (they pay the company directly; StockRun never holds it).
+   *  An expired quote is refreshed; a dearer one is refused. */
+  private async book(s: DispatchShop, j: Job) {
     const d = j.logistics!, e = this.entry(d);
     if (!e?.connector) return;
+    const quotedNaira = j.courierFeeNaira ?? d.quote.priceNaira;
     let quote = d.quote;
     if (!quote.expiresAt || quote.expiresAt < Date.now() + 60_000) {
       quote = await e.connector.quote(d.job);
-      if (quote.priceNaira > lockedFeeNaira) {
-        s.jobs.updateDelivery(j.orderId, { quote, error: `Booking refused: ${d.carrierName} now asks ₦${quote.priceNaira.toLocaleString('en-NG')}, more than the ₦${lockedFeeNaira.toLocaleString('en-NG')} locked for delivery. Nothing was booked; the order is refunded 48 h after it was placed, and you can order again (or collect it yourself).` });
+      if (quote.priceNaira > quotedNaira) {
+        s.jobs.updateDelivery(j.orderId, { quote, error: `Booking refused: ${d.carrierName} now asks ₦${quote.priceNaira.toLocaleString('en-NG')}, more than the ₦${quotedNaira.toLocaleString('en-NG')} you were quoted. Nothing was booked; the order is refunded 48 h after it was placed, and you can order again (or collect it yourself).` });
         return;
       }
     }
-    quote = { ...quote, priceNaira: Math.min(quote.priceNaira, lockedFeeNaira) };
+    quote = { ...quote, priceNaira: Math.min(quote.priceNaira, quotedNaira) };
     const b = await e.connector.book(d.job, quote);
     const trackingUrl = await e.connector.trackingLink(b.bookingId).catch(() => null);
     s.jobs.updateDelivery(j.orderId, { quote, bookingId: b.bookingId, state: b.state, handoverCode: b.handoverCode, trackingUrl, error: undefined });

@@ -17,11 +17,11 @@ export function StatusPill({ o }: { o: Order }) {
 
 /** A circuit's decision in plain words. */
 export function Outcome({ r }: { r: CheckResult }) {
-  const tone = r.outcome === 'paid' || r.outcome === 'rider_paid' ? 'ok' : r.status === 'error' ? 'no' : 'ask';
+  const tone = r.outcome === 'paid' || r.outcome === 'delivered' ? 'ok' : r.status === 'error' ? 'no' : 'ask';
   const title = r.outcome === 'paid' ? `PickupCheck: seller's payment approved for all ${r.qty}`
     : r.outcome === 'paid_part' ? `PickupCheck: seller's payment approved for ${r.qty}; the rest of your money came back`
-    : r.outcome === 'short' ? `DeliveryCheck: ${r.qty} short, delivery fee given back to you`
-    : r.outcome === 'rider_paid' ? "DeliveryCheck: logistics company's fee approved"
+    : r.outcome === 'short' ? `DeliveryCheck: recorded ${r.qty} short`
+    : r.outcome === 'delivered' ? 'DeliveryCheck: recorded as delivered in full'
     : r.status === 'error' ? 'Not done' : 'The circuit says: hold';
   return (
     <div className={`outcome ${tone}`} role="status">

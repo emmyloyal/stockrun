@@ -1,8 +1,9 @@
 // Orders paid in naira from StockRun's ledger. The same rules as StockRunVault.sol, step for step, with the ledger
 // in place of the vault's token balance:
-//   propose -> RestockGuard (#1) decides: lock goods + delivery fee, ask the buyer, or reject (nothing stored)
+//   propose -> RestockGuard (#1) decides: lock the goods (+ StockRun's fee), ask the buyer, or reject (nothing stored)
 //   pickup  -> PickupCheck (#2) decides how much the seller is paid; the rest goes back to the buyer
-//   delivery-> DeliveryCheck (#3) decides: pay the logistics fee, hold it back for the buyer (goods short), or wait
+//   delivery-> DeliveryCheck (#3) records delivered in full, short, or wait. No money moves: the buyer pays the
+//              delivery fee to the logistics company directly, outside StockRun.
 // Every decision is the circuit's: inputs are built here from stored order state (never from the caller), packed
 // exactly as the vault packs them (circuits/reference/pack.ts), and sent to the circuit's `eval` on X Layer. The
 // call, its block, input and output are kept on the order so anyone can re-run it. If the call fails, the order holds.
@@ -53,7 +54,7 @@ export type NairaOrder = Row;
 export type SettleOutcome =
   | { kind: 'held'; reason: number }
   | { kind: 'paid'; qty: number; reason: number }                     // pickup: seller paid for qty
-  | { kind: 'logistics_paid' } | { kind: 'short'; shortQty: number };   // delivery
+  | { kind: 'delivered' } | { kind: 'short'; shortQty: number };        // delivery: recorded only
 
 export class NairaOrders {
   private db: DatabaseSync; private ledger: Ledger; private evalCircuit: EvalCircuit;
@@ -98,10 +99,9 @@ export class NairaOrders {
   /** Agent proposes (the AI never moves money). `budgetKobo` is the buyer's budget for this request. */
   async propose(userId: number, a: ProposeArgs, budgetKobo: number): Promise<ProposeResult> {
     if (!this.trusted(a.rider)) return { status: 'rejected', reason: 1 };
-    if (isSelf(a.rider) && a.riderFee !== 0n) return { status: 'rejected', reason: 1 };
     const fee = this.feeFor(a.ordered * Number(a.unitPrice));
     const id = Number(this.db.prepare(`INSERT INTO naira_orders (user_id, supplier_key, rider, ordered, cat, dist, unit_price, rider_fee, service_fee, budget, status, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(userId, a.supplierKey, getAddress(a.rider), a.ordered, a.cat, a.dist, Number(a.unitPrice), Number(a.riderFee), fee, budgetKobo, STATUS.None, this.now()).lastInsertRowid);
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(userId, a.supplierKey, getAddress(a.rider), a.ordered, a.cat, a.dist, Number(a.unitPrice), 0, fee, budgetKobo, STATUS.None, this.now()).lastInsertRowid);
     const r = await this.guard(id, false).catch(() => ({ status: 'circuit_failed' as const }));
     if (r.status !== 'locked' && r.status !== 'ask_owner') this.db.prepare('DELETE FROM naira_orders WHERE id = ?').run(id);   // REJECT: nothing stored
     return r;
@@ -116,7 +116,9 @@ export class NairaOrders {
 
   private async guard(id: number, ownerOk: boolean): Promise<ProposeResult> {
     const o = this.get(id)!;
-    const amount = this.value(o) + o.rider_fee + o.service_fee;      // RestockGuard checks the whole amount, fee included
+    // RestockGuard checks what StockRun locks: the goods and StockRun's fee. The delivery fee is not included: the
+    // buyer pays it to the logistics company directly. (`rider_fee` is 0 for every order since that change.)
+    const amount = this.value(o) + o.rider_fee + o.service_fee;
     const remaining = Math.min(o.budget, this.ledger.balance(o.user_id).availableKobo);
     const totalUnits = this.units(amount, true);
     if (totalUnits > 255) return { status: 'too_large' };
@@ -196,18 +198,13 @@ export class NairaOrders {
     const input = packDelivery({ atShop: !!o.at_shop, picked: o.picked, delivered: o.delivered, damage: !!o.delivery_damage, ownerOk: !!o.owner_ok, ownerIssue: !!o.owner_issue, timeout });
     const [decision, shortQty, reason] = await this.decide(o, 'delivery', input, DELIVERY_OUT);
     if (decision === 0) return { kind: 'held', reason };
-    if (decision === 2) {
-      if (o.rider_fee > 0) this.ledger.payLogistics(o.user_id, `order:${id}`, o.rider_fee);
-      this.set(id, { status: STATUS.Delivered });
-      return { kind: 'logistics_paid' };
-    }
-    if (decision === 1) {
-      if (shortQty === 0 || shortQty > o.picked) throw new Error('The circuit returned an impossible quantity; the order holds.');
-      if (o.rider_fee > 0) this.ledger.release(o.user_id, `order:${id}:fee-withheld`, o.rider_fee);
-      this.set(id, { status: STATUS.Delivered });
-      return { kind: 'short', shortQty };
-    }
-    throw new Error('Unknown circuit decision; the order holds.');
+    if (decision === 1 && (shortQty === 0 || shortQty > o.picked)) throw new Error('The circuit returned an impossible quantity; the order holds.');
+    if (decision !== 1 && decision !== 2) throw new Error('Unknown circuit decision; the order holds.');
+    // Record the verdict only. The seller was paid at pickup and the delivery fee is paid outside StockRun, so no
+    // ledger entry is made. (An order placed before that change may still hold a delivery fee: it goes back to the buyer.)
+    if (o.rider_fee > 0) this.ledger.release(o.user_id, `order:${id}:legacy-delivery-fee`, o.rider_fee);
+    this.set(id, { status: STATUS.Delivered });
+    return decision === 2 ? { kind: 'delivered' } : { kind: 'short', shortQty };
   }
 
   /** An order whose pickup never happened: everything goes back to the buyer after 48 h. */

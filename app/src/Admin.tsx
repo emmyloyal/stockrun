@@ -63,7 +63,7 @@ export function Admin() {
             {orders.map((o) => (
               <li key={o.orderId} className="card stack tight">
                 <span className="row between"><strong>#{o.orderId} · {o.seller}</strong><span className="pill">{o.status}</span></span>
-                <span className="fine">{o.ordered} × {naira(o.unitPriceNaira)} = {naira(o.totalNaira)}{o.serviceFeeNaira ? ` + ${naira(o.serviceFeeNaira)} fee` : ''}{o.self ? ' · buyer collects' : ` + ${naira(o.deliveryFeeNaira)} delivery`}{o.picked ? ` · ${o.picked} picked up` : ''} · {when(o.createdAt)}</span>
+                <span className="fine">{o.ordered} × {naira(o.unitPriceNaira)} = {naira(o.totalNaira)}{o.serviceFeeNaira ? ` + ${naira(o.serviceFeeNaira)} fee` : ''}{o.self ? ' · buyer collects' : ' · delivery paid to the courier directly'}{o.picked ? ` · ${o.picked} picked up` : ''} · {when(o.createdAt)}</span>
                 <span className="fine">Buyer {o.buyer}{o.sellerPhone ? <> · seller WhatsApp <a href={whatsappLink(o.sellerPhone, '')} target="_blank" rel="noreferrer">{o.sellerPhone}</a></> : ''}</span>
                 <span className="fine">Circuits that decided: {o.circuits.join(' → ') || 'none yet'}</span>
               </li>

@@ -45,10 +45,10 @@ export function createApi(d: ApiDeps): Server {
     const naira = (x: bigint) => d.money.toNaira(x);
     return {
       ...job,
-      status: STATUS_NAME[o[8]] ?? 'Unknown',
-      ordered: o[3], unitPriceNaira: naira(o[6]), riderFeeNaira: naira(o[7]),
-      pickup: { atSupplier: o[10], riderCounted: o[11], riderCount: o[12], aiCounted: o[13], aiCount: o[14], damage: o[15], picked: o[16] },
-      delivery: { atShop: o[17], arrivedAt: Number(o[18]), aiCounted: o[19], delivered: o[20], damage: o[21], ownerOk: o[22], ownerIssue: o[23] },
+      status: STATUS_NAME[o[7]] ?? 'Unknown',
+      ordered: o[3], unitPriceNaira: naira(o[6]), courierFeeNaira: job.courierFeeNaira ?? null,
+      pickup: { atSupplier: o[9], riderCounted: o[10], riderCount: o[11], aiCounted: o[12], aiCount: o[13], damage: o[14], picked: o[15] },
+      delivery: { atShop: o[16], arrivedAt: Number(o[17]), aiCounted: o[18], delivered: o[19], damage: o[20], ownerOk: o[21], ownerIssue: o[22], verdict: o[23], shortQty: o[24] },
       lastCheck: lastCheck.get(job.orderId) ?? null,
     };
   }

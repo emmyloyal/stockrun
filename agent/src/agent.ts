@@ -89,13 +89,12 @@ export async function handleOrder(text: string, d: AgentDeps, opts: { delivery?:
     const result = await d.vault.propose({
       supplierKey: supplierKey(cand.supplier.id), ordered: line.quantity, unitPrice,
       cat: CATEGORIES[line.category], dist: cand.dist, rider: booked.rider.address,
-      riderFee: d.money.toToken(booked.feeNaira),
     });
     if ((result.status === 'locked' || result.status === 'ask_owner') && d.jobs) d.jobs.add({
       orderId: String(result.orderId), item: line.item, unit: line.unit, quantity: line.quantity, rider: booked.rider.address,
       supplier: { name: `${cand.supplier.name}, ${cand.supplier.market}`, lat: cand.supplier.lat, lng: cand.supplier.lng },
       shop: { name: d.shop.name, lat: d.shop.lat, lng: d.shop.lng }, createdAt: Date.now(),
-      ...(booked.delivery ? { logistics: booked.delivery } : {}),
+      ...(booked.delivery ? { logistics: booked.delivery } : {}), ...(booked.feeNaira ? { courierFeeNaira: booked.feeNaira } : {}),
     });
     outcomes.push({ line, kind: 'proposed', deal, rider: booked.rider, riderFeeNaira: booked.feeNaira, result });
   }
@@ -120,7 +119,7 @@ export function ownerMessage(outcomes: LineOutcome[], problems: string[]): strin
       const self = o.rider.id === 'self';
       const head = self
         ? `${what} from ${o.deal.supplier.name} at ${ngn(o.deal.unitPriceNaira)} each (${ngn(total)}; you collect it yourself, no delivery fee)`
-        : `${what} from ${o.deal.supplier.name} at ${ngn(o.deal.unitPriceNaira)} each (${ngn(total)} + ${ngn(o.riderFeeNaira)} delivery by ${o.rider.name})`;
+        : `${what} from ${o.deal.supplier.name} at ${ngn(o.deal.unitPriceNaira)} each (${ngn(total)}; delivery by ${o.rider.name}, ${ngn(o.riderFeeNaira)} paid to them directly)`;
       const r = o.result;
       if (r.status === 'locked') out.push(`✓ ${head}. RestockGuard approved; funds locked in escrow. Order #${r.orderId}, tx ${r.txHash}. ${self ? ' At the supplier, count the goods and confirm in the app: the supplier is paid for what you confirm.' : ' The supplier is paid only after the logistics company has checked the goods at pickup.'}`);
       else if (r.status === 'ask_owner') out.push(`? ${head}. Needs your OK because ${RESTOCK_REASONS[r.reason] ?? `reason ${r.reason}`}. Reply YES ${r.orderId} to approve. (tx ${r.txHash})`);

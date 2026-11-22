@@ -111,15 +111,17 @@ try {
   if (pick.status !== 'settled' || pick.outcome !== 'paid') throw new Error('pickup did not pay');
   console.log(`supplier payout received ${(await usdt(p.supplierPayout) - payoutBefore).toFixed(6)} USDT0`);
 
-  // 6. Delivery: rider arrives, photo shows 5, owner confirms -> DeliveryCheck (#3) pays the rider.
+  // 6. Delivery: rider arrives, photo shows 5, owner confirms -> DeliveryCheck (#3) records it. No money moves:
+  //    the buyer pays the delivery fee to the logistics company directly.
   await send(rw.writeContract({ address: vault, abi: vaultAbi, functionName: 'riderArrive', args: [id, true] }));
   await send(ow.writeContract({ address: vault, abi: vaultAbi, functionName: 'ownerConfirm', args: [id, true, false] }));
   const riderBefore = await usdt(rider.address);
   counter.queue.push(seen(5));
   const del = await check.delivery(id, PHOTO);
   console.log(`delivery: ${JSON.stringify(del, (_k, v) => typeof v === 'bigint' ? v.toString() : v)}`);
-  if (del.status !== 'settled' || del.outcome !== 'rider_paid') throw new Error('delivery did not pay the rider');
-  console.log(`rider fee received ${(await usdt(rider.address) - riderBefore).toFixed(6)} USDT0`);
+  if (del.status !== 'settled' || del.outcome !== 'delivered') throw new Error('delivery was not recorded');
+  if (await usdt(rider.address) !== riderBefore) throw new Error('delivery settlement moved funds');
+  console.log('delivery recorded; the vault paid nobody');
 
   // Gas used per wallet, priced at the most our fee rule lets mainnet charge (base 0.02 gwei x 1.25 + tip). The fork's
   // own base fee drifts down over empty blocks, so its OKB balances would understate the real cost.

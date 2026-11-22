@@ -122,10 +122,6 @@ export class Ledger {
   payFee(userId: number, key: string, kobo: number): boolean {
     return this.post(`fee:${key}`, 'service_fee', userId, kobo, [`user:${userId}`, 'held'], ['system', 'fees'], key);
   }
-  /** Locked money now owed to the logistics company (a circuit decided). */
-  payLogistics(userId: number, key: string, kobo: number): boolean {
-    return this.post(`logistics:${key}`, 'pay_logistics', userId, kobo, [`user:${userId}`, 'held'], ['system', 'logistics'], key);
-  }
 
   /** A person's own history, newest first (what they see in the app). */
   history(userId: number, limit = 50): Movement[] {

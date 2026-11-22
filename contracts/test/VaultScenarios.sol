@@ -35,7 +35,7 @@ abstract contract VaultScenarios is Test {
     }
 
     function _propose(uint8 qty, uint256 price) internal returns (uint256) {
-        vm.prank(agent); return vault.proposeOrder(SUP, qty, price, 0, 0, rider, UNIT);
+        vm.prank(agent); return vault.proposeOrder(SUP, qty, price, 0, 0, rider);
     }
 
     function _pickedUp(uint8 qty, uint8 riderCount, uint8 aiCount) internal returns (uint256 id) {
@@ -46,7 +46,25 @@ abstract contract VaultScenarios is Test {
     }
 
     function _status(uint256 id) internal view returns (StockRunVault.Status s) {
-        (, , , , , , , , s, , , , , , , , , , , , , , , ) = vault.orders(id);
+        (, , , , , , , s, , , , , , , , , , , , , , , , , ) = vault.orders(id);
+    }
+
+    function _verdict(uint256 id) internal view returns (uint8 v, uint8 short_) {
+        (, , , , , , , , , , , , , , , , , , , , , , , v, short_) = vault.orders(id);
+    }
+
+    /// Every token balance the vault could touch, plus its own accounting.
+    function _balances() internal view returns (uint256[6] memory b) {
+        b = [token.balanceOf(address(vault)), token.balanceOf(owner), token.balanceOf(rider),
+             token.balanceOf(payout), vault.locked(), vault.spentThisWeek()];
+    }
+
+    /// Picked up by the logistics company, at the shop, counted: ready for settleDelivery.
+    function _atShop(uint8 qty, uint8 deliveredCount, bool ownerOk) internal returns (uint256 id) {
+        id = _pickedUp(qty, qty, qty);
+        vm.prank(rider); vault.riderArrive(id, true);
+        vm.prank(checker); vault.attestDelivery(id, deliveredCount, false);
+        if (ownerOk) { vm.prank(owner); vault.ownerConfirm(id, true, false); }
     }
 
     function _free() internal view returns (uint256) {
@@ -56,7 +74,7 @@ abstract contract VaultScenarios is Test {
     // ================================================================ happy paths
 
     function test_happyPath_partialPickup_thenDelivery() public {
-        uint256 id = _propose(20, UNIT); // 20 units at ₦5,000 = 20 money units + 1 rider fee
+        uint256 id = _propose(20, UNIT); // 20 units at ₦5,000 = 20 money units, goods only
         vm.prank(rider); vault.riderPickup(id, true, 18);
         vm.prank(checker); vault.attestPickup(id, 19, false);
         vault.settlePickup(id);
@@ -64,11 +82,48 @@ abstract contract VaultScenarios is Test {
         vm.prank(rider); vault.riderArrive(id, true);
         vm.prank(checker); vault.attestDelivery(id, 18, false);
         vm.prank(owner); vault.ownerConfirm(id, true, false);
-        uint256 before = token.balanceOf(rider);
+        vm.expectEmit(true, false, false, true); emit StockRunVault.DeliveryRecorded(id, 2, 0, 0);
         vault.settleDelivery(id);
-        assertEq(token.balanceOf(rider) - before, UNIT, "rider fee paid");
+        assertEq(token.balanceOf(rider), 0, "the vault never pays the logistics company");
         assertEq(vault.locked(), 0);
         assertEq(uint8(_status(id)), uint8(StockRunVault.Status.Delivered));
+        (uint8 v, uint8 short_) = _verdict(id);
+        assertEq(v, 2, "delivered in full"); assertEq(short_, 0);
+    }
+
+    function test_ordersLockGoodsMoneyOnly() public {
+        vm.prank(agent); uint256 id = vault.proposeOrder(SUP, 10, UNIT, 0, 0, rider);
+        assertEq(vault.locked(), 10 * UNIT, "goods only, no delivery fee");
+        assertEq(vault.spentThisWeek(), 10 * UNIT);
+        assertEq(uint8(_status(id)), uint8(StockRunVault.Status.Locked));
+    }
+
+    /// RestockGuard's total is the goods alone: an order exactly at the auto-approve limit (40 units) locks
+    /// without asking, which it could not if a delivery fee were added on top.
+    function test_restockGuardTotalExcludesDeliveryFee() public {
+        uint256 id = _propose(40, UNIT);
+        assertEq(uint8(_status(id)), uint8(StockRunVault.Status.Locked));
+        assertEq(vault.locked(), 40 * UNIT);
+    }
+
+    /// The delivery fee is paid outside StockRun, so settling a delivery must never move funds: no token
+    /// transfer at all, and every balance and the vault's accounting are unchanged, for every verdict.
+    function test_deliverySettlement_neverTransfersFunds() public {
+        uint256 full = _atShop(10, 10, true);       // delivered in full
+        uint256 short_ = _atShop(10, 7, false);     // 3 short
+        uint256 held = _atShop(10, 10, false);      // owner silent: WAIT
+        uint256[6] memory before = _balances();
+        vm.expectCall(address(token), abi.encodeWithSelector(MockToken.transfer.selector), 0);
+        vm.expectCall(address(token), abi.encodeWithSelector(MockToken.transferFrom.selector), 0);
+        vault.settleDelivery(full);
+        vault.settleDelivery(short_);
+        vault.settleDelivery(held);
+        vm.warp(block.timestamp + 24 hours);
+        vault.settleDelivery(held);                 // owner timeout: recorded in full
+        uint256[6] memory afterB = _balances();
+        for (uint256 i; i < 6; i++) assertEq(afterB[i], before[i], "delivery settlement moved funds");
+        (uint8 v1,) = _verdict(full); (uint8 v2, uint8 q2) = _verdict(short_); (uint8 v3,) = _verdict(held);
+        assertEq(v1, 2); assertEq(v2, 1); assertEq(q2, 3); assertEq(v3, 2);
     }
 
     function test_fullPickup_whenCountsMatch() public {
@@ -76,22 +131,21 @@ abstract contract VaultScenarios is Test {
         assertEq(token.balanceOf(payout), 10 * UNIT);
     }
 
-    function test_shortDelivery_withholdsFeeForOwner() public {
-        uint256 id = _pickedUp(10, 10, 10);
-        vm.prank(rider); vault.riderArrive(id, true);
-        vm.prank(checker); vault.attestDelivery(id, 7, false);
+    function test_shortDelivery_recordsVerdictForTheBuyersClaim() public {
+        uint256 id = _atShop(10, 7, false);
         uint256 freeBefore = _free();
-        vm.expectEmit(true, false, false, true); emit StockRunVault.DeliveryShort(id, 3, UNIT);
+        vm.expectEmit(true, false, false, true); emit StockRunVault.DeliveryRecorded(id, 1, 3, 4);
         vault.settleDelivery(id);
-        assertEq(token.balanceOf(rider), 0, "logistics fee withheld");
-        assertEq(_free() - freeBefore, UNIT, "the fee is the owner's again");
-        assertEq(vault.locked(), 0);
+        (uint8 v, uint8 short_) = _verdict(id);
+        assertEq(v, 1, "short"); assertEq(short_, 3, "3 missing");
+        assertEq(_free(), freeBefore, "no money moves: the claim is against the logistics company");
+        assertEq(uint8(_status(id)), uint8(StockRunVault.Status.Delivered));
     }
 
     // ================================================================ handlers: self-pickup and logistics companies
 
     function test_selfPickup_ownerCountPaysSupplier_noDeliveryStep() public {
-        vm.prank(agent); uint256 id = vault.proposeOrder(SUP, 10, UNIT, 0, 0, owner, 0);
+        vm.prank(agent); uint256 id = vault.proposeOrder(SUP, 10, UNIT, 0, 0, owner);
         vm.prank(owner); vault.riderPickup(id, true, 9);         // owner at the supplier: 9 good cartons
         vault.settlePickup(id);                                   // no photo needed: the owner's count stands
         assertEq(token.balanceOf(payout), 9 * UNIT, "supplier paid for what the owner took");
@@ -99,14 +153,9 @@ abstract contract VaultScenarios is Test {
         assertEq(vault.locked(), 0, "the 10th carton's money is free again");
     }
 
-    function test_selfPickup_cannotCarryAFee() public {
-        vm.prank(agent); vm.expectRevert(StockRunVault.SelfPickupHasNoFee.selector);
-        vault.proposeOrder(SUP, 10, UNIT, 0, 0, owner, UNIT);
-    }
-
     function test_strangerCannotBeTheHandler() public {
         vm.prank(agent); vm.expectRevert(StockRunVault.UntrustedHandler.selector);
-        vault.proposeOrder(SUP, 10, UNIT, 0, 0, stranger, UNIT);
+        vault.proposeOrder(SUP, 10, UNIT, 0, 0, stranger);
     }
 
     function test_logisticsCompany_countWithoutPhoto_paysSupplier() public {
@@ -126,9 +175,9 @@ abstract contract VaultScenarios is Test {
         address other = makeAddr("otherCompany");
         vm.prank(owner); vault.queueCarrier(other, true);
         vm.prank(agent); vm.expectRevert(StockRunVault.UntrustedHandler.selector);
-        vault.proposeOrder(SUP, 5, UNIT, 0, 0, other, UNIT);
+        vault.proposeOrder(SUP, 5, UNIT, 0, 0, other);
         vm.warp(block.timestamp + 1 days); vault.applyCarrier(other);
-        vm.prank(agent); uint256 id = vault.proposeOrder(SUP, 5, UNIT, 0, 0, other, UNIT);
+        vm.prank(agent); uint256 id = vault.proposeOrder(SUP, 5, UNIT, 0, 0, other);
         vm.prank(other); vault.riderPickup(id, true, 5);
         vm.prank(owner); vault.queueCarrier(other, false);     // owner drops the company: immediate
         vm.expectEmit(true, false, false, true); emit StockRunVault.PickupHeld(id, 2);
@@ -141,32 +190,32 @@ abstract contract VaultScenarios is Test {
         vm.prank(owner); vm.expectRevert(StockRunVault.UntrustedHandler.selector); vault.queueCarrier(owner, true);
     }
 
-    function test_ownerSilent_paysRiderAfterTimeout() public {
-        uint256 id = _pickedUp(10, 10, 10);
-        vm.prank(rider); vault.riderArrive(id, true);
-        vm.prank(checker); vault.attestDelivery(id, 10, false);
+    function test_ownerSilent_recordsDeliveredAfterTimeout() public {
+        uint256 id = _atShop(10, 10, false);
         vm.expectEmit(true, false, false, true); emit StockRunVault.DeliveryHeld(id, 5);
         vault.settleDelivery(id); // owner has not answered yet: WAIT
+        assertEq(uint8(_status(id)), uint8(StockRunVault.Status.PickedUp));
         vm.warp(block.timestamp + 24 hours);
-        uint256 before = token.balanceOf(rider);
         vault.settleDelivery(id);
-        assertEq(token.balanceOf(rider) - before, UNIT, "auto-release after 24h");
+        (uint8 v,) = _verdict(id);
+        assertEq(v, 2, "recorded as delivered after 24h");
+        assertEq(token.balanceOf(rider), 0);
     }
 
     // ================================================================ RestockGuard rules
 
     function test_agentCannotOverspend() public {
         vm.prank(agent); vm.expectRevert(abi.encodeWithSelector(StockRunVault.Rejected.selector, uint8(2)));
-        vault.proposeOrder(SUP, 200, UNIT, 0, 0, rider, UNIT); // 201 units > budget 100
+        vault.proposeOrder(SUP, 200, UNIT, 0, 0, rider); // 200 units > budget 100
     }
 
     function test_unknownSupplierRejected() public {
         vm.prank(agent); vm.expectRevert(abi.encodeWithSelector(StockRunVault.Rejected.selector, uint8(1)));
-        vault.proposeOrder(keccak256("stranger"), 5, UNIT, 0, 0, rider, UNIT);
+        vault.proposeOrder(keccak256("stranger"), 5, UNIT, 0, 0, rider);
     }
 
     function test_aboveLimitNeedsOwner() public {
-        uint256 id = _propose(50, UNIT); // 51 units > limit 40, within budget
+        uint256 id = _propose(50, UNIT); // 50 units > limit 40, within budget
         assertEq(uint8(_status(id)), uint8(StockRunVault.Status.AwaitingOwner));
         vm.prank(owner); vault.approveOrder(id);
         assertEq(uint8(_status(id)), uint8(StockRunVault.Status.Locked));
@@ -174,8 +223,8 @@ abstract contract VaultScenarios is Test {
 
     function test_ownerCategoryAndDistanceNeedOwner() public {
         vm.startPrank(agent);
-        uint256 a = vault.proposeOrder(SUP, 5, UNIT, 6, 0, rider, UNIT); // cat 6
-        uint256 b = vault.proposeOrder(SUP, 5, UNIT, 0, 3, rider, UNIT); // > 10 km
+        uint256 a = vault.proposeOrder(SUP, 5, UNIT, 6, 0, rider); // cat 6
+        uint256 b = vault.proposeOrder(SUP, 5, UNIT, 0, 3, rider); // > 10 km
         vm.stopPrank();
         assertEq(uint8(_status(a)), uint8(StockRunVault.Status.AwaitingOwner));
         assertEq(uint8(_status(b)), uint8(StockRunVault.Status.AwaitingOwner));
@@ -237,13 +286,13 @@ abstract contract VaultScenarios is Test {
         vm.prank(owner); vault.setWeeklyBudget(1_000 * UNIT);
         // 300 units would be capped to 255 vs a capped budget; the vault must refuse instead.
         vm.prank(agent); vm.expectRevert(StockRunVault.OrderTooLarge.selector);
-        vault.proposeOrder(SUP, 255, 2 * UNIT, 0, 0, rider, UNIT);
+        vault.proposeOrder(SUP, 255, 2 * UNIT, 0, 0, rider);
     }
 
     function test_rule2_roundingNeverOverstatesBudget() public {
         vm.prank(owner); vault.setWeeklyBudget(10 * UNIT + UNIT / 2);   // 10.5 units left
         vm.prank(agent); vm.expectRevert(abi.encodeWithSelector(StockRunVault.Rejected.selector, uint8(2)));
-        vault.proposeOrder(SUP, 10, UNIT, 0, 0, rider, (UNIT * 8) / 10); // 10.8 units: over budget
+        vault.proposeOrder(SUP, 10, (UNIT * 108) / 100, 0, 0, rider); // 10.8 units, rounded up to 11: over budget
     }
 
     function test_rule2_settleNeedsTheHandlersCount() public {
@@ -317,7 +366,7 @@ abstract contract VaultScenarios is Test {
         vm.prank(owner); vault.queueSupplier(SUP, 1, payout);
         vm.warp(block.timestamp + 1 days); vault.applySupplier(SUP);
         vm.prank(agent); vm.expectRevert(StockRunVault.CircuitFailed.selector);
-        vault.proposeOrder(SUP, 5, UNIT, 0, 0, rider, UNIT);
+        vault.proposeOrder(SUP, 5, UNIT, 0, 0, rider);
     }
 
     function test_rule5_brokenPickupCircuit_noPayment() public {

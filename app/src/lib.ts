@@ -34,12 +34,12 @@ export interface Contact {
   buyer: { id: number; label: string };
   seller: { id: string; name: string; phone: string | null; address: string | null; kind: string | null; source: string | null; sourceUrl: string | null };
 }
-export interface AdminOrder { orderId: number; buyerId: number; buyer: string; sellerPhone: string | null; status: string; ordered: number; picked: number; unitPriceNaira: number; totalNaira: number; deliveryFeeNaira: number; serviceFeeNaira?: number; self: boolean; createdAt: number; circuits: string[]; seller: string }
+export interface AdminOrder { orderId: number; buyerId: number; buyer: string; sellerPhone: string | null; status: string; ordered: number; picked: number; unitPriceNaira: number; totalNaira: number; serviceFeeNaira?: number; self: boolean; createdAt: number; circuits: string[]; seller: string }
 export interface Place { lat: number; lng: number; address: string }
 export interface CheckResult {
   status: 'retake' | 'waiting_rider' | 'settled' | 'mismatch' | 'error';
   message: string;
-  outcome?: 'paid' | 'paid_part' | 'held' | 'rider_paid' | 'short';
+  outcome?: 'paid' | 'paid_part' | 'held' | 'delivered' | 'short';
   qty?: number; reason?: number;
 }
 export interface Evidence { circuit: 'restock' | 'pickup' | 'delivery'; circuitId: string; block: string; input: string; output: string; at: number }
@@ -48,7 +48,9 @@ export interface Order {
   supplier: { name: string; lat: number; lng: number }; shop: { name: string; lat: number; lng: number };
   money: 'naira' | 'coins'; self: boolean;
   status: 'None' | 'AwaitingOwner' | 'Locked' | 'PickedUp' | 'Delivered' | 'Refunded';
-  ordered: number; unitPriceNaira: number; riderFeeNaira: number; serviceFeeNaira?: number;
+  ordered: number; unitPriceNaira: number; serviceFeeNaira?: number;
+  /** The logistics company's quoted delivery fee. The buyer pays it to them directly; StockRun never holds it. */
+  courierFeeNaira: number | null;
   pickup: { picked: number; riderCount: number };
   delivery: { delivered: number; aiCounted: boolean; ownerOk: boolean };
   evidence: Evidence[];

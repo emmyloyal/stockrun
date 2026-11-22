@@ -48,14 +48,14 @@ describe.skipIf(!localChainAvailable())('app API', () => {
   }, 60_000);
   afterAll(() => { server?.close(); chain?.stop(); });
 
-  it('runs one order from text to rider paid', async () => {
+  it('runs one order from text to delivery recorded', async () => {
     const placed = await api('/api/orders', { text: '5 cartons of Indomie within 5 km' });
     expect(placed.status).toBe(200);
     expect(placed.json.message).toMatch(/funds locked in escrow\. Order #0/);
 
     const jobs = (await api(`/api/riders/${accounts.rider.address}/jobs`)).json;
     expect(jobs).toHaveLength(1);
-    expect(jobs[0]).toMatchObject({ orderId: '0', status: 'Locked', ordered: 5, unitPriceNaira: 13_300, riderFeeNaira: 2_300, supplier: { name: expect.stringMatching(/Mile 12/) } });
+    expect(jobs[0]).toMatchObject({ orderId: '0', status: 'Locked', ordered: 5, unitPriceNaira: 13_300, courierFeeNaira: 2_300, supplier: { name: expect.stringMatching(/Mile 12/) } });
 
     // Rider counts 5 and signs it; the photo shows 4: the supplier is paid for 4.
     await sign(accounts.rider, 'riderPickup', [0n, true, 5]);
@@ -65,15 +65,17 @@ describe.skipIf(!localChainAvailable())('app API', () => {
     expect(pickup.json).toMatchObject({ status: 'settled', outcome: 'paid_part', qty: 4 });
     expect(await chain.pub.readContract({ address: chain.token, abi: tokenAbi, functionName: 'balanceOf', args: [accounts.payout.address] })).toBe(4n * 13_300n * TOKEN_PER_NAIRA);
 
-    // Delivery: rider arrives, photo shows 4, the circuit waits for the owner; owner confirms; settle pays the rider.
+    // Delivery: rider arrives, photo shows 4, the circuit waits for the owner; owner confirms; settle records it.
+    // The buyer pays the delivery fee to the logistics company directly: the vault pays the rider nothing.
     await sign(accounts.rider, 'riderArrive', [0n, true]);
     counter.queue.push(report(4));
     expect((await api('/api/orders/0/photo', { stage: 'delivery', mediaType: 'image/jpeg', data: JPEG })).json).toMatchObject({ outcome: 'held', reason: 5 });
     await sign(accounts.owner, 'ownerConfirm', [0n, true, false]);
-    expect((await api('/api/orders/0/settle', { stage: 'delivery' })).json).toMatchObject({ outcome: 'rider_paid' });
+    expect((await api('/api/orders/0/settle', { stage: 'delivery' })).json).toMatchObject({ outcome: 'delivered' });
+    expect(await chain.pub.readContract({ address: chain.token, abi: tokenAbi, functionName: 'balanceOf', args: [accounts.rider.address] })).toBe(0n);
 
     const [view] = (await api('/api/orders')).json;
-    expect(view).toMatchObject({ status: 'Delivered', pickup: { picked: 4, riderCount: 5, aiCount: 4 }, delivery: { delivered: 4, ownerOk: true }, lastCheck: { outcome: 'rider_paid' } });
+    expect(view).toMatchObject({ status: 'Delivered', pickup: { picked: 4, riderCount: 5, aiCount: 4 }, delivery: { delivered: 4, ownerOk: true, verdict: 2 }, lastCheck: { outcome: 'delivered' } });
   }, 60_000);
 
   it('serves the map: shop, suppliers with on-chain status, prices from the price book', async () => {

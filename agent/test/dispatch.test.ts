@@ -68,11 +68,11 @@ describe.skipIf(!localChainAvailable())('logistics company booked from a naira r
   }, 60_000);
   afterAll(() => { server?.close(); chain?.stop(); });
 
-  it('books at its quote, pays the seller on its pickup, then pays or holds back its fee on the buyer\'s count', async () => {
+  it('books at its quote, pays the seller on its pickup, then records the delivery on the buyer\'s count; its fee never passes through StockRun', async () => {
     const placed = (await call('/api/requests', { text: '5 cartons of Indomie', budgetNaira: 100_000, place: PLACE, delivery: 'logistics', contactPhone: '0803 777 0001' })).json;
-    expect(placed.message).toMatch(/₦2,500 delivery by Stand-in Logistics.*funds locked in escrow/);
+    expect(placed.message).toMatch(/delivery by Stand-in Logistics, ₦2,500 paid to them directly.*funds locked in escrow/);
     let [o] = (await call('/api/orders')).json;
-    expect(o).toMatchObject({ money: 'naira', self: false, status: 'Locked', riderFeeNaira: 2500, logistics: { carrier: 'standin', state: 'booked', handoverCode: '482913' } });
+    expect(o).toMatchObject({ money: 'naira', self: false, status: 'Locked', courierFeeNaira: 2500, logistics: { carrier: 'standin', state: 'booked', handoverCode: '482913' } });
     expect(standin.booked[0]).toMatchObject({ item: { quantity: 5 }, dropoff: { contactPhone: '+2348037770001', address: PLACE.address } });
     const bookingId = o.logistics.bookingId;
     expect((await call(`/api/orders/${o.orderId}/received`, { count: 5 })).status).toBe(409);       // not picked up yet
@@ -86,18 +86,21 @@ describe.skipIf(!localChainAvailable())('logistics company booked from a naira r
     standin.move(bookingId, 'delivered'); await poll();
     [o] = (await call('/api/orders')).json;
     expect(o.status).toBe('Delivered');
-    expect(ledger.system('logistics')).toBe(250_000);
+    expect(ledger.system('logistics')).toBe(0);                          // the buyer pays the company directly
     expect(o.evidence.map((e: { circuit: string }) => e.circuit)).toEqual(['restock', 'pickup', 'delivery']);
 
-    // Second order arrives short (3 of 5): the fee comes back to the buyer.
+    // Second order arrives short (3 of 5): DeliveryCheck records it; no money moves.
     await call('/api/requests', { text: '5 cartons of Indomie', budgetNaira: 100_000, place: PLACE, delivery: 'logistics', contactPhone: '0803 777 0001' });
     const o2 = (await call('/api/orders')).json.find((x: any) => x.orderId !== o.orderId);
     standin.move(o2.logistics.bookingId, 'picked_up'); await poll();
     const before = (await call('/api/me')).json.naira.availableNaira;
     expect((await call(`/api/orders/${o2.orderId}/received`, { count: 3 })).status).toBe(200);
     standin.move(o2.logistics.bookingId, 'delivered'); await poll();
-    expect(ledger.system('logistics')).toBe(250_000);
-    expect((await call('/api/me')).json.naira.availableNaira - before).toBe(2_500);
+    expect(ledger.system('logistics')).toBe(0);
+    expect((await call('/api/me')).json.naira.availableNaira - before).toBe(0);
+    const after2 = (await call('/api/orders')).json.find((x: any) => x.orderId === o2.orderId);
+    expect(after2.status).toBe('Delivered');
+    expect(after2.evidence.map((e: { circuit: string }) => e.circuit)).toEqual(['restock', 'pickup', 'delivery']);
     expect(ledger.check().ok).toBe(true);
   }, 180_000);
 });

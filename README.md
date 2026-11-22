@@ -22,7 +22,7 @@
 | **Processor contract** | [`0x34efCc0a3191A48Feec787252E6d817b063A4017`](https://www.oklink.com/xlayer/address/0x34efCc0a3191A48Feec787252E6d817b063A4017) |
 | **Circuit ID 1**: RestockGuard (may the money lock?) | tapeout tx [`0xaf6429bf…d2a0feca6fd`](https://www.oklink.com/xlayer/tx/0xaf6429bf2e4a7bc4e435ca493815b8b868d7728389ed904e5eb0dd2a0feca6fd) |
 | **Circuit ID 2**: PickupCheck (how much is the seller paid?) | tapeout tx [`0x24b80f4d…38bacae`](https://www.oklink.com/xlayer/tx/0x24b80f4d29c57371c33357cd9b9ece03038d9016ade3e296620747c5e18bacae) |
-| **Circuit ID 3**: DeliveryCheck (is the logistics fee paid?) | tapeout tx [`0x0249042e…e86d66d2`](https://www.oklink.com/xlayer/tx/0x0249042e8918f77cbe4056880fc10a0d54ab3bdb4599f47fe66fa313e86d66d2) |
+| **Circuit ID 3**: DeliveryCheck (did everything arrive? recorded, no money moves) | tapeout tx [`0x0249042e…e86d66d2`](https://www.oklink.com/xlayer/tx/0x0249042e8918f77cbe4056880fc10a0d54ab3bdb4599f47fe66fa313e86d66d2) |
 | **Transistor token** (NAND) | [`0xe63af1B06D02Bb1B44741C0459d4083ec5b440d4`](https://www.oklink.com/xlayer/address/0xe63af1B06D02Bb1B44741C0459d4083ec5b440d4) |
 
 Details: [TapeOut on X Layer](#tapeout-on-x-layer). Check any order yourself: [Verify a decision](#verify-a-decision).
@@ -89,7 +89,8 @@ small logic circuits that were burned onto X Layer with TapeOut. Nobody can chan
       <p>Sign in with an email code or a crypto wallet, add naira with Paystack, and type what you want in plain words:
       <em>"10 cartons of Indomie noodles"</em>, a budget, and your area. One word like <em>Ketu</em> is enough.</p>
       <p>Choose to collect it yourself (or send someone). Delivery by a logistics company appears here only when one is
-      connected; on the live site you collect.</p>
+      connected; on the live site you collect. If you choose delivery, you pay the delivery fee to the logistics company
+      directly: StockRun never holds it.</p>
     </td>
   </tr>
 </table>
@@ -214,6 +215,20 @@ flowchart LR
   confirmation, never from what a caller sends. If a circuit call fails, the order holds. It never pays by default.
 - **The buyer's approval** can clear an "ask the buyer first" decision, but never a "reject".
 
+### Delivery fees are paid outside StockRun
+
+When a logistics company delivers, the buyer pays its delivery fee to the company directly. StockRun never holds it:
+
+- **An order locks goods money only** (plus StockRun's 1.5% fee). RestockGuard checks that amount against the budget,
+  with no delivery fee added.
+- **The seller is paid at pickup**, as before, for what the handler counted.
+- **DeliveryCheck (#3) records the outcome and moves no money.** It records "delivered in full" or "N short". The vault
+  stores the verdict on the order and emits `DeliveryRecorded`; for naira orders it's saved with the order's circuit
+  evidence. A short record is the buyer's proof for a claim against the logistics company.
+- **Tests prove it.** `test_deliverySettlement_neverTransfersFunds` (vault) and "delivery settlement never moves
+  money, for every verdict" (naira ledger) check that settling a delivery makes no transfer and changes no balance,
+  whether it's delivered in full, short or waiting.
+
 ## What is on-chain and what isn't
 
 | | Where it lives | Who can move it |
@@ -234,7 +249,7 @@ collection.
 | Processor | [`0x34efCc0a3191A48Feec787252E6d817b063A4017`](https://www.oklink.com/xlayer/address/0x34efCc0a3191A48Feec787252E6d817b063A4017) |
 | RestockGuard #1: may the money lock? (34 in → 5 out, 119 NAND) | tapeout tx [`0xaf6429bf…d2a0feca6fd`](https://www.oklink.com/xlayer/tx/0xaf6429bf2e4a7bc4e435ca493815b8b868d7728389ed904e5eb0dd2a0feca6fd) |
 | PickupCheck #2: how much is the seller paid? (27 in → 13 out, 210 NAND) | tapeout tx [`0x24b80f4d…38bacae`](https://www.oklink.com/xlayer/tx/0x24b80f4d29c57371c33357cd9b9ece03038d9016ade3e296620747c5e18bacae) |
-| DeliveryCheck #3: is the logistics fee paid? (21 in → 13 out, 141 NAND) | tapeout tx [`0x0249042e…e86d66d2`](https://www.oklink.com/xlayer/tx/0x0249042e8918f77cbe4056880fc10a0d54ab3bdb4599f47fe66fa313e86d66d2) |
+| DeliveryCheck #3: did everything arrive? Recorded only, no money moves (21 in → 13 out, 141 NAND) | tapeout tx [`0x0249042e…e86d66d2`](https://www.oklink.com/xlayer/tx/0x0249042e8918f77cbe4056880fc10a0d54ab3bdb4599f47fe66fa313e86d66d2) |
 | Transistor token (NAND) | [`0xe63af1B06D02Bb1B44741C0459d4083ec5b440d4`](https://www.oklink.com/xlayer/address/0xe63af1B06D02Bb1B44741C0459d4083ec5b440d4) |
 | Vault | not deployed yet |
 
@@ -289,6 +304,7 @@ The rules each circuit implements are in [`docs/CIRCUITS.md`](docs/CIRCUITS.md).
 **Not yet:**
 - **Paying with coins through the vault:** written and fork-tested, not deployed.
 - **Delivery by a logistics company:** built and tested with Sendrelay's test mode; needs a live Sendrelay account.
+  The buyer pays the delivery fee to the company directly.
 - **Google Maps sellers:** built; needs billing.
 - **Wholesaler coverage:** OpenStreetMap lists few Lagos wholesalers, so many results are supermarkets.
 

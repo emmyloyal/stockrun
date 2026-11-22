@@ -110,7 +110,7 @@ describe.skipIf(!localChainAvailable())('StockRun server', () => {
     const r = (await chi.call('/api/requests', ask)).json;
     expect(r.message).toMatch(/you collect it yourself, no delivery fee.*funds locked in escrow/);
     let [o] = (await chi.call('/api/orders')).json;
-    expect(o).toMatchObject({ money: 'naira', self: true, status: 'Locked', ordered: 5, riderFeeNaira: 0 });
+    expect(o).toMatchObject({ money: 'naira', self: true, status: 'Locked', ordered: 5, courierFeeNaira: null });
     expect(o.evidence[0]).toMatchObject({ circuit: 'restock', circuitId: '1' });
     expect((await chi.call('/api/me')).json.naira.heldNaira).toBe(5 * o.unitPriceNaira);
 

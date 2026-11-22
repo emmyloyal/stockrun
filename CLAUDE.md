@@ -16,7 +16,8 @@ People have a profile (username, picture). There are no shops, no riders and no 
    from the caller. Coins: the user's vault on X Layer builds the inputs and moves the money. Naira: the server builds
    the same inputs from the ledger, calls the same circuit's `eval` on X Layer, and applies only what it returns.
 3. **Only trusted handlers collect goods:** the buyer (self-pickup) or a verified logistics company. The seller is paid
-   at pickup on the handler's confirmation; delivery decides the logistics fee (paid, or held back if goods are short).
+   at pickup on the handler's confirmation. The buyer pays the delivery fee to the logistics company directly, outside
+   StockRun: orders lock goods money only, and DeliveryCheck records the delivery (in full or short) without moving funds.
 4. **No deposits to sellers.** Sellers are paid at pickup, after verification, in naira via StockRun's payout account.
 5. **If a circuit call fails, the order holds.** Never pay by default.
 6. The buyer's approval clears "ask owner" rules but never "reject" rules.

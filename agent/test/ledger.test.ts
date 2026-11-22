@@ -11,15 +11,14 @@ describe('naira ledger', () => {
     expect(l.deposit(1, 'ref1', kobo(50_000))).toBe(false);                 // a retried webhook changes nothing
     expect(l.balance(1)).toEqual({ availableKobo: 5_000_000, heldKobo: 0 });
 
-    l.hold(1, 'o1', kobo(35_250));                                           // 5 cartons at ₦6,650 + ₦2,000 delivery
-    expect(l.hold(1, 'o1', kobo(35_250))).toBe(false);
-    expect(l.balance(1)).toEqual({ availableKobo: 1_475_000, heldKobo: 3_525_000 });
+    l.hold(1, 'o1', kobo(33_250));                                           // 5 cartons at ₦6,650 (goods only: delivery is paid to the courier directly)
+    expect(l.hold(1, 'o1', kobo(33_250))).toBe(false);
+    expect(l.balance(1)).toEqual({ availableKobo: 1_675_000, heldKobo: 3_325_000 });
     l.paySeller(1, 'o1', kobo(26_600));                                      // 4 of 5 picked up
     l.release(1, 'o1-unpicked', kobo(6_650));                                // the 5th carton's money comes back
-    l.payLogistics(1, 'o1', kobo(2_000));
-    expect(l.balance(1)).toEqual({ availableKobo: 2_140_000, heldKobo: 0 });
+    expect(l.balance(1)).toEqual({ availableKobo: 2_340_000, heldKobo: 0 });
     expect(l.system('sellers')).toBe(2_660_000);
-    expect(l.system('logistics')).toBe(200_000);
+    expect(l.system('logistics')).toBe(0);                                   // StockRun never holds delivery fees
     expect(l.system('paystack')).toBe(-5_000_000);
     expect(l.check()).toEqual({ ok: true, problems: [] });
   });
