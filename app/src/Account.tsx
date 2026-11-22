@@ -107,45 +107,40 @@ function SignIn({ cfg, onDone }: { cfg: Config; onDone: () => void }) {
   const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
 
   return (
-    <section className="stack welcome">
+    <section className="welcome">
       <header className="hero">
-        <p className="eyebrow">AI buying agent · Lagos</p>
         <h1>Buy stock without the market run.</h1>
-        <p className="lead">Tell StockRun what you need and your budget. It finds real sellers near you, and your money is only released for goods you've counted.</p>
+        <p className="lead">Real sellers near you.<br />Pay only for what you collect.</p>
       </header>
-      <ol className="how">
-        <li><span className="how-icon"><Icon.search /></span><span><strong>Ask</strong><span className="fine">"20 cartons of Indomie, ₦300,000, Ketu"</span></span></li>
-        <li><span className="how-icon"><Icon.whatsapp /></span><span><strong>Agree a price</strong><span className="fine">The AI writes your WhatsApp message to the seller</span></span></li>
-        <li><span className="how-icon"><Icon.shield /></span><span><strong>Pay on collection</strong><span className="fine">A circuit on X Layer approves the seller's payment for what you count</span></span></li>
-      </ol>
-      <div className="panel stack">
-        <h2>{sent ? 'Check your email' : 'Sign in or create an account'}</h2>
-        <div className="seg two" role="radiogroup" aria-label="I am">
-          <button role="radio" aria-checked={!asShop} className={!asShop ? 'on' : ''} onClick={() => setAsShop(false)}>I'm buying</button>
-          <button role="radio" aria-checked={asShop} className={asShop ? 'on' : ''} onClick={() => setAsShop(true)}>I own a shop</button>
-        </div>
-        {asShop && <p className="fine">Shop owners can list their store and chat with buyers, and can still buy.</p>}
+      <div className="signin-card">
+        <h2>{sent ? 'Check your email' : 'Sign in'}</h2>
+        {!sent && (
+          <div className="seg two" role="radiogroup" aria-label="I am">
+            <button role="radio" aria-checked={!asShop} className={!asShop ? 'on' : ''} onClick={() => setAsShop(false)}>I'm buying</button>
+            <button role="radio" aria-checked={asShop} className={asShop ? 'on' : ''} onClick={() => setAsShop(true)}>I own a shop</button>
+          </div>
+        )}
         {way === 'email' ? (<>
-          <label className="field"><span>Email address</span>
+          <label className="field"><span>Email</span>
             <input type="email" inputMode="email" autoComplete="email" placeholder="ada@gmail.com" value={email} onChange={(e) => setEmail(e.target.value)} disabled={sent} />
           </label>
           {!sent ? (
             <button className="btn primary" disabled={!!busy || !emailOk} onClick={() => go('Sending…', async () => { await server.emailCode(email.trim()); setSent(true); })}>Email me a code</button>
           ) : (<>
-            <label className="field"><span>6-digit code</span>
+            <label className="field"><span>Code</span>
               <input inputMode="numeric" autoComplete="one-time-code" autoFocus maxLength={6} value={code} onChange={(e) => {
                 const c = e.target.value.replace(/\D/g, '');
                 setCode(c);
                 if (c.length === 6 && !busy) signIn(c);   // pasted or filled in: sign in straight away
               }} />
             </label>
-            <p className="fine">We've emailed a 6-digit code to <strong>{email.trim()}</strong>. Not there? Check Spam or Promotions.</p>
+            <p className="fine">Sent to <strong>{email.trim()}</strong>. Check Spam if it isn't there.</p>
             <button className="btn primary" disabled={!!busy || code.length !== 6} onClick={() => signIn(code)}>Sign in</button>
-            <button className="link" disabled={!!busy} onClick={() => { setSent(false); setCode(''); }}>Use a different email</button>
+            <button className="link center-link" disabled={!!busy} onClick={() => { setSent(false); setCode(''); }}>Use a different email</button>
           </>)}
         </>) : (<>
-          <p>Sign in with OKX Wallet or MetaMask. You sign a short message: it costs nothing and moves no money.</p>
-          {!hasWallet() && <p className="warn">No wallet found in this browser. Open StockRun inside the OKX Wallet or MetaMask app, or install their extension.</p>}
+          <p className="fine">OKX Wallet or MetaMask. Signing is free and moves no money.</p>
+          {!hasWallet() && <p className="warn">No wallet found. Open StockRun in your wallet app's browser.</p>}
           <button className="btn primary" disabled={!!busy || !hasWallet()} onClick={() => go('Waiting for your wallet…', async () => {
             const s = await signWithWallet(async (a) => (await server.walletMessage(a)).message);
             const r = await server.walletSignIn(s.message, s.signature); save('stockrun.signin', 'wallet'); await finish(r.user);
@@ -156,10 +151,9 @@ function SignIn({ cfg, onDone }: { cfg: Config; onDone: () => void }) {
         {!sent && (cfg.emailSignIn
           ? (way === 'email'
             ? <><div className="or"><span>or</span></div><button className="btn ghost" onClick={() => pick('wallet')}><Icon.wallet size={18} /> Continue with a wallet</button></>
-            : <button className="link" onClick={() => pick('email')}>Use email instead</button>)
+            : <button className="link center-link" onClick={() => pick('email')}>Use email instead</button>)
           : null)}
       </div>
-      <p className="fine center">No passwords. Signing in is free and moves no money.</p>
     </section>
   );
 }

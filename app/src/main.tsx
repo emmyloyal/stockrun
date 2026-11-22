@@ -34,7 +34,7 @@ function App() {
         ? (<><header className="topbar"><Brand /></header><main><SellerBankPage sellerId={sellerBank.id} token={sellerBank.t} /></main></>)
         : <AccountApp cfg={cfg} />}
       <footer className="about">
-        {cfg.network === 'xlayer' ? 'Payment decisions by TapeOut circuits on X Layer mainnet' : 'Local test chain'} · naira {cfg.naira.paystack ? (cfg.naira.test ? 'through Paystack test mode (no real money)' : 'through Paystack') : 'deposits off'}{cfg.naira.testCredit ? ' · demo naira on' : ''} · sellers from OpenStreetMap, not checked by StockRun
+        {cfg.naira.test ? 'Test money only' : cfg.naira.paystack ? 'Naira through Paystack' : 'Deposits off'} · {cfg.network === 'xlayer' ? 'Payments decided on X Layer' : 'Local test chain'} · Sellers from OpenStreetMap, not checked by StockRun
       </footer>
     </div>
   );

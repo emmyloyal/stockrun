@@ -27,7 +27,7 @@
 .tabbar button.on .tab-icon { background: var(--danfo); color: var(--on-danfo); }
 .tab-icon { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 52px; height: 30px; border-radius: 999px; transition: background 0.15s ease; }
 .badge { position: absolute; top: -2px; right: 8px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--no); color: #fff; font-size: 0.66rem; line-height: 18px; text-align: center; }
-.about { padding: 8px 20px calc(96px + env(safe-area-inset-bottom, 0px)); text-align: center; font-size: 0.72rem; color: var(--muted); }
+.about { max-width: 34ch; margin: 0 auto; padding: 8px 20px calc(96px + env(safe-area-inset-bottom, 0px)); text-align: center; font-size: 0.75rem; line-height: 1.6; color: var(--muted); text-wrap: balance; }
 
 .loading { display: grid; place-items: center; gap: 10px; padding: 48px 0; }
 .spinner { width: 28px; height: 28px; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--ink); animation: spin 0.8s linear infinite; display: inline-block; }
@@ -42,11 +42,19 @@
 .nudge { display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 14px; border-radius: 14px; border: 1px dashed var(--danfo); background: var(--danfo-soft); color: var(--ink); font-weight: 600; font-size: 0.88rem; cursor: pointer; text-align: left; }
 .nudge svg:last-child { margin-left: auto; }
 
-/* Sign in */
-.welcome { gap: 18px; padding-top: 6px; }
-.hero { display: grid; gap: 10px; }
-.hero h1 { font-size: clamp(2.3rem, 11vw, 3.1rem); line-height: 0.98; }
-.lead { font-size: 1.05rem; color: var(--muted); }
+/* Sign in: a headline, one line, the form. One 8px spacing scale; everything on the same left edge. */
+.welcome { display: flex; flex-direction: column; gap: 32px; max-width: 420px; margin: 0 auto; padding: 40px 8px 16px; }
+.hero { display: grid; gap: 12px; }
+.hero h1 { font-size: clamp(2.4rem, 10.5vw, 3rem); line-height: 1; letter-spacing: -0.01em; max-width: 12ch; }
+.lead { font-size: 1.1rem; line-height: 1.5; color: var(--muted); max-width: 30ch; }
+.signin-card { display: flex; flex-direction: column; gap: 16px; padding: 24px; border-radius: 24px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); }
+.signin-card h2 { font-size: 1.5rem; margin-bottom: 4px; }
+.signin-card .field { gap: 8px; }
+.signin-card .field input { min-height: 52px; padding: 0 16px; }
+.signin-card .btn { min-height: 52px; width: 100%; border-radius: 14px; font-size: 1rem; }
+.signin-card .fine { margin-top: -4px; }
+.center-link { align-self: center; }
+@media (min-width: 700px) { .welcome { padding-top: 72px; } }
 .how { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .how li { display: flex; gap: 12px; align-items: center; }
 .how li > span:last-child { display: grid; }
@@ -54,6 +62,7 @@
 .seg.two { display: grid; grid-template-columns: 1fr 1fr; padding: 4px; gap: 4px; border-radius: 14px; background: var(--bg); border: 1px solid var(--line); }
 .seg.two button { border: 0; border-radius: 10px; padding: 10px; background: none; font-weight: 600; color: var(--muted); cursor: pointer; }
 .seg.two button.on { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+@media (prefers-color-scheme: dark) { .seg.two button.on { background: var(--line); } }
 .or { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 0.8rem; }
 .or::before, .or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
 
