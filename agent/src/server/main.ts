@@ -23,6 +23,7 @@ import { Geocoder } from '../discovery/geocode.ts';
 import { Payouts, adminList } from '../admin/payouts.ts';
 import { Activity } from '../admin/activity.ts';
 import { Withdrawals } from '../money/withdrawals.ts';
+import { CoinOrders } from '../coins/coinOrders.ts';
 import { PAYSTACK_LOCAL } from '../money/paystack.ts';
 import { Listings } from '../business/listings.ts';
 import { Chats } from '../business/chat.ts';
@@ -119,11 +120,16 @@ const sellerOf = (key: Hash) => {
 // With Paystack on, approved seller payouts go out automatically (test keys move no money); buyers can withdraw.
 const payouts = new Payouts({ db, ledger, sellerOf, paystack });
 const withdrawals = paystack ? new Withdrawals(db, ledger, paystack) : null;
+// Coin orders through each buyer's own vault. The vault is unaudited, so deposits stop at COIN_VAULT_CAP_USD (default
+// $50; on the local chain the test token is naira, so the cap is that many dollars' worth at ₦1,500).
+const capUsd = Number(envValue(env, 'COIN_VAULT_CAP_USD') ?? 50);
+const coins = envValue(env, 'COIN_ORDERS') === 'off' || !(capUsd > 0) ? null : new CoinOrders({ db, platform: p, log,
+  capTokens: network === 'xlayer' ? BigInt(Math.round(capUsd * 1e6)) : p.money.toToken(capUsd * 1_500) });
 const admins = adminList(envValue(env, 'ADMIN_EMAILS'));
 
 const staticDir = fileURLToPath(new URL('../../../app/dist/', import.meta.url));
 const server = createApp({
-  platform: p, accounts, buyers, ledger, prices, paystack, hunt, payouts, admins, activity: new Activity(db), withdrawals, linkSecret: secret, publicUrl, supportEmail, geocoder, listings, chats: new Chats({ db, listings }), posts: listings ? new Posts({ db, listings }) : null, demoNaira: network === 'local' || envValue(env, 'DEMO_NAIRA') === '1',
+  platform: p, accounts, buyers, ledger, prices, paystack, hunt, payouts, admins, activity: new Activity(db), withdrawals, coins, linkSecret: secret, publicUrl, supportEmail, geocoder, listings, chats: new Chats({ db, listings }), posts: listings ? new Posts({ db, listings }) : null, demoNaira: network === 'local' || envValue(env, 'DEMO_NAIRA') === '1',
   staticDir: existsSync(staticDir) ? staticDir : undefined,
   secureCookies: envValue(env, 'SECURE_COOKIES') === '1', log,
   sendrelayWebhookSecret: envValue(env, 'SENDRELAY_WEBHOOK_SECRET'),

@@ -30,6 +30,8 @@ import { PostError, type Posts } from '../business/posts.ts';
 import { createHmac, timingSafeEqual as safeEqual } from 'node:crypto';
 import { draftMessage, whatsappLink } from '../discovery/draft.ts';
 import { PICKUP_REASONS, DELIVERY_REASONS } from '../check/checkService.ts';
+import type { CoinOrders } from '../coins/coinOrders.ts';
+import { BaseError } from 'viem';
 
 export interface AppOptions {
   platform: Platform;
@@ -53,6 +55,8 @@ export interface AppOptions {
   listings?: Listings | null;
   /** In-app chat between buyers and registered stores. */
   chats?: Chats | null;
+  /** Coin orders through each buyer's own vault on X Layer (null: coins are read-only). */
+  coins?: CoinOrders | null;
   /** Store posts and the buyers' feed (needs registered stores). */
   posts?: Posts | null;
   /** Buyer withdrawals to their bank (Paystack Transfers); absent: off. */
@@ -121,6 +125,12 @@ export function createApp(o: AppOptions): Server {
     try { return await f(); }
     catch (e) { if (e instanceof LedgerError || e instanceof PaystackError) throw new AuthError(e.status, e.message); throw e; }
   };
+  /** Chain calls: a failed transaction or RPC becomes a plain 502 for the buyer; nothing moved. */
+  const onChain = async <T>(f: () => Promise<T>): Promise<T> => {
+    try { return await f(); }
+    catch (e) { if (e instanceof BaseError) throw new AuthError(502, `X Layer refused or did not answer (${e.shortMessage}). Nothing moved; try again.`); throw e; }
+  };
+  const coins = () => { if (!o.coins) throw new AuthError(404, 'Coin payments are not switched on here.'); return o.coins; };
 
   function orderView(userId: number, orderId: string) {
     const rt = buyers.runtime(userId), job = rt.jobs.get(orderId), r = buyers.orders.get(orderId);
@@ -170,6 +180,7 @@ export function createApp(o: AppOptions): Server {
         fee: { percent: buyers.orders.fee.bps / 100, minNaira: buyers.orders.fee.minKobo / 100, maxNaira: buyers.orders.fee.maxKobo / 100 } },
       logistics: p.carriers.map((x) => ({ id: x.id, name: x.name, api: !!x.connector })),
       emailSignIn: accounts.emailSignIn,
+      coins: o.coins ? { cap: Number(o.coins.cap.tokens) / 1e6, capNaira: o.coins.cap.naira, symbol: p.tokenSymbol, token: p.token, chainId: p.chain.id, payout: p.supplierPayout } : null,
       supportEmail: o.supportEmail ?? null,
       sellerHunt: !!o.hunt && huntEnabled(o.hunt),
       chat: !!o.chats,
@@ -193,7 +204,8 @@ export function createApp(o: AppOptions): Server {
         p.pub.getBalance({ address: u.wallet }),
         p.pub.readContract({ address: p.token, abi: tokenAbi, functionName: 'balanceOf', args: [u.wallet] }),
       ]);
-      return { wallet: u.wallet, network: p.name, okb: formatEther(okb), token: { symbol: p.tokenSymbol, amount: p.money.toNaira(token) === 0 ? '0' : String(Number(token) / 1e6), naira: p.money.toNaira(token) } };
+      const vault = o.coins ? await o.coins.status(u).catch(() => null) : null;
+      return { wallet: u.wallet, network: p.name, vault, okb: formatEther(okb), token: { symbol: p.tokenSymbol, amount: p.money.toNaira(token) === 0 ? '0' : String(Number(token) / 1e6), naira: p.money.toNaira(token) } };
     }],
     ['GET', /^\/api\/users\/(\d+)$/, async (c) => {
       const prof = accounts.publicProfile(Number(c.m[1]));
@@ -231,7 +243,25 @@ export function createApp(o: AppOptions): Server {
     ['GET', /^\/api\/orders$/, async (c) => {
       const u = need(c), rt = buyers.runtime(u.id);
       await buyers.dispatcher.bookPending(rt.dispatch).catch(() => {});   // e.g. an order the buyer just approved
-      return rt.jobs.all().sort((a, b) => b.createdAt - a.createdAt).map((j) => orderView(u.id, j.orderId)).filter(Boolean);
+      const naira = rt.jobs.all().map((j) => orderView(u.id, j.orderId)).filter((x): x is NonNullable<typeof x> => !!x);
+      const coin = o.coins ? await o.coins.list(u).catch(() => []) : [];
+      return [...naira, ...coin].sort((a, b) => b.createdAt - a.createdAt);
+    }],
+
+    // ---------------------------------------------------------------- coins: the buyer's own vault on X Layer
+    /** Deploy the buyer's vault, owned by their connected wallet (StockRun pays the gas). */
+    ['POST', /^\/api\/coins\/vault$/, async (c) => onChain(() => coins().setUp(need(c)))],
+    /** A deal paid with coins: self-pickup, decided by RestockGuard inside the buyer's vault. */
+    ['POST', /^\/api\/coins\/deals$/, async (c) => {
+      const u = need(c), d = buyers.parseDeal(u, { ...(c.body ?? {}), delivery: 'self' });
+      const r = await onChain(() => coins().recordDeal(u, d));
+      o.activity?.record(u.id, d.s.id, 'recorded_deal', `${d.quantity} ${d.unit} ${d.item} at ₦${d.price.toLocaleString('en-NG')} in coins: ${r.status}${'orderId' in r && r.orderId ? ` (order ${r.orderId})` : ''}`);
+      return r;
+    }],
+    /** After the buyer's wallet signed their count: PickupCheck pays the counted goods through the vault. */
+    ['POST', /^\/api\/coins\/orders\/(\d+)\/settle-pickup$/, async (c) => {
+      const r = await onChain(() => coins().settlePickup(need(c), Number(c.m[1])));
+      return { ...r, message: PICKUP_REASONS[r.reason] ?? '' };
     }],
     // Public: an order's circuit evidence only (circuit, block, packed input and output) — no names, sellers or
     // accounts — so anyone can re-run eval and check the decision (scripts/verify-order.mjs).
@@ -404,6 +434,13 @@ export function createApp(o: AppOptions): Server {
         paystackPayouts: !!o.payouts?.paystack, paystackTest: o.payouts?.paystack?.test ?? true,
       };
     }],
+    /** Coin pickups: the vault paid StockRun's payout wallet; the seller is owed that in naira from StockRun. */
+    ['GET', /^\/api\/admin\/coin-owed$/, async (c) => {
+      admin(c);
+      return (o.coins?.owedSellers() ?? []).map((r) => ({ vault: r.vault, orderId: r.order_id, seller: r.seller_name, sellerId: r.seller_id,
+        item: `${r.quantity} × ${r.item}`, owedNaira: r.seller_owed_naira, settleTx: r.settle_tx, createdAt: r.created_at }));
+    }],
+    ['POST', /^\/api\/admin\/coin-owed\/(0x[0-9a-fA-F]{40})\/(\d+)\/paid$/, async (c) => { admin(c); coins().markSellerPaid(c.m[1], Number(c.m[2])); return { ok: true }; }],
     ['GET', /^\/api\/admin\/orders$/, async (c) => {
       admin(c);
       return o.buyers.orders.recent(100).map((r) => ({

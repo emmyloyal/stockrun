@@ -147,6 +147,11 @@ export class Buyers {
    * paid only at pickup for what the handler counts. Budget and auto-approve limit are the buyer's available balance.
    */
   async recordDeal(user: User, raw: Partial<DealInput>): Promise<DealResult> {
+    return this.recordNairaDeal(user, raw, this.parseDeal(user, raw));
+  }
+
+  /** The checks every recorded deal passes, whichever money pays for it. Throws AuthError with words for the buyer. */
+  parseDeal(user: User, raw: Partial<DealInput>) {
     const foundDb = this.services.foundDb;
     const s = foundDb && typeof raw.sellerId === 'string' ? foundSeller(foundDb, raw.sellerId) : null;
     if (!s) throw new AuthError(404, 'That seller is not on the map any more.');
@@ -164,7 +169,11 @@ export class Buyers {
     let contactPhone = user.phone ?? undefined;
     if (raw.contactPhone) { try { contactPhone = normalisePhone(String(raw.contactPhone)); } catch { throw new AuthError(400, 'Enter the rider contact number like 0803 123 4567.'); } }
     if (delivery === 'logistics' && !contactPhone) throw new AuthError(400, 'Add a phone number so the logistics rider can reach you, or collect it yourself.');
+    return { s, item, unit, quantity, price, category: raw.category as Category, lat, lng, address, delivery, contactPhone };
+  }
 
+  private async recordNairaDeal(user: User, raw: Partial<DealInput>, d: ReturnType<Buyers['parseDeal']>): Promise<DealResult> {
+    const { s, item, unit, quantity, price, lat, lng, address, delivery, contactPhone } = d;
     let mine = this.mine(user.id, s.id);
     if (mine.status === 3) throw new AuthError(409, 'You blocked this seller.');
     if (mine.status === 0 && mine.pendingStatus) {
@@ -182,7 +191,7 @@ export class Buyers {
     const rt = this.runtime(user.id);
     rt.naira.budgetKobo = available;
     const supplier: Supplier = { id: s.id, name: s.name, market: s.address || 'Lagos', lat: s.lat, lng: s.lng, whatsapp: s.phone, simulated: false, stocks: [] };
-    const line: OrderLine = { item, quantity, unit, category: raw.category, maxUnitPriceNaira: price };
+    const line: OrderLine = { item, quantity, unit, category: d.category, maxUnitPriceNaira: price };
     const place = { lat, lng, address };
     const i: RequestInput = { text: `${quantity} ${unit} ${item}`, budgetNaira: Math.round(available / 100), place, delivery, contactPhone };
     const booked = delivery === 'self'
@@ -192,7 +201,7 @@ export class Buyers {
 
     const km = haversineKm(place, s);
     const result = await rt.naira.propose({ supplierKey: supplierKey(s.id), ordered: quantity, unitPrice: BigInt(price) * 100n,
-      cat: CATEGORIES[raw.category], dist: distBucket(km), rider: booked.rider.address });
+      cat: CATEGORIES[d.category], dist: distBucket(km), rider: booked.rider.address });
     if (result.status === 'locked' || result.status === 'ask_owner') {
       rt.jobs.add({ orderId: String(result.orderId), item, unit, quantity, rider: booked.rider.address,
         supplier: { name: `${s.name}, ${s.address || 'Lagos'}`, lat: s.lat, lng: s.lng }, shop: { name: address, lat, lng }, createdAt: this.now(),
