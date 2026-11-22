@@ -34,7 +34,7 @@ export class Listings {
   readonly feeKobo: number; readonly periodMs: number;
   constructor(o: { db: DatabaseSync; ledger: Ledger; geocoder?: Geocoder | null; now?: () => number; feeNaira?: number; periodDays?: number }) {
     this.db = o.db; this.ledger = o.ledger; this.geocoder = o.geocoder ?? null; this.now = o.now ?? Date.now;
-    this.feeKobo = Math.round((o.feeNaira ?? 1_000) * 100); this.periodMs = (o.periodDays ?? 30) * 24 * 3600_000;
+    this.feeKobo = Math.round((o.feeNaira ?? 2_000) * 100); this.periodMs = (o.periodDays ?? 30) * 24 * 3600_000;
     foundTable(o.db);
     o.db.exec(`
       CREATE TABLE IF NOT EXISTS business_listings (

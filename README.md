@@ -165,7 +165,7 @@ can ask the circuit again and check the decision.
     <td valign="top">
       <p><strong>Money</strong> shows what's ready to spend, what's locked in orders, and every movement. Withdraw to
       any Nigerian bank through Paystack.</p>
-      <p><strong>Me</strong> holds your profile. Shop owners can also register their store (₦1,000 a month, after
+      <p><strong>Me</strong> holds your profile. Shop owners can also register their store (₦2,000 a month, after
       admin approval) so buyers find them and chat in the app.</p>
     </td>
   </tr>
@@ -287,7 +287,11 @@ The rules each circuit implements are in [`docs/CIRCUITS.md`](docs/CIRCUITS.md).
 
 - **Buyers** pay a **1.5% service fee** on what they collect (minimum ₦100, maximum ₦10,000). Sellers always receive
   the full agreed price.
-- **Stores** pay **₦1,000 a month** to be listed and found by buyers, after admin approval.
+- **Stores** pay **₦2,000 a month** to be listed and found by buyers, after admin approval.
+
+Paystack's charge is separate and is not StockRun's income. When a buyer adds naira, they pay Paystack's card charge
+on top (**1.5%**, plus ₦100 on payments of ₦2,500 or more, capped at ₦2,000), so their balance gets the full amount.
+The app shows the total before they pay.
 
 ## Status
 

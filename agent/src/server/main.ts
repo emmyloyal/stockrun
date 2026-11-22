@@ -97,9 +97,9 @@ if (paystack && !paystack.test && envValue(env, 'DEMO_NAIRA') === '1') throw new
 // billing on the Gemini key). Both bill Google per search after their free allowances, so the hunt is capped per day.
 const mapsKey = envValue(env, 'GOOGLE_MAPS_API_KEY'), geminiKey = envValue(env, 'GEMINI_API_KEY');
 const generate = geminiKey ? geminiClient(geminiKey) : null;
-// Registered stores: admin-approved, LISTING_FEE_NAIRA (1,000) every LISTING_DAYS (30), paid from the StockRun balance.
+// Registered stores: admin-approved, LISTING_FEE_NAIRA (2,000) every LISTING_DAYS (30), paid from the StockRun balance.
 const geocoder = new Geocoder({ log: (l) => log(`address search: ${l}`) });
-const listings = new Listings({ db, ledger, geocoder, feeNaira: Number(envValue(env, 'LISTING_FEE_NAIRA') ?? 1_000), periodDays: Number(envValue(env, 'LISTING_DAYS') ?? 30) });
+const listings = new Listings({ db, ledger, geocoder, feeNaira: Number(envValue(env, 'LISTING_FEE_NAIRA') ?? 2_000), periodDays: Number(envValue(env, 'LISTING_DAYS') ?? 30) });
 const hunt = {
   db, log, generate, listings,
   places: mapsKey ? new PlacesSearch({ apiKey: mapsKey }) : null,

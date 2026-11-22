@@ -1,4 +1,4 @@
-// Businesses: register a store (an admin approves it, then ₦1,000 a month keeps it live) and chat with buyers.
+// Businesses: register a store (an admin approves it, then ₦2,000 a month keeps it live) and chat with buyers.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { naira, server, type Business, type ChatMessage, type ChatSummary } from './lib';
 import { BankFields, useBanks } from './Banks';
