@@ -59,13 +59,17 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-# Caddy gets a free HTTPS certificate for the sslip.io name and forwards to the app.
-cat > /etc/caddy/Caddyfile <<EOF
+# Caddy gets a free HTTPS certificate for each name and forwards to the app. Each app on this server owns one file in
+# /etc/caddy/sites, and the main Caddyfile only imports them, so updating one app never removes another's site.
+mkdir -p /etc/caddy/sites
+cat > /etc/caddy/sites/stockrun.caddy <<EOF
 $HOSTS {
   encode gzip
   reverse_proxy 127.0.0.1:8080
 }
 EOF
+echo 'import /etc/caddy/sites/*.caddy' > /etc/caddy/Caddyfile
+caddy validate --config /etc/caddy/Caddyfile >/dev/null
 
 systemctl daemon-reload
 systemctl enable -q stockrun caddy
