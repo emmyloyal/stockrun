@@ -7,6 +7,8 @@ export interface Config {
   naira: { paystack: boolean; test: boolean; testCredit: boolean; fee?: { percent: number; minNaira: number; maxNaira: number } };
   logistics: { id: string; name: string; api: boolean }[];
   emailSignIn: boolean;
+  /** Where people email for help; null when none is set. */
+  supportEmail?: string | null;
   chat?: boolean;
   feed?: boolean;
   business?: { feeNaira: number; periodDays: number } | null;

@@ -88,7 +88,7 @@ export function AccountApp({ cfg }: { cfg: Config }) {
           {tab === 'me' && me.admin && <button className="nudge admin-link" onClick={() => go('admin')}><Icon.admin size={18} /> Admin: orders, payouts and stores <Icon.chevron size={16} /></button>}
           {tab === 'admin' && me.admin && <button className="link-btn" onClick={() => go('me')}>‹ Back to Me</button>}
           {tab === 'feed' && cfg.feed && <FeedTab user={u} onChat={startChat} goStore={() => go('me')} />}
-          {tab === 'me' && <Profile user={u} bust={bust} onChange={() => { setBust(Date.now()); reload(); }} />}
+          {tab === 'me' && <Profile user={u} bust={bust} supportEmail={cfg.supportEmail ?? null} onChange={() => { setBust(Date.now()); reload(); }} />}
           {tab === 'me' && cfg.business && u.role === 'shop' && <MyStore fee={cfg.business} banksOn={!!cfg.sellerBankLinks} balance={me.naira?.availableNaira ?? 0} onChange={reload} />}
         </section>
       </main>
@@ -168,6 +168,7 @@ function SignIn({ cfg, onDone }: { cfg: Config; onDone: () => void }) {
             : <button className="link center-link" onClick={() => pick('email')}>Use email instead</button>)
           : null)}
       </div>
+      {cfg.supportEmail && <p className="fine support-line">Need help? <a href={supportMailto(cfg.supportEmail)}>{cfg.supportEmail}</a></p>}
     </section>
   );
 }
@@ -886,7 +887,10 @@ function AmountSheet({ title, currency, max, onClose, onContinue }: { title: str
 }
 
 // ---------------------------------------------------------------- profile
-function Profile({ user, bust, onChange }: { user: User; bust: number; onChange: () => void }) {
+/** A mail link to support with a subject line, so the message is easy to spot. */
+const supportMailto = (email: string, orderHint = '') => `mailto:${email}?subject=${encodeURIComponent(`StockRun support${orderHint}`)}`;
+
+function Profile({ user, bust, supportEmail, onChange }: { user: User; bust: number; supportEmail: string | null; onChange: () => void }) {
   const [username, setUsername] = useState(user.username ?? '');
   const [displayName, setDisplayName] = useState(user.displayName ?? '');
   const [busy, setBusy] = useState('');
@@ -931,6 +935,13 @@ function Profile({ user, bust, onChange }: { user: User; bust: number; onChange:
           await server.addWallet(s.message, s.signature); onChange(); setSaved('Wallet connected.');
         })}>{hasWallet() ? 'Connect a wallet' : 'No wallet in this browser'}</button>}
       </div>
+      {supportEmail && (
+        <div className="panel stack">
+          <h2>Help & support</h2>
+          <p className="fine">A question about an order, a payment or your store? Email us and include your order number (it's on each order, like #12).</p>
+          <a className="btn ghost" href={supportMailto(supportEmail)}><Icon.mail size={18} /> {supportEmail}</a>
+        </div>
+      )}
       <div className="panel stack">
         <h2>Log out</h2>
         <p className="fine">Logs you out on this device. Your balance, orders and profile stay safe; log back in with your email or wallet.</p>

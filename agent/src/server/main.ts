@@ -60,6 +60,8 @@ if (network === 'xlayer') {
 const secret = envValue(env, 'SERVER_SECRET') ?? (network === 'local' ? 'local-only-secret-not-for-real-use-0000000' : undefined);
 if (!secret || secret.length < 32) throw new Error('Set SERVER_SECRET in .env (32+ random characters). It protects sign-in codes.');
 const { mail, kind: mailKind } = emailFromEnv(env, network === 'local');
+// Support address shown in the app: SUPPORT_EMAIL, else StockRun's official support Gmail.
+const supportEmail = (envValue(env, 'SUPPORT_EMAIL') ?? 'stockrun.codes@gmail.com').match(/[^\s<>]+@[^\s<>]+\.[^\s<>]+/)?.[0] ?? null;
 
 // Local: a fresh database each run (the chain is fresh too). X Layer: a file (accounts, naira ledger, orders).
 const dbFile = network === 'local' ? ':memory:' : envValue(env, 'DB_FILE') ?? fileURLToPath(new URL('../../data/stockrun.db', import.meta.url));
@@ -121,7 +123,7 @@ const admins = adminList(envValue(env, 'ADMIN_EMAILS'));
 
 const staticDir = fileURLToPath(new URL('../../../app/dist/', import.meta.url));
 const server = createApp({
-  platform: p, accounts, buyers, ledger, prices, paystack, hunt, payouts, admins, activity: new Activity(db), withdrawals, linkSecret: secret, publicUrl, geocoder, listings, chats: new Chats({ db, listings }), posts: listings ? new Posts({ db, listings }) : null, demoNaira: network === 'local' || envValue(env, 'DEMO_NAIRA') === '1',
+  platform: p, accounts, buyers, ledger, prices, paystack, hunt, payouts, admins, activity: new Activity(db), withdrawals, linkSecret: secret, publicUrl, supportEmail, geocoder, listings, chats: new Chats({ db, listings }), posts: listings ? new Posts({ db, listings }) : null, demoNaira: network === 'local' || envValue(env, 'DEMO_NAIRA') === '1',
   staticDir: existsSync(staticDir) ? staticDir : undefined,
   secureCookies: envValue(env, 'SECURE_COOKIES') === '1', log,
   sendrelayWebhookSecret: envValue(env, 'SENDRELAY_WEBHOOK_SECRET'),

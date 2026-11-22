@@ -60,6 +60,8 @@ export interface AppOptions {
   /** Signs the links sellers use to add their bank account, and builds them (PUBLIC_URL). */
   linkSecret?: string;
   publicUrl?: string;
+  /** Where people email for help (shown in the app). */
+  supportEmail?: string | null;
   /** Which found sellers buyers messaged or dealt with (shown to admins). */
   activity?: Activity | null;
   admins?: Set<string>;
@@ -168,6 +170,7 @@ export function createApp(o: AppOptions): Server {
         fee: { percent: buyers.orders.fee.bps / 100, minNaira: buyers.orders.fee.minKobo / 100, maxNaira: buyers.orders.fee.maxKobo / 100 } },
       logistics: p.carriers.map((x) => ({ id: x.id, name: x.name, api: !!x.connector })),
       emailSignIn: accounts.emailSignIn,
+      supportEmail: o.supportEmail ?? null,
       sellerHunt: !!o.hunt && huntEnabled(o.hunt),
       chat: !!o.chats,
       feed: !!o.posts,

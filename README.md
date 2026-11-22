@@ -315,6 +315,9 @@ The rules each circuit implements are in [`docs/CIRCUITS.md`](docs/CIRCUITS.md).
    expiry date, PIN 0000, OTP 123456. No real money moves.
 3. **Ask** for something, message a seller, record the deal, then confirm the count on **Orders**.
 
+Questions or problems: **[stockrun.codes@gmail.com](mailto:stockrun.codes@gmail.com)** (also under **Me → Help & support**
+in the app).
+
 ## Run it locally
 
 Needs Node 24+ (`node:sqlite`) and, for the local chain, [Foundry](https://getfoundry.sh) (`anvil`).

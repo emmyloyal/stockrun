@@ -54,6 +54,8 @@
 .signin-card .btn { min-height: 52px; width: 100%; border-radius: 14px; font-size: 1rem; }
 .signin-card .fine { margin-top: -4px; }
 .center-link { align-self: center; }
+.support-line { text-align: center; margin: 0; }
+.support-line a { color: inherit; font-weight: 600; }
 @media (min-width: 700px) { .welcome { padding-top: 72px; } }
 .how { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .how li { display: flex; gap: 12px; align-items: center; }
