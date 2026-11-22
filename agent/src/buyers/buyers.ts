@@ -12,7 +12,7 @@ import type { Platform } from '../chain/platform.ts';
 import type { Extractor } from '../llm.ts';
 import type { SupplierChannel } from '../tools/negotiate.ts';
 import type { PriceBook } from '../prices/priceBook.ts';
-import { loadSuppliers, supplierKey } from '../tools/suppliers.ts';
+import { demoSellers, supplierKey } from '../tools/suppliers.ts';
 import { CATEGORIES, distBucket, type Category, type OrderLine, type Rider, type Supplier } from '../types.ts';
 import { RESTOCK_REASONS } from '../tools/vault.ts';
 import { foundSeller } from '../discovery/hunt.ts';
@@ -73,7 +73,7 @@ export class Buyers {
   readonly orders: NairaOrders;
   private db: DatabaseSync; private p: Platform; private services: BuyerServices; private ledger: Ledger;
   private runtimes = new Map<number, BuyerRuntime>();
-  private verified = new Set<string>(loadSuppliers().map((s) => supplierKey(s.id).toLowerCase()));
+  private get verified() { return new Set<string>(demoSellers().map((s) => supplierKey(s.id).toLowerCase())); }
 
   private now: () => number; private sellerDelayMs: number;
   constructor(db: DatabaseSync, p: Platform, ledger: Ledger, orders: NairaOrders, services: BuyerServices & { now?: () => number; sellerDelayMs?: number }) {

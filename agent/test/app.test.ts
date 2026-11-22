@@ -20,6 +20,7 @@ import { foundTable } from '../src/discovery/hunt.ts';
 import { SELLER_APPROVAL_DELAY_MS } from '../src/buyers/buyers.ts';
 import { Payouts } from '../src/admin/payouts.ts';
 import { Activity } from '../src/admin/activity.ts';
+import { Controls } from '../src/admin/controls.ts';
 import { supplierKey } from '../src/tools/suppliers.ts';
 
 const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(200, 9)]).toString('base64');
@@ -33,10 +34,11 @@ describe.skipIf(!localChainAvailable())('StockRun server', () => {
   let db: ReturnType<typeof openDb>;
   const mail = new ConsoleEmail();
 
-  function person() {
+  /** `ip`: the network the person calls from (sign-in codes are limited per network per hour). */
+  function person(ip?: string) {
     let cookie = '';
     const call = async (path: string, body?: unknown, extra: Record<string, string> = {}) => {
-      const r = await fetch(base + path, { method: body === undefined ? 'GET' : 'POST', headers: { 'Content-Type': 'application/json', cookie, ...extra }, body: body === undefined ? undefined : JSON.stringify(body) });
+      const r = await fetch(base + path, { method: body === undefined ? 'GET' : 'POST', headers: { 'Content-Type': 'application/json', cookie, ...(ip ? { 'x-forwarded-for': ip } : {}), ...extra }, body: body === undefined ? undefined : JSON.stringify(body) });
       const set = r.headers.get('set-cookie'); if (set) cookie = set.split(';')[0];
       const text = await r.text();
       return { status: r.status, json: (() => { try { return JSON.parse(text); } catch { return text; } })() as any };
@@ -60,7 +62,7 @@ describe.skipIf(!localChainAvailable())('StockRun server', () => {
     buyers = new Buyers(db, p, ledger, orders, { extractor: new RuleExtractor(), channel: new BotChannel(), prices: new PriceBook(), foundDb: db, now: () => clock });
     hunt = { db, places: null, osm: null, web: null, generate: null };
     const payouts = new Payouts({ db, ledger, sellerOf: (k) => (k.toLowerCase() === supplierKey('found-00000000000000a1').toLowerCase() ? { name: 'Agora Marketplace', phone: '+2349079579400' } : null) });
-    server = createApp({ hunt, payouts, activity: new Activity(db), admins: new Set(['boss@example.com']), platform: p, accounts: new Accounts(db, new ConsoleSms(), 'x'.repeat(40), Date.now, null, mail), buyers, ledger, prices: new PriceBook(), paystack: null, allowedOrigins: [SITE], log: (l) => process.env.DEBUG_SERVER && console.error(l) });
+    server = createApp({ hunt, payouts, controls: new Controls({ db }), activity: new Activity(db), admins: new Set(['boss@example.com', 'ops@example.com']), platform: p, accounts: new Accounts(db, new ConsoleSms(), 'x'.repeat(40), Date.now, null, mail), buyers, ledger, prices: new PriceBook(), paystack: null, allowedOrigins: [SITE], log: (l) => process.env.DEBUG_SERVER && console.error(l) });
     await new Promise<void>((r) => server.listen(0, r));
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   }, 60_000);
@@ -255,4 +257,40 @@ describe.skipIf(!localChainAvailable())('StockRun server', () => {
     expect(mk(SELLER_APPROVAL_DELAY_MS).addSeller(userId, 'found-00000000000000b2')).toMatchObject({ status: 0, pendingStatus: 1 });
     expect(mk(0).sellerFor(userId, 'found-00000000000000b2')).toMatchObject({ status: 1, pendingStatus: null });
   });
+
+  it('admin controls: only admins; a pause and a freeze refuse new orders over HTTP; the books add up', async () => {
+    const boss = person('10.0.0.7'); await boss.email('ops@example.com');
+    const femi = person('10.0.0.8'); const id = (await femi.email('femi@example.com')).json.user.id;
+    for (const path of ['/api/admin/controls', '/api/admin/books', '/api/admin/users', `/api/admin/users/${id}`, '/api/admin/withdrawals', '/api/admin/posts'])
+      expect((await femi.call(path)).status).toBe(404);                                            // buyers cannot see any of it
+    expect((await femi.call('/api/admin/controls/orders', { paused: true, note: 'not me' })).status).toBe(404);
+    expect((await femi.call(`/api/admin/users/${id}/flags`, { frozen: false })).status).toBe(404);
+
+    await femi.call('/api/dev/naira', { amountNaira: 50_000 });
+    const ask = { text: '2 cartons of Indomie', budgetNaira: 40_000, place: MILE12, delivery: 'self' };
+    expect((await boss.call('/api/admin/controls/orders', { paused: true, note: '' })).status).toBe(400);   // a reason is needed
+    expect((await boss.call('/api/admin/controls/orders', { paused: true, note: 'checking a bug' })).json.switches.orders).toMatchObject({ paused: true, by: 'ops@example.com' });
+    const refused = await femi.call('/api/requests', ask);
+    expect(refused.status).toBe(503);
+    expect(refused.json.error).toMatch(/New orders are paused/);
+    await boss.call('/api/admin/controls/orders', { paused: false });
+
+    expect((await boss.call(`/api/admin/users/${id}/flags`, { frozen: true, note: 'card reported stolen' })).json).toMatchObject({ frozen: true });
+    const frozen = await femi.call('/api/requests', ask);
+    expect(frozen.status).toBe(403);
+    expect(frozen.json.error).toMatch(/on hold/);
+    expect((await femi.call('/api/me')).json.naira.availableNaira).toBe(50_000);                  // the balance is untouched
+    expect((await boss.call('/api/admin/users?q=femi')).json[0]).toMatchObject({ id, flags: { frozen: true }, naira: { availableNaira: 50_000 } });
+    const detail = (await boss.call(`/api/admin/users/${id}`)).json;
+    expect(detail).toMatchObject({ label: 'femi@example.com', flags: { frozen: true, note: 'card reported stolen' } });
+    expect(detail.history[0]).toMatchObject({ type: 'demo', amountNaira: 50_000 });
+    await boss.call(`/api/admin/users/${id}/flags`, { frozen: false });
+    expect((await femi.call('/api/requests', ask)).status).toBe(200);
+
+    const books = (await boss.call('/api/admin/books')).json;
+    expect(books).toMatchObject({ paystackNaira: null, paystackError: 'Paystack is not switched on.', ledger: { ok: true } });
+    expect(books.owed.totalNaira).toBe(books.owed.buyersAvailableNaira + books.owed.lockedNaira + books.owed.sellersNaira + books.owed.logisticsNaira + books.owed.withdrawalsPendingNaira);
+    const log = (await boss.call('/api/admin/overview')).json.log.map((l: any) => `${l.action}: ${l.detail}`);
+    expect(log).toEqual(expect.arrayContaining(['paused: orders: checking a bug', 'resumed: orders', `user: froze user ${id}: card reported stolen`, `user: unfroze user ${id}`]));
+  }, 120_000);
 });

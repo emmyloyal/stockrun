@@ -9,6 +9,13 @@ export function loadSuppliers(): Supplier[] {
   return cache;
 }
 
+// The demo sellers in data/suppliers.json are simulated bots. They are on for the local test chain only: on the live
+// server (real naira) they are never shown, searched, negotiated with or treated as verified.
+let demoOn = true;
+export function useDemoSellers(on: boolean) { demoOn = on; }
+/** The demo sellers a buyer may see or deal with: none when they are switched off. */
+export const demoSellers = (): Supplier[] => (demoOn ? loadSuppliers() : []);
+
 /** Every distinct product across suppliers (the catalogue the AI maps orders onto). */
 export function catalog(): { item: string; category: Category }[] {
   const seen = new Map<string, Category>();
@@ -42,7 +49,7 @@ export interface Candidate {
  */
 export function searchSuppliers(item: string, shop: Shop, radiusKm: number, statusOf: (id: string) => SupplierStatus): Candidate[] {
   const rank = { 2: 0, 1: 1, 0: 2, 3: 9 } as const;
-  return loadSuppliers()
+  return demoSellers()
     .flatMap((s) => {
       const stock = s.stocks.find((st) => st.item === item);
       if (!stock) return [];

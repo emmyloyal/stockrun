@@ -14,7 +14,7 @@
   <a href="https://stockrun-ai.duckdns.org"><strong>Live app → stockrun-ai.duckdns.org</strong></a>
   &nbsp;·&nbsp; <a href="#"><strong>Demo video (coming soon)</strong></a><!-- TODO: replace # with the video link -->
   &nbsp;·&nbsp; Built for the X Layer × TapeOut "Build X" hackathon
-  &nbsp;·&nbsp; Naira runs in Paystack <strong>test mode</strong>: no real money moves
+  &nbsp;·&nbsp; Naira through Paystack <strong>live</strong>: real money
 </p>
 
 | TapeOut on X Layer mainnet (chain 196) | |
@@ -33,7 +33,8 @@ Details: [TapeOut on X Layer](#tapeout-on-x-layer). Check any order yourself: [V
 - **Every decision can be re-checked.** Each order saves its circuit input, output and block number, so anyone can call
   `eval` again and confirm it. One command does it: `node scripts/verify-order.mjs <orderId>`.
 - **Even the admin is bound.** Only a circuit decision moves locked money. An admin can send an approved payout, but
-  can't create, change or redirect one.
+  can't create, change or redirect one. The admin's emergency controls (pause deposits, orders, withdrawals or payouts;
+  freeze an account) only stop money moving, and a deposit that doesn't match is settled only as Paystack confirms it.
 - **Coins don't need StockRun at all.** A buyer who pays in USD₮0 uses their own vault contract on X Layer, which
   calls the same circuits and moves the coins itself. StockRun can't touch them.
 
@@ -292,7 +293,7 @@ The rules each circuit implements are in [`docs/CIRCUITS.md`](docs/CIRCUITS.md).
 
 **Live:**
 - email and wallet sign-in
-- Paystack deposits (test mode)
+- Paystack naira deposits, withdrawals to your bank and automatic seller payouts (live, real money)
 - AI seller search by address
 - AI-written WhatsApp messages
 - record a deal → RestockGuard → money locked
@@ -303,12 +304,12 @@ The rules each circuit implements are in [`docs/CIRCUITS.md`](docs/CIRCUITS.md).
 - collect and count → PickupCheck → seller's payment approved, the rest refunded
 - registered stores with in-app chat
 - a feed where stores post their stock and buyers message them
-- an admin page for orders, money held and payouts
+- an admin page for orders, money held and payouts, with emergency pauses (deposits, orders, withdrawals, seller
+  payouts), the books checked against the live Paystack balance, deposits that don't match (credit what Paystack
+  received, or refund), large withdrawals waiting for approval (₦500,000 a day per person; over ₦200,000 is checked
+  first), users (search, money history, freeze, mute) and feed moderation
 
 **Not yet:**
-- **Naira withdrawals and automatic seller payouts through Paystack:** built and tested, but Paystack refuses
-  transfers from StockRun's account until it is upgraded from a Starter business (needs CAC registration). A failed
-  withdrawal returns the money to the buyer's balance at once; sellers are paid by hand meanwhile.
 - **Coin orders with delivery:** coin orders are collect-it-yourself for now.
 - **Paying sellers their naira for coin orders automatically:** the vault pays StockRun's payout wallet on-chain;
   StockRun then pays the seller in naira by hand (the admin page lists who is owed).
@@ -320,8 +321,8 @@ The rules each circuit implements are in [`docs/CIRCUITS.md`](docs/CIRCUITS.md).
 ## Try it
 
 1. Open **https://stockrun-ai.duckdns.org** and sign in with your email (you'll get a 6-digit code).
-2. **Money → Add money**, and pay with Paystack's test card: **4084 0840 8408 4081**, CVV 408, any future
-   expiry date, PIN 0000, OTP 123456. No real money moves.
+2. **Money → Add money** and pay with your own card or bank through Paystack. This is **real money**: start with a
+   small amount (from ₦100). **Money → Withdraw** sends what you haven't spent back to your bank.
 3. **Ask** for something, message a seller, record the deal, then confirm the count on **Orders**.
 
 **Paying with coins (real USD₮0 on X Layer mainnet, up to $50):** you need a wallet (OKX Wallet or MetaMask) with a

@@ -9,7 +9,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
 import { formatEther, type Hex } from 'viem';
 import { STATUS, type CheckResult } from '../check/checkService.ts';
-import { haversineKm, loadSuppliers, supplierKey } from '../tools/suppliers.ts';
+import { demoSellers, haversineKm, supplierKey } from '../tools/suppliers.ts';
 import { ageText, type PriceBook } from '../prices/priceBook.ts';
 import { Accounts, AuthError, type User } from '../accounts/accounts.ts';
 import { IN_NIGERIA, type Buyers } from '../buyers/buyers.ts';
@@ -23,6 +23,7 @@ import { foundNear, foundSeller, huntEnabled, huntSellers, type HuntDeps } from 
 import { Geocoder } from '../discovery/geocode.ts';
 import { AdminError, type Payouts } from '../admin/payouts.ts';
 import type { Activity } from '../admin/activity.ts';
+import { SWITCHES, type Controls, type Switch } from '../admin/controls.ts';
 import type { Withdrawals } from '../money/withdrawals.ts';
 import { BusinessError, type Listings } from '../business/listings.ts';
 import { ChatError, type Chats } from '../business/chat.ts';
@@ -69,6 +70,8 @@ export interface AppOptions {
   /** Which found sellers buyers messaged or dealt with (shown to admins). */
   activity?: Activity | null;
   admins?: Set<string>;
+  /** Admin pause switches and frozen/muted accounts; absent: nothing is ever paused. */
+  controls?: Controls | null;
   /** Place search for the map's search box (OpenStreetMap Nominatim); absent: sellers only. */
   geocoder?: Geocoder | null;
   /** whsec_... from registering /api/webhooks/sendrelay with Sendrelay; webhooks are refused without it. */
@@ -100,6 +103,15 @@ export function createApp(o: AppOptions): Server {
   const admin = (c: Ctx): string => { const u = need(c); if (!isAdmin(u) || !o.payouts) throw new AuthError(404, 'Not found.'); return u.email!; };
   const adminTry = <T>(f: () => T): T => { try { return f(); } catch (e) { if (e instanceof AdminError) throw new AuthError(e.status, e.message); throw e; } };
   const adminTryAsync = async <T>(f: () => Promise<T>): Promise<T> => { try { return await f(); } catch (e) { if (e instanceof AdminError || e instanceof PaystackError || e instanceof LedgerError || e instanceof BusinessError) throw new AuthError((e as { status: number }).status, e.message); throw e; } };
+  // Admin controls: a paused switch or a frozen/muted account refuses the action with a plain message.
+  const ctl = o.controls ?? null;
+  const stop = (f: () => void) => { try { f(); } catch (e) { if (e instanceof AdminError) throw new AuthError(e.status, e.message); throw e; } };
+  const paused = (s: Switch) => stop(() => ctl?.guard(s));
+  /** The signed-in person, refused if their account is frozen (money in or out, new orders). */
+  const active = (c: Ctx): User => { const u = need(c); stop(() => ctl?.guardMoney(u.id)); return u; };
+  /** The signed-in person, refused if muted or frozen (posts, chat). */
+  const speaker = (c: Ctx): User => { const u = need(c); stop(() => ctl?.guardSpeech(u.id)); return u; };
+  const controls = (): Controls => { if (!ctl) throw new AuthError(503, 'Admin controls are not switched on.'); return ctl; };
   const hidden = (sellerId: string) => !!o.listings?.hidden(sellerId);
   const biz = () => { if (!o.listings) throw new AuthError(503, 'Store registration is not switched on yet.'); return o.listings; };
   const chat = <T>(f: (c: Chats) => T): T => {
@@ -183,6 +195,7 @@ export function createApp(o: AppOptions): Server {
       coins: o.coins ? { cap: Number(o.coins.cap.tokens) / 1e6, capNaira: o.coins.cap.naira, symbol: p.tokenSymbol, token: p.token, chainId: p.chain.id, payout: p.supplierPayout } : null,
       supportEmail: o.supportEmail ?? null,
       sellerHunt: !!o.hunt && huntEnabled(o.hunt),
+      demoSellers: demoSellers().length > 0,
       chat: !!o.chats,
       feed: !!o.posts,
       business: o.listings ? { feeNaira: o.listings.feeKobo / 100, periodDays: Math.round(o.listings.periodMs / 86_400_000) } : null,
@@ -215,8 +228,9 @@ export function createApp(o: AppOptions): Server {
 
     // ---------------------------------------------------------------- naira
     ['POST', /^\/api\/naira\/deposit$/, async (c) => {
-      const u = need(c);
+      const u = active(c);
       if (!paystack) throw new AuthError(503, 'Naira deposits are not switched on yet on this server.');
+      paused('deposits');
       return wrap(() => paystack.start(u.id, kobo(Number(c.body?.amountNaira)), String(c.body?.email ?? '').trim()));
     }],
     ['POST', /^\/api\/naira\/confirm$/, async (c) => {
@@ -238,7 +252,7 @@ export function createApp(o: AppOptions): Server {
     }],
 
     // ---------------------------------------------------------------- requests and orders
-    ['POST', /^\/api\/requests$/, async (c) => wrap(() => buyers.request(need(c), c.body ?? {}))],
+    ['POST', /^\/api\/requests$/, async (c) => { const u = active(c); paused('orders'); return wrap(() => buyers.request(u, c.body ?? {})); }],
     ['GET', /^\/api\/requests$/, async (c) => buyers.requests(need(c).id)],
     ['GET', /^\/api\/orders$/, async (c) => {
       const u = need(c), rt = buyers.runtime(u.id);
@@ -250,10 +264,11 @@ export function createApp(o: AppOptions): Server {
 
     // ---------------------------------------------------------------- coins: the buyer's own vault on X Layer
     /** Deploy the buyer's vault, owned by their connected wallet (StockRun pays the gas). */
-    ['POST', /^\/api\/coins\/vault$/, async (c) => onChain(() => coins().setUp(need(c)))],
+    ['POST', /^\/api\/coins\/vault$/, async (c) => { const u = active(c); return onChain(() => coins().setUp(u)); }],
     /** A deal paid with coins: self-pickup, decided by RestockGuard inside the buyer's vault. */
     ['POST', /^\/api\/coins\/deals$/, async (c) => {
-      const u = need(c), d = buyers.parseDeal(u, { ...(c.body ?? {}), delivery: 'self' });
+      const u = active(c); paused('orders');
+      const d = buyers.parseDeal(u, { ...(c.body ?? {}), delivery: 'self' });
       const r = await onChain(() => coins().recordDeal(u, d));
       o.activity?.record(u.id, d.s.id, 'recorded_deal', `${d.quantity} ${d.unit} ${d.item} at ₦${d.price.toLocaleString('en-NG')} in coins: ${r.status}${'orderId' in r && r.orderId ? ` (order ${r.orderId})` : ''}`);
       return r;
@@ -272,6 +287,7 @@ export function createApp(o: AppOptions): Server {
     }],
     ['POST', /^\/api\/orders\/(\d+)\/approve$/, async (c) => {
       const { u, rt } = myOrder(c);
+      active(c); paused('orders');
       const r = await wrap(() => buyers.orders.approve(u.id, Number(c.m[1])));
       await buyers.dispatcher.bookPending(rt.dispatch).catch(() => {});
       return { result: r.status, reason: 'reason' in r ? RESTOCK_REASONS[r.reason] ?? '' : '' };
@@ -342,7 +358,7 @@ export function createApp(o: AppOptions): Server {
       if (u.role !== 'shop') throw new AuthError(403, 'Only shop owner accounts can register a store. Switch to a shop owner account in Me first.');
       return adminTryAsync(() => biz().save(u.id, c.body ?? {}));
     }],
-    ['POST', /^\/api\/business\/pay$/, async (c) => { const u = need(c); return adminTry(() => { try { return biz().payMonth(u.id, String(c.body?.key ?? '')); } catch (e) { if (e instanceof BusinessError) throw new AuthError(e.status, e.message); throw e; } }); }],
+    ['POST', /^\/api\/business\/pay$/, async (c) => { const u = active(c); return adminTry(() => { try { return biz().payMonth(u.id, String(c.body?.key ?? '')); } catch (e) { if (e instanceof BusinessError) throw new AuthError(e.status, e.message); throw e; } }); }],
     /** The store's bank account, so StockRun pays it for collected orders (checked with the bank; approved with the store). */
     ['POST', /^\/api\/business\/bank$/, async (c) => {
       const u = need(c), b = biz().mine(u.id);
@@ -367,18 +383,18 @@ export function createApp(o: AppOptions): Server {
     // ---------------------------------------------------------------- chat with registered stores
     ['GET', /^\/api\/chats$/, async (c) => { const u = need(c); return chat((ch) => ({ chats: ch.list(u.id), unread: ch.unread(u.id) })); }],
     ['POST', /^\/api\/chats$/, async (c) => {
-      const u = need(c), sellerId = String(c.body?.sellerId ?? '');
+      const u = speaker(c), sellerId = String(c.body?.sellerId ?? '');
       if (!/^found-[0-9a-f]{16}$/.test(sellerId)) throw new AuthError(400, 'Which store?');
       const r = chat((ch) => ch.open(u.id, sellerId));
       o.activity?.record(u.id, sellerId, 'opened_chat');
       return r;
     }],
     ['GET', /^\/api\/chats\/(\d+)\/messages$/, async (c) => { const u = need(c); return chat((ch) => ch.messages(u.id, Number(c.m[1]), Number(c.url.searchParams.get('after')) || 0)); }],
-    ['POST', /^\/api\/chats\/(\d+)\/messages$/, async (c) => { const u = need(c); return chat((ch) => ch.send(u.id, Number(c.m[1]), c.body?.text)); }],
+    ['POST', /^\/api\/chats\/(\d+)\/messages$/, async (c) => { const u = speaker(c); return chat((ch) => ch.send(u.id, Number(c.m[1]), c.body?.text)); }],
 
     // ---------------------------------------------------------------- store posts, the buyers' feed, store pages
     ['GET', /^\/api\/feed$/, async (c) => { const u = need(c); return feed((p) => p.feed(u.id, Number(c.url.searchParams.get('before')) || 0)); }],
-    ['POST', /^\/api\/posts$/, async (c) => { const u = need(c); return feed((p) => p.create(u.id, c.body ?? {})); }],
+    ['POST', /^\/api\/posts$/, async (c) => { const u = speaker(c); return feed((p) => p.create(u.id, c.body ?? {})); }],
     ['POST', /^\/api\/posts\/(\d+)\/delete$/, async (c) => { const u = need(c); feed((p) => p.remove(u.id, Number(c.m[1]))); return { ok: true }; }],
     ['GET', /^\/api\/stores\/(found-[0-9a-f]{16})$/, async (c) => { const u = need(c); return feed((p) => p.store(u.id, c.m[1])); }],
 
@@ -416,8 +432,9 @@ export function createApp(o: AppOptions): Server {
     }],
     /** The buyer takes spendable naira out to their own bank. */
     ['POST', /^\/api\/naira\/withdraw$/, async (c) => {
-      const u = need(c);
+      const u = active(c);
       if (!o.withdrawals) throw new AuthError(503, 'Withdrawals are not switched on yet on this server.');
+      paused('withdrawals');
       return adminTryAsync(() => o.withdrawals!.start(u.id, kobo(Number(c.body?.amountNaira)), String(c.body?.bankCode ?? ''), String(c.body?.accountNumber ?? '')));
     }],
     ['GET', /^\/api\/naira\/withdrawals$/, async (c) => (o.withdrawals ? o.withdrawals.forUser(need(c).id) : [])],
@@ -457,11 +474,118 @@ export function createApp(o: AppOptions): Server {
     ['POST', /^\/api\/admin\/payouts\/(\d+)\/pay$/, async (c) => {
       admin(c);
       if (!o.payouts!.paystack) throw new AuthError(503, 'Paystack payouts are not switched on.');
+      if (ctl?.paused('payouts')) throw new AuthError(503, 'Seller payouts are paused. Resume them at the top of this page first.');
       const r = await o.payouts!.autoPay(Number(c.m[1]));
       return { result: r, payout: o.payouts!.list().find((p) => p.orderId === Number(c.m[1])) ?? null };
     }],
     ['POST', /^\/api\/admin\/payouts\/(\d+)\/hold$/, async (c) => { const a = admin(c); return adminTry(() => o.payouts!.hold(a, Number(c.m[1]), c.body?.hold !== false, String(c.body?.note ?? ''))); }],
     ['POST', /^\/api\/admin\/payouts\/(\d+)\/paid$/, async (c) => { const a = admin(c); return adminTry(() => o.payouts!.markPaid(a, Number(c.m[1]), String(c.body?.reference ?? ''))); }],
+
+    // ---------------------------------------------------------------- admin controls: pause, deposits, withdrawals, users, books, posts
+    // None of these decides a payment. Pauses and freezes only stop money moving; a mismatched deposit is settled only
+    // as Paystack confirms it; a withdrawal is sent or returned to the buyer's own balance.
+    ['GET', /^\/api\/admin\/controls$/, async (c) => { admin(c); return { switches: controls().switches(), withdrawalLimits: o.withdrawals ? { dailyNaira: o.withdrawals.limits.dailyLimitKobo / 100, reviewOverNaira: o.withdrawals.limits.reviewOverKobo / 100 } : null }; }],
+    ['POST', new RegExp(`^/api/admin/controls/(${SWITCHES.join('|')})$`), async (c) => {
+      const a = admin(c);
+      return adminTry(() => ({ switches: controls().setSwitch(a, c.m[1], c.body?.paused === true, String(c.body?.note ?? '')) }));
+    }],
+    /** The books: what Paystack holds against what StockRun owes people (all from the ledger). */
+    ['GET', /^\/api\/admin\/books$/, async (c) => {
+      admin(c);
+      const t = o.payouts!.totals(), pending = o.withdrawals?.pendingKobo() ?? 0, k = (x: number) => x / 100;
+      const owedKobo = t.buyersAvailableKobo + t.lockedKobo + t.owedSellersKobo + t.owedLogisticsKobo + pending;
+      const incomeKobo = ledger.system('fees') + ledger.system('listings');
+      let paystackKobo: number | null = null, paystackError: string | null = null;
+      if (paystack) { try { paystackKobo = await paystack.balanceKobo(); } catch (e) { paystackError = (e as Error).message; } } else paystackError = 'Paystack is not switched on.';
+      const coinOwedNaira = (o.coins?.owedSellers() ?? []).reduce((s, r) => s + Number(r.seller_owed_naira || 0), 0);
+      return {
+        paystackNaira: paystackKobo === null ? null : k(paystackKobo), paystackError, test: paystack?.test ?? true,
+        owed: { totalNaira: k(owedKobo), buyersAvailableNaira: k(t.buyersAvailableKobo), lockedNaira: k(t.lockedKobo), sellersNaira: k(t.owedSellersKobo), logisticsNaira: k(t.owedLogisticsKobo), withdrawalsPendingNaira: k(pending) },
+        incomeNaira: k(incomeKobo), coinOwedNaira,
+        differenceNaira: paystackKobo === null ? null : k(paystackKobo - owedKobo),
+        ledger: ledger.check(),
+      };
+    }],
+    ['GET', /^\/api\/admin\/deposits$/, async (c) => {
+      admin(c);
+      if (!paystack) return [];
+      const status = c.url.searchParams.get('status') || undefined;
+      return paystack.deposits(status, 100).map((d) => ({ ...d, amountNaira: d.amountKobo / 100, chargeNaira: d.chargeKobo / 100, buyer: o.payouts!.buyerLabel(d.userId) }));
+    }],
+    /** Ask Paystack again about a deposit that was started (e.g. the webhook never came): credits it if it is paid. */
+    ['POST', /^\/api\/admin\/deposits\/([A-Za-z0-9_-]{6,80})\/recheck$/, async (c) => {
+      const a = admin(c);
+      if (!paystack) throw new AuthError(503, 'Paystack is not switched on.');
+      const r = await adminTryAsync(() => paystack.confirm(c.m[1]));
+      ctl?.log(a, 'deposit_recheck', `${c.m[1]}: ${r.status}`);
+      return r;
+    }],
+    ['POST', /^\/api\/admin\/deposits\/([A-Za-z0-9_-]{6,80})\/resolve$/, async (c) => {
+      const a = admin(c);
+      if (!paystack) throw new AuthError(503, 'Paystack is not switched on.');
+      const action = c.body?.action === 'refund' ? 'refund' : c.body?.action === 'credit' ? 'credit' : null;
+      if (!action) throw new AuthError(400, 'Credit or refund?');
+      const r = await adminTryAsync(() => paystack.resolveMismatch(c.m[1], action));
+      ctl?.log(a, `deposit_${action}`, `${c.m[1]} for user ${r.userId}${r.creditedKobo ? `: credited ₦${(r.creditedKobo / 100).toLocaleString('en-NG')}` : ''}`);
+      return r;
+    }],
+    ['GET', /^\/api\/admin\/withdrawals$/, async (c) => {
+      admin(c);
+      if (!o.withdrawals) return [];
+      const s = c.url.searchParams.get('status');
+      const status = s === 'review' || s === 'sending' || s === 'sent' || s === 'failed' ? s : undefined;
+      return o.withdrawals.all(status, 100).map((w) => ({ ...w, amountNaira: w.amountKobo / 100, buyer: o.payouts!.buyerLabel(w.userId) }));
+    }],
+    ['POST', /^\/api\/admin\/withdrawals\/([A-Za-z0-9_-]{6,80})\/approve$/, async (c) => {
+      const a = admin(c);
+      if (!o.withdrawals) throw new AuthError(503, 'Withdrawals are not switched on.');
+      paused('withdrawals');
+      const w = await adminTryAsync(() => o.withdrawals!.approve(c.m[1]));
+      ctl?.log(a, 'withdrawal_approved', `${c.m[1]} ₦${(w.amountKobo / 100).toLocaleString('en-NG')} for user ${w.userId}: ${w.status}`);
+      return w;
+    }],
+    ['POST', /^\/api\/admin\/withdrawals\/([A-Za-z0-9_-]{6,80})\/reject$/, async (c) => {
+      const a = admin(c);
+      if (!o.withdrawals) throw new AuthError(503, 'Withdrawals are not switched on.');
+      const reason = String(c.body?.reason ?? '');
+      const w = await adminTryAsync(async () => o.withdrawals!.reject(c.m[1], reason));
+      ctl?.log(a, 'withdrawal_rejected', `${c.m[1]} for user ${w.userId}: ${reason.trim().slice(0, 200)}`);
+      return w;
+    }],
+    ['GET', /^\/api\/admin\/users$/, async (c) => {
+      admin(c);
+      return controls().findUsers(c.url.searchParams.get('q') ?? '').map((u) => ({ ...u, label: o.payouts!.buyerLabel(u.id), naira: money(u.id) }));
+    }],
+    ['GET', /^\/api\/admin\/users\/(\d+)$/, async (c) => {
+      admin(c);
+      const id = Number(c.m[1]), u = controls().user(id);
+      if (!u) throw new AuthError(404, 'No such user.');
+      const orders = buyers.orders.recent(1000).filter((r) => r.user_id === id);
+      return {
+        user: u, label: o.payouts!.buyerLabel(id), flags: controls().flags(id), naira: money(id),
+        history: ledger.history(id, 100).map((m) => ({ ...m, amountNaira: toNaira(m.amountKobo) })),
+        deposits: (paystack?.depositsFor(id) ?? []).map((d) => ({ ...d, amountNaira: d.amountKobo / 100 })),
+        withdrawals: (o.withdrawals?.forUser(id) ?? []).map((w) => ({ ...w, amountNaira: w.amountKobo / 100 })),
+        orders: orders.slice(0, 20).map((r) => ({ orderId: r.id, status: STATUS_NAME[r.status] ?? String(r.status), totalNaira: (r.ordered * r.unit_price) / 100, seller: o.payouts!.sellerName(r.supplier_key), createdAt: r.created_at })),
+        store: o.listings?.mine(id) ?? null,
+      };
+    }],
+    ['POST', /^\/api\/admin\/users\/(\d+)\/flags$/, async (c) => {
+      const a = admin(c);
+      return adminTry(() => controls().setFlags(a, Number(c.m[1]), { frozen: c.body?.frozen, muted: c.body?.muted }, String(c.body?.note ?? '')));
+    }],
+    ['GET', /^\/api\/admin\/posts$/, async (c) => {
+      admin(c);
+      return o.posts ? o.posts.recent(50).map((p) => ({ ...p, owner: p.ownerId ? o.payouts!.buyerLabel(p.ownerId) : null })) : [];
+    }],
+    ['POST', /^\/api\/admin\/posts\/(\d+)\/remove$/, async (c) => {
+      const a = admin(c);
+      const reason = String(c.body?.reason ?? '').trim().slice(0, 200);
+      if (reason.length < 3) throw new AuthError(400, 'Say why (other admins see this).');
+      const r = feed((p) => p.adminRemove(Number(c.m[1])));
+      ctl?.log(a, 'post_removed', `post ${c.m[1]} from ${r.sellerId} ("${r.text.slice(0, 80)}"): ${reason}`);
+      return { ok: true };
+    }],
 
     // ---------------------------------------------------------------- the buyer's sellers and recorded deals
     ['GET', /^\/api\/my-sellers\/(found-[0-9a-f]{16})$/, async (c) => buyers.sellerFor(need(c).id, c.m[1])],
@@ -472,7 +596,8 @@ export function createApp(o: AppOptions): Server {
     /** The buyer opened the WhatsApp chat with a found seller (the app tells us when the link is tapped). */
     ['POST', /^\/api\/sellers\/(found-[0-9a-f]{16})\/opened$/, async (c) => { const u = need(c); o.activity?.record(u.id, c.m[1], 'opened_whatsapp'); return { ok: true }; }],
     ['POST', /^\/api\/deals$/, async (c) => {
-      const u = need(c), sellerId = typeof c.body?.sellerId === 'string' && /^found-[0-9a-f]{16}$/.test(c.body.sellerId) ? c.body.sellerId : null;
+      const u = active(c); paused('orders');
+      const sellerId = typeof c.body?.sellerId === 'string' && /^found-[0-9a-f]{16}$/.test(c.body.sellerId) ? c.body.sellerId : null;
       const what = `${c.body?.quantity ?? '?'} ${c.body?.unit ?? ''} ${c.body?.item ?? ''} at ₦${Number(c.body?.unitPriceNaira || 0).toLocaleString('en-NG')}`.replace(/\s+/g, ' ').trim();
       try {
         const r = await buyers.recordDeal(u, c.body ?? {});
@@ -510,7 +635,7 @@ export function createApp(o: AppOptions): Server {
       const has = (...xs: (string | null | undefined)[]) => xs.some((x) => x?.toLowerCase().includes(needle));
       const found = o.hunt ? foundNear(o.hunt.db, from, 1000, 1000).filter((f) => !hidden(f.id) && has(f.name, f.kind?.replace(/_/g, ' '), f.address))
         .map((f) => ({ id: f.id, name: f.name, kind: f.kind, address: f.address, lat: f.lat, lng: f.lng, phone: f.phone, source: f.source, sourceUrl: f.sourceUrl, km: f.km, demo: false })) : [];
-      const demo = loadSuppliers().filter((s) => has(s.name, s.market, ...s.stocks.map((st) => st.item)))
+      const demo = demoSellers().filter((s) => has(s.name, s.market, ...s.stocks.map((st) => st.item)))
         .map((s) => ({ id: s.id, name: s.name, kind: 'demo seller', address: s.market, lat: s.lat, lng: s.lng, phone: null, source: 'demo', sourceUrl: null, km: Math.round(haversineKm(from, s) * 10) / 10, demo: true }));
       const sellers = [...found, ...demo].sort((a, b) => a.km - b.km).slice(0, 8);
       let places: unknown[] = [];
@@ -528,7 +653,7 @@ export function createApp(o: AppOptions): Server {
       const lat = Number(c.url.searchParams.get('lat')), lng = Number(c.url.searchParams.get('lng'));
       const radius = Math.min(100, Math.max(1, Number(c.url.searchParams.get('radius') ?? 25)));
       if (!Number.isFinite(lat) || !Number.isFinite(lng)) throw new AuthError(400, 'lat and lng are needed.');
-      const sellers = loadSuppliers().map((s) => ({ s, km: haversineKm({ lat, lng }, s) })).filter((x) => x.km <= radius).sort((a, b) => a.km - b.km).slice(0, 50);
+      const sellers = demoSellers().map((s) => ({ s, km: haversineKm({ lat, lng }, s) })).filter((x) => x.km <= radius).sort((a, b) => a.km - b.km).slice(0, 50);
       return {
         center: { lat, lng }, radiusKm: radius,
         // Real businesses found on OpenStreetMap or by the AI hunt: not confirmed by StockRun.

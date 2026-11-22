@@ -7,6 +7,7 @@ import { Tx } from './ui';
 import { BankFields, useBanks } from './Banks';
 import { STORE_KINDS } from './Store';
 import type { Business } from './lib';
+import { BooksPanel, DepositsPanel, PausePanel, PostsPanel, UsersPanel, WithdrawalsPanel } from './AdminControls';
 
 /** Coin pickups: the buyer's vault paid StockRun's payout wallet in USD₮0; the seller is owed that in naira. */
 function CoinOwedPanel() {
@@ -47,6 +48,11 @@ export function Admin() {
 
   return (
     <div className="stack">
+      <PausePanel />
+      <BooksPanel />
+      <DepositsPanel />
+      <WithdrawalsPanel />
+
       <div className="panel stack">
         <h2>Money StockRun holds</h2>
         <dl className="money-grid">
@@ -97,6 +103,9 @@ export function Admin() {
           </ul>
         )}
       </div>
+
+      <UsersPanel />
+      <PostsPanel />
 
       <div className="panel stack">
         <h2>Sellers buyers contacted</h2>

@@ -453,18 +453,18 @@ function Ask({ cfg, user, me, onAsked, goMoney, onChat }: { cfg: Config; user: U
                 </div>
               )}
             </div>
-            <span className="fine">{pinned ? `${found.length} real and ${sellers.length} demo seller(s) within 25 km · tap the map to move your pin` : 'Tap the map to drop your pin.'}</span>
+            <span className="fine">{pinned ? `${found.length} seller(s)${cfg.demoSellers ? ` and ${sellers.length} demo seller(s)` : ''} within 25 km · tap the map to move your pin` : 'Tap the map to drop your pin.'}</span>
           </>)}
         </div>
       </details>
-      <details className="more">
+      {cfg.demoSellers && <details className="more">
         <summary><Icon.spark size={18} /> Try the demo agent</summary>
         <div className="stack">
           <p className="fine">Six demo sellers answered by bots. The agent haggles within your budget, then RestockGuard locks the money. Needs your area found first (Find sellers).</p>
           <button className="btn ghost" disabled={!!busy || text.trim().length < 3 || b < 1000 || !pinned || place.address.trim().length < 2} onClick={ask}>Ask the demo agent</button>
           {reply && <pre className="reply">{reply}</pre>}
         </div>
-      </details>
+      </details>}
 
       {draft && (
         <Sheet title={`Message ${draft.name}`} onClose={() => setDraft(null)}>

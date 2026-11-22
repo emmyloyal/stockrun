@@ -85,6 +85,24 @@ export class Posts {
     this.db.prepare('UPDATE store_posts SET deleted = 1, photo = NULL WHERE id = ?').run(id);
   }
 
+  /** Admin: the newest posts from every store (live or not), with who owns the store. */
+  recent(limit = 50): (Omit<Post, 'mine'> & { ownerId: number | null; live: boolean })[] {
+    const rows = this.db.prepare('SELECT id, seller_id, text, price_kobo, unit, photo_type, at FROM store_posts WHERE deleted = 0 ORDER BY id DESC LIMIT ?').all(limit) as unknown as Row[];
+    return rows.flatMap((r) => {
+      const b = this.listings.get(r.seller_id), p = this.toPost(r, -1);
+      if (!b || !p) return [];
+      const { mine: _mine, ...rest } = p;
+      return [{ ...rest, ownerId: b.owner?.id ?? null, live: b.live }];
+    });
+  }
+  /** Admin: take a post down (any store). Returns the store it was from, for the admin log. */
+  adminRemove(id: number): { sellerId: string; text: string } {
+    const r = this.db.prepare('SELECT seller_id, text FROM store_posts WHERE id = ? AND deleted = 0').get(id) as unknown as { seller_id: string; text: string } | undefined;
+    if (!r) throw new PostError(404, 'No such post.');
+    this.db.prepare('UPDATE store_posts SET deleted = 1, photo = NULL WHERE id = ?').run(id);
+    return { sellerId: r.seller_id, text: r.text };
+  }
+
   /** Posts from live stores, newest first; `before` (a post id) loads the next page. */
   feed(userId: number, before = 0, limit = 20): Post[] {
     const out: Post[] = [];

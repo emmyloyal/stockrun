@@ -32,8 +32,10 @@ export class Payouts {
   /** Paystack, for paying sellers automatically; null: payouts are sent by hand and recorded. */
   readonly paystack: Paystack | null;
   private sweeping = false;
-  constructor(o: { db: DatabaseSync; ledger: Ledger; sellerOf: (key: Hash) => { name: string; phone: string | null } | null; now?: () => number; paystack?: Paystack | null }) {
-    this.db = o.db; this.ledger = o.ledger; this.sellerOf = o.sellerOf; this.now = o.now ?? Date.now; this.paystack = o.paystack ?? null;
+  /** True while an admin has paused seller payouts: nothing is sent through Paystack. */
+  private paused: () => boolean;
+  constructor(o: { db: DatabaseSync; ledger: Ledger; sellerOf: (key: Hash) => { name: string; phone: string | null } | null; now?: () => number; paystack?: Paystack | null; paused?: () => boolean }) {
+    this.db = o.db; this.ledger = o.ledger; this.sellerOf = o.sellerOf; this.now = o.now ?? Date.now; this.paystack = o.paystack ?? null; this.paused = o.paused ?? (() => false);
     o.db.exec(`
       CREATE TABLE IF NOT EXISTS seller_payouts (
         order_id INTEGER PRIMARY KEY, status TEXT NOT NULL, reference TEXT, note TEXT, paid_at INTEGER, paid_by TEXT, updated_at INTEGER NOT NULL);
@@ -198,7 +200,7 @@ export class Payouts {
    */
   async autoPay(orderId: number): Promise<'paid' | 'skipped' | 'failed'> {
     const ps = this.paystack;
-    if (!ps) return 'skipped';
+    if (!ps || this.paused()) return 'skipped';
     const p = this.list().find((x) => x.orderId === orderId);
     if (!p || p.status !== 'owed' || !p.bank?.approved || !p.bank.bankCode) return 'skipped';
     const key = p.seller.key.toLowerCase();
@@ -234,7 +236,7 @@ export class Payouts {
 
   /** Pay every payout that is ready (called after each pickup and every few seconds). One sweep at a time. */
   async sweep(): Promise<number> {
-    if (!this.paystack || this.sweeping) return 0;
+    if (!this.paystack || this.sweeping || this.paused()) return 0;
     this.sweeping = true;
     let paid = 0;
     try {

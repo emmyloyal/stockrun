@@ -47,6 +47,10 @@ export function depositCharge(amountKobo: number, c: DepositCharge | null): numb
   return gross - amountKobo;
 }
 
+export interface AdminDeposit { reference: string; userId: number; amountKobo: number; chargeKobo: number; status: string; createdAt: number; verifiedAt: number | null }
+type DepositRow = { reference: string; user_id: number; amount_kobo: number; charge_kobo: number; status: string; created_at: number; verified_at: number | null };
+const toDeposit = (r: DepositRow): AdminDeposit => ({ reference: r.reference, userId: r.user_id, amountKobo: r.amount_kobo, chargeKobo: r.charge_kobo, status: r.status, createdAt: r.created_at, verifiedAt: r.verified_at });
+
 export interface PaystackOptions { secretKey: string; callbackUrl: string; fetch?: typeof fetch; depositCharge?: DepositCharge | null }
 
 export class Paystack {
@@ -91,6 +95,9 @@ export class Paystack {
     const dep = this.db.prepare('SELECT user_id, amount_kobo, charge_kobo, status FROM deposits WHERE reference = ?').get(reference) as unknown as { user_id: number; amount_kobo: number; charge_kobo: number; status: string } | undefined;
     if (!dep || (userId !== undefined && dep.user_id !== userId)) throw new PaystackError(404, 'No such deposit.');
     if (dep.status === 'credited') return { status: 'already', amountKobo: dep.amount_kobo };
+    // An admin settles these by hand (resolveMismatch); a webhook or redirect must not touch them.
+    if (dep.status === 'mismatch' || dep.status === 'resolving') throw new PaystackError(409, 'This payment does not match the deposit we started. StockRun will check it by hand.');
+    if (dep.status === 'refunded') return { status: 'failed', amountKobo: dep.amount_kobo };
     const d = await this.call<{ status: string; amount: number; currency: string; reference: string; metadata?: { userId?: number | string } }>('GET', `/transaction/verify/${encodeURIComponent(reference)}`);
     if (d.reference !== reference) throw new PaystackError(502, 'Paystack answered for a different payment.');
     if (d.status !== 'success') {
@@ -107,6 +114,57 @@ export class Paystack {
     const fresh = this.ledger.deposit(dep.user_id, reference, dep.amount_kobo);
     this.db.prepare('UPDATE deposits SET status = ?, verified_at = ? WHERE reference = ?').run('credited', Date.now(), reference);
     return { status: fresh ? 'credited' : 'already', amountKobo: dep.amount_kobo };
+  }
+
+  // ---------------------------------------------------------------- admin: deposits to check, the books
+  /** StockRun's NGN balance at Paystack, in kobo (read only). */
+  async balanceKobo(): Promise<number> {
+    const rows = await this.call<{ currency: string; balance: number }[]>('GET', '/balance');
+    return rows.filter((r) => r.currency === 'NGN').reduce((s, r) => s + r.balance, 0);
+  }
+
+  /** Deposits, newest first: one status, or all. */
+  deposits(status?: string, limit = 100): AdminDeposit[] {
+    const rows = (status
+      ? this.db.prepare('SELECT * FROM deposits WHERE status = ? ORDER BY created_at DESC LIMIT ?').all(status, limit)
+      : this.db.prepare('SELECT * FROM deposits ORDER BY created_at DESC LIMIT ?').all(limit)) as unknown as DepositRow[];
+    return rows.map(toDeposit);
+  }
+  depositsFor(userId: number, limit = 20): AdminDeposit[] {
+    return (this.db.prepare('SELECT * FROM deposits WHERE user_id = ? ORDER BY created_at DESC LIMIT ?').all(userId, limit) as unknown as DepositRow[]).map(toDeposit);
+  }
+
+  /**
+   * Admin: settle a deposit that did not match what we started (status 'mismatch'), following what Paystack says
+   * was really paid. 'credit': the buyer's balance gets what Paystack received minus the charge we asked for (never
+   * more than was paid), once, under the same reference. 'refund': Paystack sends the payment back to the payer and
+   * nothing is credited. Neither is possible unless Paystack confirms a successful NGN payment for this reference.
+   */
+  async resolveMismatch(reference: string, action: 'credit' | 'refund'): Promise<AdminDeposit & { creditedKobo?: number }> {
+    const dep = this.db.prepare('SELECT * FROM deposits WHERE reference = ?').get(reference) as unknown as DepositRow | undefined;
+    if (!dep) throw new PaystackError(404, 'No such deposit.');
+    if (dep.status !== 'mismatch') throw new PaystackError(409, 'Only a deposit marked "does not match" can be settled here.');
+    // Claimed first, so two admins (or a double click) cannot both credit, or credit and refund, the same payment.
+    if (Number(this.db.prepare("UPDATE deposits SET status = 'resolving' WHERE reference = ? AND status = 'mismatch'").run(reference).changes) !== 1)
+      throw new PaystackError(409, 'Someone else is already settling this deposit.');
+    try {
+      const d = await this.call<{ status: string; amount: number; currency: string; reference: string }>('GET', `/transaction/verify/${encodeURIComponent(reference)}`);
+      if (d.reference !== reference || d.status !== 'success') throw new PaystackError(409, `Paystack says this payment is "${d.status}", so there is nothing to credit or refund.`);
+      if (action === 'refund') {
+        await this.call('POST', '/refund', { transaction: reference });
+        this.db.prepare('UPDATE deposits SET status = ? WHERE reference = ?').run('refunded', reference);
+        return toDeposit({ ...dep, status: 'refunded' });
+      }
+      if (d.currency !== 'NGN') throw new PaystackError(409, `This payment was in ${d.currency}, not naira. Refund it instead.`);
+      const credit = d.amount - dep.charge_kobo;
+      if (!Number.isSafeInteger(credit) || credit <= 0) throw new PaystackError(409, 'What was paid does not cover Paystack\'s charge. Refund it instead.');
+      this.ledger.deposit(dep.user_id, reference, credit);
+      this.db.prepare('UPDATE deposits SET status = ?, verified_at = ? WHERE reference = ?').run('credited', Date.now(), reference);
+      return { ...toDeposit({ ...dep, status: 'credited', verified_at: Date.now() }), creditedKobo: credit };
+    } catch (e) {
+      this.db.prepare("UPDATE deposits SET status = 'mismatch' WHERE reference = ? AND status = 'resolving'").run(reference);
+      throw e;
+    }
   }
 
   /** Paystack webhook signature: HMAC-SHA512 of the raw body with the secret key, hex, in x-paystack-signature. */

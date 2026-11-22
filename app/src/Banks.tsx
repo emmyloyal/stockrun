@@ -86,7 +86,9 @@ export function WithdrawPanel({ available, onDone }: { available: number; onDone
         setBusy(true); setMsg(null);
         try {
           const w = await server.withdraw(n, v.bankCode, v.accountNumber);
-          setMsg(w.status === 'failed' ? { ok: false, text: w.note ?? 'The withdrawal failed; your money is back.' } : { ok: true, text: `${naira(w.amountKobo / 100)} sent to ${w.accountName}, ${w.bankName}.${w.note ? ` ${w.note}` : ''}` });
+          setMsg(w.status === 'failed' ? { ok: false, text: w.note ?? 'The withdrawal failed; your money is back.' }
+            : w.status === 'review' ? { ok: true, text: `${naira(w.amountKobo / 100)} to ${w.accountName}, ${w.bankName}: waiting for StockRun to check it.${w.note ? ` ${w.note}` : ''}` }
+            : { ok: true, text: `${naira(w.amountKobo / 100)} sent to ${w.accountName}, ${w.bankName}.${w.note ? ` ${w.note}` : ''}` });
           setAmount(''); refresh(); onDone();
         } catch (e) { setMsg({ ok: false, text: (e as Error).message }); } finally { setBusy(false); }
       }}>{busy ? 'Sending…' : `Withdraw ${n ? naira(n) : ''}`}</button>
@@ -94,7 +96,7 @@ export function WithdrawPanel({ available, onDone }: { available: number; onDone
       {msg && <p className={msg.ok ? 'ok' : 'alert'}>{msg.text}</p>}
       {list.length > 0 && (
         <ul className="plain">{list.map((w) => (
-          <li key={w.reference} className="fine">{naira(w.amountKobo / 100)} to {w.accountName} ({w.bankName}) · {w.status === 'sent' ? 'sent' : w.status === 'failed' ? 'failed, money returned' : 'sending'}{w.note ? ` · ${w.note}` : ''}</li>
+          <li key={w.reference} className="fine">{naira(w.amountKobo / 100)} to {w.accountName} ({w.bankName}) · {w.status === 'sent' ? 'sent' : w.status === 'failed' ? 'failed, money returned' : w.status === 'review' ? 'being checked by StockRun' : 'sending'}{w.note ? ` · ${w.note}` : ''}</li>
         ))}</ul>
       )}
     </div>

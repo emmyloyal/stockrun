@@ -23,12 +23,13 @@ import { Geocoder } from '../discovery/geocode.ts';
 import { Payouts, adminList } from '../admin/payouts.ts';
 import { Activity } from '../admin/activity.ts';
 import { Withdrawals } from '../money/withdrawals.ts';
+import { Controls } from '../admin/controls.ts';
 import { CoinOrders } from '../coins/coinOrders.ts';
 import { PAYSTACK_LOCAL } from '../money/paystack.ts';
 import { Listings } from '../business/listings.ts';
 import { Chats } from '../business/chat.ts';
 import { Posts } from '../business/posts.ts';
-import { loadSuppliers, supplierKey } from '../tools/suppliers.ts';
+import { loadSuppliers, supplierKey, useDemoSellers } from '../tools/suppliers.ts';
 import type { Hash } from 'viem';
 import { WebSellerSearch } from '../discovery/webSearch.ts';
 import { geminiClient } from '../llm.ts';
@@ -44,6 +45,8 @@ if (existsSync(envFile)) process.loadEnvFile(envFile);
 const env = process.env;
 const network = process.argv.find((a) => a.startsWith('--network='))?.slice(10) ?? envValue(env, 'NETWORK') ?? 'local';
 if (network !== 'local' && network !== 'xlayer') throw new Error('NETWORK must be local or xlayer');
+// Demo (bot) sellers exist on the local test chain only. On X Layer buyers deal with real sellers and real naira.
+useDemoSellers(network === 'local');
 const port = Number(envValue(env, 'PORT') ?? envValue(env, 'APP_PORT') ?? 8080);   // PORT: set by hosts such as Render
 
 let stopChain = () => {};
@@ -77,7 +80,7 @@ let buyers: Buyers;
 // StockRun's service fee, paid by the buyer on completed pickups (the seller always gets the full agreed price).
 const fee = { bps: Math.round(Number(envValue(env, 'FEE_PERCENT') ?? 1.5) * 100), minKobo: Math.round(Number(envValue(env, 'FEE_MIN_NAIRA') ?? 100) * 100), maxKobo: Math.round(Number(envValue(env, 'FEE_MAX_NAIRA') ?? 10_000) * 100) };
 const orders = new NairaOrders({ db, ledger, fee, evalCircuit: circuitEvaluator(p), supplierStatus: (k, u) => buyers.sellerStatus(k, u), carriers: () => buyers.carrierKeys() });
-// Every seller in data/suppliers.json is a simulated bot today; real sellers will come in over WhatsApp.
+// data/suppliers.json holds simulated bot sellers, used on the local chain only (see useDemoSellers above).
 buyers = new Buyers(db, p, ledger, orders, { extractor, channel: new BotChannel(), prices, log, foundDb: db, sellerHidden: (id: string) => listings.hidden(id), sellerDelayMs: Number(envValue(env, 'SELLER_APPROVAL_DELAY_HOURS') ?? 0) * 3600_000, dataDir: network === 'local' ? null : dirname(dbFile) });
 const paystackKey = envValue(env, 'PAYSTACK_SECRET_KEY');
 const publicUrl = envValue(env, 'PUBLIC_URL') ?? `http://localhost:${port}`;
@@ -87,6 +90,8 @@ const accounts = new Accounts(db, noSms, secret, Date.now, null, mail);
 // Paystack's fee on deposits is paid by the buyer on top (PAYSTACK_CHARGE_BUYER=0: StockRun absorbs it).
 const paystack = paystackKey ? new Paystack(db, ledger, { secretKey: paystackKey, callbackUrl: `${publicUrl}/?deposit=done`,
   depositCharge: envValue(env, 'PAYSTACK_CHARGE_BUYER') === '0' ? null : PAYSTACK_LOCAL }) : null;
+// Free demo naira and real naira must never share a ledger: a live key refuses DEMO_NAIRA.
+if (paystack && !paystack.test && envValue(env, 'DEMO_NAIRA') === '1') throw new Error('DEMO_NAIRA=1 hands out free naira, which would mix with real deposits under a live Paystack key. Remove DEMO_NAIRA from .env.');
 
 // The AI seller hunt: OpenStreetMap shops (free; on unless SELLER_OSM=off), Google Maps listings (GOOGLE_MAPS_API_KEY) and Gemini web search (SELLER_WEB_SEARCH=on, needs
 // billing on the Gemini key). Both bill Google per search after their free allowances, so the hunt is capped per day.
@@ -118,8 +123,12 @@ const sellerOf = (key: Hash) => {
   return sellerNames.get(k) ?? null;
 };
 // With Paystack on, approved seller payouts go out automatically (test keys move no money); buyers can withdraw.
-const payouts = new Payouts({ db, ledger, sellerOf, paystack });
-const withdrawals = paystack ? new Withdrawals(db, ledger, paystack) : null;
+// Admin controls: pause switches and frozen/muted accounts (they stop money and posts; they never move money).
+const controls = new Controls({ db });
+const payouts = new Payouts({ db, ledger, sellerOf, paystack, paused: () => controls.paused('payouts') });
+// Withdrawals: up to WITHDRAW_DAILY_NAIRA per person a day (500,000); over WITHDRAW_REVIEW_OVER_NAIRA (200,000) an admin approves first.
+const nairaEnv = (k: string, d: number) => { const n = Number(envValue(env, k) ?? d); return Number.isFinite(n) && n > 0 ? Math.round(n * 100) : d * 100; };
+const withdrawals = paystack ? new Withdrawals(db, ledger, paystack, Date.now, { dailyLimitKobo: nairaEnv('WITHDRAW_DAILY_NAIRA', 500_000), reviewOverKobo: nairaEnv('WITHDRAW_REVIEW_OVER_NAIRA', 200_000) }) : null;
 // Coin orders through each buyer's own vault. The vault is unaudited, so deposits stop at COIN_VAULT_CAP_USD (default
 // $50; on the local chain the test token is naira, so the cap is that many dollars' worth at ₦1,500).
 const capUsd = Number(envValue(env, 'COIN_VAULT_CAP_USD') ?? 50);
@@ -129,7 +138,7 @@ const admins = adminList(envValue(env, 'ADMIN_EMAILS'));
 
 const staticDir = fileURLToPath(new URL('../../../app/dist/', import.meta.url));
 const server = createApp({
-  platform: p, accounts, buyers, ledger, prices, paystack, hunt, payouts, admins, activity: new Activity(db), withdrawals, coins, linkSecret: secret, publicUrl, supportEmail, geocoder, listings, chats: new Chats({ db, listings }), posts: listings ? new Posts({ db, listings }) : null, demoNaira: network === 'local' || envValue(env, 'DEMO_NAIRA') === '1',
+  platform: p, accounts, buyers, ledger, prices, paystack, hunt, payouts, admins, controls, activity: new Activity(db), withdrawals, coins, linkSecret: secret, publicUrl, supportEmail, geocoder, listings, chats: new Chats({ db, listings }), posts: listings ? new Posts({ db, listings }) : null, demoNaira: network === 'local' || envValue(env, 'DEMO_NAIRA') === '1',
   staticDir: existsSync(staticDir) ? staticDir : undefined,
   secureCookies: envValue(env, 'SECURE_COOKIES') === '1', log,
   sendrelayWebhookSecret: envValue(env, 'SENDRELAY_WEBHOOK_SECRET'),
@@ -153,7 +162,7 @@ server.listen(port, async () => {
   console.log(`Seller hunt: OpenStreetMap ${hunt.osm ? 'on' : 'off'}, Google Maps ${hunt.places ? 'on' : 'off (set GOOGLE_MAPS_API_KEY)'}, web search ${hunt.web ? 'on' : 'off'}.`);
   console.log(`Admins: ${admins.size ? [...admins].join(', ') : 'none (set ADMIN_EMAILS)'}. Email: ${mailKind}. Reader: ${extractor instanceof RuleExtractor ? 'rule-based' : `Gemini (${model()})`}.`);
   console.log(`Naira: ${paystack ? `Paystack (${paystack.test ? 'TEST mode, no real money' : 'LIVE'}), held by StockRun in a ledger` : network === 'local' ? 'test naira button (local only)' : 'deposits OFF (set PAYSTACK_SECRET_KEY)'}`);
-  console.log(`Demo naira (free, not real money): ${network === 'local' || envValue(env, 'DEMO_NAIRA') === '1' ? 'ON' : 'off'}. Database: ${dbFile}. Sellers: simulated bots.`);
+  console.log(`Demo naira (free, not real money): ${network === 'local' || envValue(env, 'DEMO_NAIRA') === '1' ? 'ON' : 'off'}. Database: ${dbFile}. Demo bot sellers: ${network === 'local' ? 'ON (local only)' : 'off'}.`);
   console.log(`Logistics: ${p.carriers.map((c) => `${c.name}${c.connector ? '' : ' (no booking API)'}`).join(', ') || 'none (self-pickup only)'}`);
   if (!existsSync(staticDir)) console.log('App not built yet: run `npm install && npm run build` in app/, then restart.');
 });

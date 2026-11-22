@@ -18,12 +18,33 @@ export interface Config {
   withdrawals?: boolean;
   sellerBankLinks?: boolean;
   sellerHunt: boolean;
+  /** Simulated bot sellers (local test chain only); false on the live server. */
+  demoSellers?: boolean;
 }
 export interface User { id: number; phone: string | null; email: string | null; wallet: Address | null; username: string | null; displayName: string | null; hasAvatar: boolean; createdAt: number; role?: 'buyer' | 'shop' }
 export interface NairaBalance { availableNaira: number; heldNaira: number }
 export interface Me { user: User | null; naira?: NairaBalance; admin?: boolean }
 export interface Bank { bankName: string; accountNumber: string; accountName: string; bankCode?: string | null; approved?: boolean; source?: 'admin' | 'seller' }
-export interface Withdrawal { reference: string; amountKobo: number; bankName: string; accountNumber: string; accountName: string; status: 'sending' | 'sent' | 'failed'; note: string | null; at: number }
+export interface Withdrawal { reference: string; amountKobo: number; bankName: string; accountNumber: string; accountName: string; status: 'review' | 'sending' | 'sent' | 'failed'; note: string | null; at: number }
+// ---------------------------------------------------------------- admin controls (mirror agent/src/admin/controls.ts)
+export type Switch = 'deposits' | 'orders' | 'withdrawals' | 'payouts';
+export interface SwitchState { paused: boolean; note: string | null; by: string | null; at: number | null }
+export interface UserFlags { frozen: boolean; muted: boolean; note: string | null; by: string | null; at: number | null }
+export interface AdminUser { id: number; email: string | null; username: string | null; displayName: string | null; wallet: string | null; phone: string | null; role: string; createdAt: number; flags: UserFlags; label: string; naira: NairaBalance }
+export interface AdminDeposit { reference: string; userId: number; amountNaira: number; chargeNaira: number; status: string; createdAt: number; verifiedAt: number | null; buyer: string }
+export interface AdminWithdrawal extends Withdrawal { userId: number; updatedAt: number; amountNaira: number; buyer: string }
+export interface AdminUserDetail {
+  user: Omit<AdminUser, 'flags' | 'label' | 'naira'>; label: string; flags: UserFlags; naira: NairaBalance;
+  history: Movement[]; deposits: (Omit<AdminDeposit, 'buyer'>)[]; withdrawals: (Withdrawal & { amountNaira: number })[];
+  orders: { orderId: number; status: string; totalNaira: number; seller: string; createdAt: number }[];
+  store: Business | null;
+}
+export interface Books {
+  paystackNaira: number | null; paystackError: string | null; test: boolean;
+  owed: { totalNaira: number; buyersAvailableNaira: number; lockedNaira: number; sellersNaira: number; logisticsNaira: number; withdrawalsPendingNaira: number };
+  incomeNaira: number; coinOwedNaira: number; differenceNaira: number | null; ledger: { ok: boolean; problems: string[] };
+}
+export interface AdminPost extends Omit<Post, 'mine'> { ownerId: number | null; live: boolean; owner: string | null }
 export interface Payout {
   orderId: number; amountNaira: number; approvedAt: number; status: 'owed' | 'held' | 'paid'; buyer: string;
   seller: { key: string; name: string; phone: string | null }; bank: Bank | null; reference: string | null; note: string | null; paidAt: number | null; paidBy: string | null;
@@ -186,6 +207,20 @@ export const server = {
   coinVault: () => call<{ vault: Address; created: boolean; gasTopUpTx: Hash | null }>('/api/coins/vault', {}),
   coinDeal: (d: { sellerId: string; item: string; quantity: number; unit: string; unitPriceNaira: number; category: Category; place: Place }) => call<CoinDealResult>('/api/coins/deals', d),
   coinSettlePickup: (coinOrderId: number) => call<CheckResult & { tx: Hash }>(`/api/coins/orders/${coinOrderId}/settle-pickup`, {}),
+  adminControls: () => call<{ switches: Record<Switch, SwitchState>; withdrawalLimits: { dailyNaira: number; reviewOverNaira: number } | null }>('/api/admin/controls'),
+  adminSetSwitch: (name: Switch, paused: boolean, note: string) => call<{ switches: Record<Switch, SwitchState> }>(`/api/admin/controls/${name}`, { paused, note }),
+  adminBooks: () => call<Books>('/api/admin/books'),
+  adminDeposits: (status = '') => call<AdminDeposit[]>(`/api/admin/deposits${status ? `?status=${status}` : ''}`),
+  adminDepositRecheck: (reference: string) => call<{ status: string }>(`/api/admin/deposits/${reference}/recheck`, {}),
+  adminDepositResolve: (reference: string, action: 'credit' | 'refund') => call<{ status: string; creditedKobo?: number }>(`/api/admin/deposits/${reference}/resolve`, { action }),
+  adminWithdrawals: (status = '') => call<AdminWithdrawal[]>(`/api/admin/withdrawals${status ? `?status=${status}` : ''}`),
+  adminWithdrawalApprove: (reference: string) => call<AdminWithdrawal>(`/api/admin/withdrawals/${reference}/approve`, {}),
+  adminWithdrawalReject: (reference: string, reason: string) => call<AdminWithdrawal>(`/api/admin/withdrawals/${reference}/reject`, { reason }),
+  adminUsers: (q: string) => call<AdminUser[]>(`/api/admin/users?q=${encodeURIComponent(q)}`),
+  adminUser: (id: number) => call<AdminUserDetail>(`/api/admin/users/${id}`),
+  adminUserFlags: (id: number, change: { frozen?: boolean; muted?: boolean }, note: string) => call<UserFlags>(`/api/admin/users/${id}/flags`, { ...change, note }),
+  adminPosts: () => call<AdminPost[]>('/api/admin/posts'),
+  adminRemovePost: (id: number, reason: string) => call<{ ok: true }>(`/api/admin/posts/${id}/remove`, { reason }),
   adminCoinOwed: () => call<CoinOwed[]>('/api/admin/coin-owed'),
   adminCoinPaid: (vault: Address, orderId: number) => call<{ ok: true }>(`/api/admin/coin-owed/${vault}/${orderId}/paid`, {}),
   deposit: (amountNaira: number, email: string) => call<{ reference: string; checkoutUrl: string }>('/api/naira/deposit', { amountNaira, email }),
