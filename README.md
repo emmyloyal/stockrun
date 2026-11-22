@@ -12,6 +12,7 @@
 
 <p align="center">
   <a href="https://stockrun-ai.duckdns.org"><strong>Live app → stockrun-ai.duckdns.org</strong></a>
+  &nbsp;·&nbsp; <a href="#"><strong>Demo video (coming soon)</strong></a><!-- TODO: replace # with the video link -->
   &nbsp;·&nbsp; Built for the X Layer × TapeOut "Build X" hackathon
   &nbsp;·&nbsp; Naira runs in Paystack <strong>test mode</strong>: no real money moves
 </p>
@@ -22,8 +23,19 @@
 | **Circuit ID 1**: RestockGuard (may the money lock?) | tapeout tx [`0xaf6429bf…d2a0feca6fd`](https://www.oklink.com/xlayer/tx/0xaf6429bf2e4a7bc4e435ca493815b8b868d7728389ed904e5eb0dd2a0feca6fd) |
 | **Circuit ID 2**: PickupCheck (how much is the seller paid?) | tapeout tx [`0x24b80f4d…38bacae`](https://www.oklink.com/xlayer/tx/0x24b80f4d29c57371c33357cd9b9ece03038d9016ade3e296620747c5e18bacae) |
 | **Circuit ID 3**: DeliveryCheck (is the logistics fee paid?) | tapeout tx [`0x0249042e…e86d66d2`](https://www.oklink.com/xlayer/tx/0x0249042e8918f77cbe4056880fc10a0d54ab3bdb4599f47fe66fa313e86d66d2) |
+| **Transistor token** (NAND) | [`0xe63af1B06D02Bb1B44741C0459d4083ec5b440d4`](https://www.oklink.com/xlayer/address/0xe63af1B06D02Bb1B44741C0459d4083ec5b440d4) |
 
-Details: [TapeOut on X Layer](#tapeout-on-x-layer).
+Details: [TapeOut on X Layer](#tapeout-on-x-layer). Check any order yourself: [Verify a decision](#verify-a-decision).
+
+**If StockRun holds the naira, what do the circuits add?**
+- **The rules are public and can't be changed.** The processor is frozen, so nobody, StockRun included, can edit how
+  payments are decided.
+- **Every decision can be re-checked.** Each order saves its circuit input, output and block number, so anyone can call
+  `eval` again and confirm it. One command does it: `node scripts/verify-order.mjs <orderId>`.
+- **Even the admin is bound.** Only a circuit decision moves locked money. An admin can send an approved payout, but
+  can't create, change or redirect one.
+- **The next step is the vault.** It moves the money itself, on-chain, using the same circuits. It's written and
+  fork-tested, but not deployed yet.
 
 <p align="center">
   <img src="docs/images/01-welcome.png" width="260" alt="StockRun welcome screen" />
@@ -223,11 +235,33 @@ collection.
 | RestockGuard #1: may the money lock? (34 in → 5 out, 119 NAND) | tapeout tx [`0xaf6429bf…d2a0feca6fd`](https://www.oklink.com/xlayer/tx/0xaf6429bf2e4a7bc4e435ca493815b8b868d7728389ed904e5eb0dd2a0feca6fd) |
 | PickupCheck #2: how much is the seller paid? (27 in → 13 out, 210 NAND) | tapeout tx [`0x24b80f4d…38bacae`](https://www.oklink.com/xlayer/tx/0x24b80f4d29c57371c33357cd9b9ece03038d9016ade3e296620747c5e18bacae) |
 | DeliveryCheck #3: is the logistics fee paid? (21 in → 13 out, 141 NAND) | tapeout tx [`0x0249042e…e86d66d2`](https://www.oklink.com/xlayer/tx/0x0249042e8918f77cbe4056880fc10a0d54ab3bdb4599f47fe66fa313e86d66d2) |
+| Transistor token (NAND) | [`0xe63af1B06D02Bb1B44741C0459d4083ec5b440d4`](https://www.oklink.com/xlayer/address/0xe63af1B06D02Bb1B44741C0459d4083ec5b440d4) |
 | Vault | not deployed yet |
 
 - **Used:** X Layer, the Processor Factory, NAND transistor tokens, tapeout, `eval`.
 - **Not used:** DeWEB (the app runs on an AWS server), TapeSend, REF (the circuits are flat netlists), circuit
   containers.
+
+### Verify a decision
+
+Anyone can check that StockRun applied what the circuits decided. You need Node 18 or later. There's nothing to
+install, and no wallet or gas:
+
+```
+git clone https://github.com/emmyloyal/stockrun && cd stockrun
+node scripts/verify-order.mjs <orderId>
+```
+
+The order number is shown on each order in the app (**#12**, for example).
+[`scripts/verify-order.mjs`](scripts/verify-order.mjs) does three things:
+1. It fetches that order's saved circuit evidence from the live app: circuit, circuit ID, block, packed input and
+   output. This endpoint (`GET /api/orders/<id>/evidence`) returns no names, sellers or accounts.
+2. It calls `eval(circuitId, input)` on the processor through X Layer's public RPC, at the saved block.
+3. It prints ✓ or ✗ for each decision and exits with status 1 if any decision doesn't match.
+
+Public RPCs don't always keep old state. If the saved block isn't available, the script checks against the latest
+block instead and says so. The netlists are frozen, so the answer is the same. Use `--rpc <url>` to point at your own
+node, or `--file evidence.json` to check evidence saved offline.
 
 The rules each circuit implements are in [`docs/CIRCUITS.md`](docs/CIRCUITS.md). The TypeScript reference model in
 [`circuits/reference/`](circuits/reference/) is the source of truth, and tests check that the netlists match it bit for bit.

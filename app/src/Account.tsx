@@ -649,7 +649,7 @@ function Orders({ cfg, onChange, goAsk }: { cfg: Config; onChange: () => void; g
             </div>
           </div>
         )}
-        <CircuitTrail evidence={o.evidence} network={cfg.network} />
+        <CircuitTrail evidence={o.evidence} network={cfg.network} orderId={o.orderId} />
       </li>
     );
   };

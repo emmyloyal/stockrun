@@ -34,7 +34,7 @@ export function Outcome({ r }: { r: CheckResult }) {
 const CIRCUIT: Record<Evidence['circuit'], string> = { restock: 'RestockGuard #1', pickup: 'PickupCheck #2', delivery: 'DeliveryCheck #3' };
 
 /** Which circuit decided what, on which X Layer block: anyone can re-run the same input with eval. */
-export function CircuitTrail({ evidence, network }: { evidence: Evidence[]; network: string }) {
+export function CircuitTrail({ evidence, network, orderId }: { evidence: Evidence[]; network: string; orderId?: string | number }) {
   if (!evidence.length) return null;
   return (
     <details className="trail">
@@ -44,6 +44,9 @@ export function CircuitTrail({ evidence, network }: { evidence: Evidence[]; netw
           <li key={i} className="fine">{CIRCUIT[e.circuit]} at block {Number(e.block).toLocaleString()}: input <code>{e.input}</code> → output <code>{e.output}</code></li>
         ))}
       </ul>
+      {network === 'xlayer' && orderId !== undefined && (
+        <p className="fine">Check it yourself: from the StockRun repo, run <code>node scripts/verify-order.mjs {String(orderId)}</code>. It calls each circuit on X Layer and compares the answer with what was saved here.</p>
+      )}
     </details>
   );
 }

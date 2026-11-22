@@ -230,6 +230,13 @@ export function createApp(o: AppOptions): Server {
       await buyers.dispatcher.bookPending(rt.dispatch).catch(() => {});   // e.g. an order the buyer just approved
       return rt.jobs.all().sort((a, b) => b.createdAt - a.createdAt).map((j) => orderView(u.id, j.orderId)).filter(Boolean);
     }],
+    // Public: an order's circuit evidence only (circuit, block, packed input and output) — no names, sellers or
+    // accounts — so anyone can re-run eval and check the decision (scripts/verify-order.mjs).
+    ['GET', /^\/api\/orders\/(\d+)\/evidence$/, async (c) => {
+      const r = buyers.orders.get(c.m[1]);
+      if (!r) throw new AuthError(404, 'No such order.');
+      return { orderId: r.id, network: p.name, chainId: p.chain.id, processor: p.circuits, evidence: JSON.parse(r.evidence) };
+    }],
     ['POST', /^\/api\/orders\/(\d+)\/approve$/, async (c) => {
       const { u, rt } = myOrder(c);
       const r = await wrap(() => buyers.orders.approve(u.id, Number(c.m[1])));
