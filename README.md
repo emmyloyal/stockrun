@@ -251,7 +251,8 @@ collection.
 | PickupCheck #2: how much is the seller paid? (27 in → 13 out, 210 NAND) | tapeout tx [`0x24b80f4d…38bacae`](https://www.oklink.com/xlayer/tx/0x24b80f4d29c57371c33357cd9b9ece03038d9016ade3e296620747c5e18bacae) |
 | DeliveryCheck #3: did everything arrive? Recorded only, no money moves (21 in → 13 out, 141 NAND) | tapeout tx [`0x0249042e…e86d66d2`](https://www.oklink.com/xlayer/tx/0x0249042e8918f77cbe4056880fc10a0d54ab3bdb4599f47fe66fa313e86d66d2) |
 | Transistor token (NAND) | [`0xe63af1B06D02Bb1B44741C0459d4083ec5b440d4`](https://www.oklink.com/xlayer/address/0xe63af1B06D02Bb1B44741C0459d4083ec5b440d4) |
-| Vault | one per buyer, deployed by StockRun when they set up coins (owner = their wallet) |
+| Vault | one per buyer, deployed by StockRun when they set up coins (owner = their wallet; holds at most $50) |
+| StockRun payout wallet (fixed in every vault) | [`0x3b5E1513d390C139FF8dF34b4B8174fC1Cac9968`](https://www.oklink.com/xlayer/address/0x3b5E1513d390C139FF8dF34b4B8174fC1Cac9968): PickupCheck pays sellers' USD₮0 here; StockRun pays them in naira |
 
 - **Used:** X Layer, the Processor Factory, NAND transistor tokens, tapeout, `eval`.
 - **Not used:** DeWEB (the app runs on an AWS server), TapeSend, REF (the circuits are flat netlists), circuit
@@ -291,7 +292,7 @@ The rules each circuit implements are in [`docs/CIRCUITS.md`](docs/CIRCUITS.md).
 
 **Live:**
 - email and wallet sign-in
-- Paystack deposits and withdrawals (test mode)
+- Paystack deposits (test mode)
 - AI seller search by address
 - AI-written WhatsApp messages
 - record a deal → RestockGuard → money locked
@@ -300,12 +301,14 @@ The rules each circuit implements are in [`docs/CIRCUITS.md`](docs/CIRCUITS.md).
   through the vault. Rehearsed end to end on a mainnet fork with the real circuits and real USD₮0
   (`npm run rehearse:coins`)
 - collect and count → PickupCheck → seller's payment approved, the rest refunded
-- automatic seller payouts through Paystack (test)
 - registered stores with in-app chat
 - a feed where stores post their stock and buyers message them
 - an admin page for orders, money held and payouts
 
 **Not yet:**
+- **Naira withdrawals and automatic seller payouts through Paystack:** built and tested, but Paystack refuses
+  transfers from StockRun's account until it is upgraded from a Starter business (needs CAC registration). A failed
+  withdrawal returns the money to the buyer's balance at once; sellers are paid by hand meanwhile.
 - **Coin orders with delivery:** coin orders are collect-it-yourself for now.
 - **Paying sellers their naira for coin orders automatically:** the vault pays StockRun's payout wallet on-chain;
   StockRun then pays the seller in naira by hand (the admin page lists who is owed).
@@ -320,6 +323,16 @@ The rules each circuit implements are in [`docs/CIRCUITS.md`](docs/CIRCUITS.md).
 2. **Money → Add money**, and pay with Paystack's test card: **4084 0840 8408 4081**, CVV 408, any future
    expiry date, PIN 0000, OTP 123456. No real money moves.
 3. **Ask** for something, message a seller, record the deal, then confirm the count on **Orders**.
+
+**Paying with coins (real USD₮0 on X Layer mainnet, up to $50):** you need a wallet (OKX Wallet or MetaMask) with a
+little USD₮0 and OKB on X Layer.
+
+1. Sign in with your wallet (or connect one under **Me**).
+2. **Money → Coins → Set up my coin vault.** StockRun creates a vault contract that your wallet owns.
+3. **Add** a few dollars of USD₮0. Your wallet asks twice: allow, then deposit.
+4. Record a deal and choose **USD₮0 vault**. Approve the seller when your wallet asks; RestockGuard locks the coins.
+5. On **Orders**, count what you collected and sign it. PickupCheck pays for that many through your vault, and the
+   rest stays yours (withdraw it any time under **Money → Coins**).
 
 Questions or problems: **[stockrun.codes@gmail.com](mailto:stockrun.codes@gmail.com)** (also under **Me → Help & support**
 in the app).
