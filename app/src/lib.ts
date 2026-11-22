@@ -8,6 +8,7 @@ export interface Config {
   logistics: { id: string; name: string; api: boolean }[];
   emailSignIn: boolean;
   chat?: boolean;
+  feed?: boolean;
   business?: { feeNaira: number; periodDays: number } | null;
   withdrawals?: boolean;
   sellerBankLinks?: boolean;
@@ -141,6 +142,10 @@ export const server = {
   openChat: (sellerId: string) => call<ChatSummary>('/api/chats', { sellerId }),
   chatMessages: (id: number, after: number) => call<ChatMessage[]>(`/api/chats/${id}/messages?after=${after}`),
   chatSend: (id: number, text: string) => call<ChatMessage>(`/api/chats/${id}/messages`, { text }),
+  feed: (before = 0) => call<Post[]>(`/api/feed${before ? `?before=${before}` : ''}`),
+  post: (p: { text: string; priceNaira?: number; unit?: string; photo?: { mediaType: string; data: string } }) => call<Post>('/api/posts', p),
+  deletePost: (id: number) => call<{ ok: true }>(`/api/posts/${id}/delete`, {}),
+  store: (sellerId: string) => call<StorePage>(`/api/stores/${sellerId}`),
   depositQuote: (amountNaira: number) => call<{ amountNaira: number; chargeNaira: number; totalNaira: number }>(`/api/naira/deposit-quote?amountNaira=${amountNaira}`),
   withdraw: (amountNaira: number, bankCode: string, accountNumber: string) => call<Withdrawal>('/api/naira/withdraw', { amountNaira, bankCode, accountNumber }),
   withdrawals: () => call<Withdrawal[]>('/api/naira/withdrawals'),
@@ -171,6 +176,7 @@ export const server = {
   received: (id: string, count: number) => call<{ attestTx: string }>(`/api/orders/${id}/received`, { count }),
   map: (lat: number, lng: number, radiusKm = 25) => call<{ sellers: Seller[]; found: FoundSeller[] }>(`/api/map?lat=${lat}&lng=${lng}&radius=${radiusKm}`),
 };
+export const postPhotoUrl = (id: number) => `${API}/api/posts/${id}/photo`;
 export const avatarUrl = (userId: number, bust = 0) => `${API}/api/users/${userId}/avatar${bust ? `?v=${bust}` : ''}`;
 
 // ---------------------------------------------------------------- browser wallet (OKX Wallet, MetaMask)
@@ -232,3 +238,12 @@ export const naira = (n: number) => `₦${n.toLocaleString('en-NG', { maximumFra
 export const short = (h: string) => `${h.slice(0, 6)}…${h.slice(-4)}`;
 export function load<T>(key: string, fallback: T): T { try { const v = localStorage.getItem(key); return v ? (JSON.parse(v) as T) : fallback; } catch { return fallback; } }
 export function save(key: string, value: unknown) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private mode */ } }
+
+export interface Post {
+  id: number; text: string; priceNaira: number | null; unit: string | null; hasPhoto: boolean; at: number;
+  store: { sellerId: string; name: string; kind: string; address: string; lat: number; lng: number }; mine: boolean;
+}
+export interface StorePage {
+  sellerId: string; name: string; kind: string; address: string; lat: number; lng: number;
+  products: { item: string; unit: string; priceNaira: number }[]; posts: Post[]; mine: boolean;
+}

@@ -112,19 +112,30 @@ export function ChatsTab({ openId, onOpened }: { openId: number | null; onOpened
   const current = list?.find((c) => c.id === open) ?? null;
 
   if (open && current) return <Thread chat={current} onBack={() => { setOpen(null); refresh(); }} />;
-  if (!list) return <p className="muted">Loading…</p>;
-  if (!list.length) return <div className="empty"><p>No chats yet.</p><p className="muted">Stores registered on StockRun have a "Chat in StockRun" button in your seller results.</p></div>;
+  if (!list) return <div className="loading"><span className="spinner" aria-hidden="true" /></div>;
+  const toStore = list.filter((c) => c.role === 'shop'), withStores = list.filter((c) => c.role === 'buyer');
+  const row = (c: ChatSummary) => {
+    const name = c.role === 'buyer' ? c.store.name : c.buyer.label;
+    const mine = c.last && c.last.from === (c.role === 'buyer' ? 'buyer' : 'shop');
+    return (
+      <li key={c.id}>
+        <button className={`chat-item${c.unread ? ' unread' : ''}`} onClick={() => setOpen(c.id)}>
+          <span className={`seller-avatar${c.role === 'buyer' ? ' listed' : ''}`} aria-hidden="true">{name.replace('@', '').slice(0, 1).toUpperCase()}</span>
+          <span className="grow">
+            <span className="row between"><strong>{name}</strong>{c.last && <span className="fine nowrap">{when(c.last.at)}</span>}</span>
+            <span className="row between"><span className="fine clip">{c.last ? `${mine ? 'You: ' : ''}${c.last.text}` : 'No messages yet'}</span>{c.unread > 0 && <span className="count">{c.unread}</span>}</span>
+          </span>
+        </button>
+      </li>
+    );
+  };
   return (
-    <ul className="cards">
-      {list.map((c) => (
-        <li key={c.id}>
-          <button className="card chat-row" onClick={() => setOpen(c.id)}>
-            <span className="row between"><strong>{c.role === 'buyer' ? c.store.name : `${c.buyer.label} · about your store`}</strong>{c.unread > 0 && <span className="pill found">{c.unread} new</span>}</span>
-            <span className="fine">{c.last ? `${c.last.from === (c.role === 'buyer' ? 'buyer' : 'shop') ? 'You: ' : ''}${c.last.text}` : 'No messages yet'}</span>
-          </button>
-        </li>
-      ))}
-    </ul>
+    <div className="stack">
+      <header className="screen-head"><h1 className="h-page">Chats</h1></header>
+      {!list.length && <div className="empty big"><p><strong>No chats yet</strong></p><p className="muted">Message a store from the Feed or from your seller results, and the conversation shows up here.</p></div>}
+      {toStore.length > 0 && <section className="stack tight"><h2 className="section-label">Buyers messaging your store</h2><ul className="chat-list">{toStore.map(row)}</ul></section>}
+      {withStores.length > 0 && <section className="stack tight"><h2 className="section-label">{toStore.length ? 'Your chats with stores' : 'Stores'}</h2><ul className="chat-list">{withStores.map(row)}</ul></section>}
+    </div>
   );
 }
 
@@ -148,7 +159,11 @@ function Thread({ chat, onBack }: { chat: ChatSummary; onBack: () => void }) {
 
   return (
     <div className="stack chat">
-      <div className="row between"><button className="link" onClick={onBack}>‹ All chats</button><strong>{chat.role === 'buyer' ? chat.store.name : chat.buyer.label}</strong></div>
+      <div className="thread-head">
+        <button className="sheet-x" aria-label="All chats" onClick={onBack}>‹</button>
+        <span className={`seller-avatar${chat.role === 'buyer' ? ' listed' : ''}`} aria-hidden="true">{(chat.role === 'buyer' ? chat.store.name : chat.buyer.label).replace('@', '').slice(0, 1).toUpperCase()}</span>
+        <span className="grow"><strong>{chat.role === 'buyer' ? chat.store.name : chat.buyer.label}</strong><span className="fine">{chat.role === 'buyer' ? 'Store on StockRun' : `Buyer · about ${chat.store.name}`}</span></span>
+      </div>
       <div className="chat-log">
         {msgs.length === 0 && <p className="muted">Say hello. Ask about prices and stock; when you agree, record the deal in Ask so your money is protected.</p>}
         {msgs.map((m) => <div key={m.id} className={`bubble ${m.from === me ? 'mine' : 'theirs'}`}><span>{m.text}</span><small>{when(m.at)}</small></div>)}

@@ -1,3 +1,4 @@
+import { useEffect, type ReactNode } from 'react';
 import { short, txUrl, type CheckResult, type Evidence, type Order } from './lib';
 
 const STATUS: Record<Order['status'], [string, string]> = {
@@ -53,4 +54,26 @@ export function Tx({ hash }: { hash: string }) {
   return url
     ? <a className="tx" href={url} target="_blank" rel="noreferrer" title={hash}>{short(hash)}</a>
     : <code className="tx" title={hash}>{short(hash)}</code>;
+}
+
+/** Bottom sheet (a centred dialog on wide screens). Escape or tapping outside closes it. */
+export function Sheet({ title, onClose, onBack, children }: { title: string; onClose: () => void; onBack?: () => void; children: ReactNode }) {
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', k);
+    document.body.style.overflow = 'hidden';
+    return () => { window.removeEventListener('keydown', k); document.body.style.overflow = ''; };
+  }, [onClose]);
+  return (
+    <div className="sheet-backdrop" onClick={onClose}>
+      <div className="sheet" role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
+        <div className="sheet-head">
+          {onBack && <button className="sheet-x" aria-label="Back" onClick={onBack}>‹</button>}
+          <h2>{title}</h2>
+          <button className="sheet-x" aria-label="Close" onClick={onClose}>✕</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
 }

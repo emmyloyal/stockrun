@@ -26,6 +26,7 @@ import { Withdrawals } from '../money/withdrawals.ts';
 import { PAYSTACK_LOCAL } from '../money/paystack.ts';
 import { Listings } from '../business/listings.ts';
 import { Chats } from '../business/chat.ts';
+import { Posts } from '../business/posts.ts';
 import { loadSuppliers, supplierKey } from '../tools/suppliers.ts';
 import type { Hash } from 'viem';
 import { WebSellerSearch } from '../discovery/webSearch.ts';
@@ -120,7 +121,7 @@ const admins = adminList(envValue(env, 'ADMIN_EMAILS'));
 
 const staticDir = fileURLToPath(new URL('../../../app/dist/', import.meta.url));
 const server = createApp({
-  platform: p, accounts, buyers, ledger, prices, paystack, hunt, payouts, admins, activity: new Activity(db), withdrawals, linkSecret: secret, publicUrl, geocoder, listings, chats: new Chats({ db, listings }), demoNaira: network === 'local' || envValue(env, 'DEMO_NAIRA') === '1',
+  platform: p, accounts, buyers, ledger, prices, paystack, hunt, payouts, admins, activity: new Activity(db), withdrawals, linkSecret: secret, publicUrl, geocoder, listings, chats: new Chats({ db, listings }), posts: listings ? new Posts({ db, listings }) : null, demoNaira: network === 'local' || envValue(env, 'DEMO_NAIRA') === '1',
   staticDir: existsSync(staticDir) ? staticDir : undefined,
   secureCookies: envValue(env, 'SECURE_COOKIES') === '1', log,
   sendrelayWebhookSecret: envValue(env, 'SENDRELAY_WEBHOOK_SECRET'),

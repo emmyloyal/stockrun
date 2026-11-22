@@ -28,5 +28,6 @@ export const Icon = {
   whatsapp: (p: { size?: number }) => <Svg {...p}><path d="M20.5 11.6a8.5 8.5 0 0 1-12.6 7.5L3.5 20.5l1.4-4.3a8.5 8.5 0 1 1 15.6-4.6z" /><path d="M9 8.5c0 3.5 3 6.5 6.5 6.5l1-1.6-2-1-1 .8a4.6 4.6 0 0 1-2.7-2.7l.8-1-1-2z" /></Svg>,
   handshake: (p: { size?: number }) => <Svg {...p}><path d="m11 17 2 2a1.4 1.4 0 0 0 2-2M13 15l2.5 2.5a1.4 1.4 0 0 0 2-2l-3.8-3.8a2 2 0 0 0-2.8 0l-.9.9a1.4 1.4 0 0 1-2-2l2.8-2.8a3.5 3.5 0 0 1 4.3-.5l.4.3a3 3 0 0 0 2 .5H21M3 7h3l5 5M21 15h-2M3 15h3l3 3a1.4 1.4 0 0 0 2-2" /></Svg>,
   chevron: (p: { size?: number }) => <Svg {...p}><path d="m9 6 6 6-6 6" /></Svg>,
+  home: (p: { size?: number }) => <Svg {...p}><path d="M3 10.5 12 3l9 7.5" /><path d="M5 9.5V20h5v-6h4v6h5V9.5" /></Svg>,
   logout: (p: { size?: number }) => <Svg {...p}><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l5-5-5-5M15 12H3" /></Svg>,
 };

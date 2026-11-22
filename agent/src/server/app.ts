@@ -26,6 +26,7 @@ import type { Activity } from '../admin/activity.ts';
 import type { Withdrawals } from '../money/withdrawals.ts';
 import { BusinessError, type Listings } from '../business/listings.ts';
 import { ChatError, type Chats } from '../business/chat.ts';
+import { PostError, type Posts } from '../business/posts.ts';
 import { createHmac, timingSafeEqual as safeEqual } from 'node:crypto';
 import { draftMessage, whatsappLink } from '../discovery/draft.ts';
 import { PICKUP_REASONS, DELIVERY_REASONS } from '../check/checkService.ts';
@@ -52,6 +53,8 @@ export interface AppOptions {
   listings?: Listings | null;
   /** In-app chat between buyers and registered stores. */
   chats?: Chats | null;
+  /** Store posts and the buyers' feed (needs registered stores). */
+  posts?: Posts | null;
   /** Buyer withdrawals to their bank (Paystack Transfers); absent: off. */
   withdrawals?: Withdrawals | null;
   /** Signs the links sellers use to add their bank account, and builds them (PUBLIC_URL). */
@@ -96,6 +99,10 @@ export function createApp(o: AppOptions): Server {
   const chat = <T>(f: (c: Chats) => T): T => {
     if (!o.chats) throw new AuthError(503, 'Chat is not switched on yet.');
     try { return f(o.chats); } catch (e) { if (e instanceof ChatError) throw new AuthError(e.status, e.message); throw e; }
+  };
+  const feed = <T>(f: (p: Posts) => T): T => {
+    if (!o.posts) throw new AuthError(503, 'The feed is not switched on yet.');
+    try { return f(o.posts); } catch (e) { if (e instanceof PostError) throw new AuthError(e.status, e.message); throw e; }
   };
   /** The token in a seller's bank link: only someone given the link can add the bank account for that seller. */
   const sellerToken = (sellerId: string) => createHmac('sha256', o.linkSecret ?? 'no-secret').update(`seller-bank:${sellerId}`).digest('base64url').slice(0, 22);
@@ -163,6 +170,7 @@ export function createApp(o: AppOptions): Server {
       emailSignIn: accounts.emailSignIn,
       sellerHunt: !!o.hunt && huntEnabled(o.hunt),
       chat: !!o.chats,
+      feed: !!o.posts,
       business: o.listings ? { feeNaira: o.listings.feeKobo / 100, periodDays: Math.round(o.listings.periodMs / 86_400_000) } : null,
       withdrawals: !!o.withdrawals, sellerBankLinks: !!(o.linkSecret && o.publicUrl && o.payouts?.paystack),
     })],
@@ -327,6 +335,12 @@ export function createApp(o: AppOptions): Server {
     }],
     ['GET', /^\/api\/chats\/(\d+)\/messages$/, async (c) => { const u = need(c); return chat((ch) => ch.messages(u.id, Number(c.m[1]), Number(c.url.searchParams.get('after')) || 0)); }],
     ['POST', /^\/api\/chats\/(\d+)\/messages$/, async (c) => { const u = need(c); return chat((ch) => ch.send(u.id, Number(c.m[1]), c.body?.text)); }],
+
+    // ---------------------------------------------------------------- store posts, the buyers' feed, store pages
+    ['GET', /^\/api\/feed$/, async (c) => { const u = need(c); return feed((p) => p.feed(u.id, Number(c.url.searchParams.get('before')) || 0)); }],
+    ['POST', /^\/api\/posts$/, async (c) => { const u = need(c); return feed((p) => p.create(u.id, c.body ?? {})); }],
+    ['POST', /^\/api\/posts\/(\d+)\/delete$/, async (c) => { const u = need(c); feed((p) => p.remove(u.id, Number(c.m[1]))); return { ok: true }; }],
+    ['GET', /^\/api\/stores\/(found-[0-9a-f]{16})$/, async (c) => { const u = need(c); return feed((p) => p.store(u.id, c.m[1])); }],
 
     // ---------------------------------------------------------------- banks: seller bank links, buyer withdrawals
     ['GET', /^\/api\/banks$/, async () => {
@@ -541,6 +555,13 @@ export function createApp(o: AppOptions): Server {
         if (!a) return send(res, 404, { error: 'no picture' });
         res.writeHead(200, { 'Content-Type': a.type, 'Cache-Control': 'public, max-age=300', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'" });
         return res.end(a.data);
+      }
+      const postPhoto = /^\/api\/posts\/(\d+)\/photo$/.exec(url.pathname);
+      if (postPhoto && req.method === 'GET') {
+        const ph = o.posts?.photo(Number(postPhoto[1]));
+        if (!ph) return send(res, 404, { error: 'no photo' });
+        res.writeHead(200, { 'Content-Type': ph.type, 'Cache-Control': 'public, max-age=3600', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'" });
+        return res.end(ph.data);
       }
       if (req.method === 'POST' && !String(req.headers['content-type'] ?? '').startsWith('application/json'))
         throw new AuthError(415, 'Send JSON.');

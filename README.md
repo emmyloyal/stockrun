@@ -144,6 +144,27 @@ can ask the circuit again and check the decision.
   </tr>
 </table>
 
+### 7. The feed: stores post their stock, buyers message them
+
+<table>
+  <tr>
+    <td width="33%" valign="top"><img src="docs/images/16-compose.png" alt="A shop owner writes a post" /></td>
+    <td width="33%" valign="top"><img src="docs/images/12-feed.png" alt="The buyers' feed" /></td>
+    <td width="33%" valign="top"><img src="docs/images/13-store.png" alt="A store's page" /></td>
+  </tr>
+  <tr>
+    <td width="33%" valign="top"><img src="docs/images/14-shop-chats.png" alt="Buyers messaging the store" /></td>
+    <td width="33%" valign="top"><img src="docs/images/15-chat.png" alt="A conversation" /></td>
+    <td valign="top">
+      <p>Shop owners whose store is <strong>approved and paid up</strong> post what's in stock: a few words, an optional
+      price and a photo. Every buyer sees new posts in the <strong>Feed</strong>.</p>
+      <p>Tapping a store opens its page with its price list and posts. <strong>Message</strong> starts an in-app chat,
+      and the shop owner sees it under <em>"Buyers messaging your store"</em>.</p>
+      <p>A store that stops paying, or is suspended, drops off the feed straight away.</p>
+    </td>
+  </tr>
+</table>
+
 ---
 
 ## Who decides what
@@ -215,6 +236,7 @@ The rules each circuit implements are in [`docs/CIRCUITS.md`](docs/CIRCUITS.md).
 - collect and count → PickupCheck → seller's payment approved, the rest refunded
 - automatic seller payouts through Paystack (test)
 - registered stores with in-app chat
+- a feed where stores post their stock and buyers message them
 - an admin page for orders, money held and payouts
 
 **Not yet:**

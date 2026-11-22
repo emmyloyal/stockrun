@@ -8,13 +8,14 @@ import {
   avatarUrl, currentPosition, hasWallet, load, naira, preparePhoto, save, server, serviceFee, short, signWithWallet, whatsappLink,
   type Category, type Coins, type Config, type DealResult, type FoundSeller, type HuntResult, type Me, type MySeller, type PlaceHit, type SellerHit, type Movement, type Order, type Place, type RequestRecord, type Seller, type User,
 } from './lib';
-import { CircuitTrail, Outcome, StatusPill } from './ui';
+import { CircuitTrail, Outcome, Sheet, StatusPill } from './ui';
 import { Admin } from './Admin';
 import { WithdrawPanel } from './Banks';
 import { ChatsTab, MyStore } from './Store';
+import { FeedTab } from './Feed';
 import { Icon } from './icons';
 
-type Tab = 'ask' | 'orders' | 'chats' | 'money' | 'me' | 'admin';
+type Tab = 'feed' | 'ask' | 'orders' | 'chats' | 'money' | 'me' | 'admin';
 export const Brand = () => <span className="brand"><span className="mark" aria-hidden="true" />StockRun</span>;
 const greeting = () => { const h = Number(new Date().toLocaleString('en-NG', { timeZone: 'Africa/Lagos', hour: 'numeric', hour12: false })); return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'; };
 const Avatar = ({ u, bust = 0, big = false }: { u: User; bust?: number; big?: boolean }) => u.hasAvatar
@@ -29,7 +30,7 @@ const run = async (setBusy: (s: string) => void, setError: (s: string) => void, 
 export function AccountApp({ cfg }: { cfg: Config }) {
   const [me, setMe] = useState<Me | null>(null);
   const [error, setError] = useState('');
-  const [tab, setTab] = useState<Tab>(() => (new URLSearchParams(location.search).get('reference') ? 'money' : load<Tab>('stockrun.tab', 'ask')));
+  const [tab, setTab] = useState<Tab>(() => (new URLSearchParams(location.search).get('reference') ? 'money' : load<Tab>('stockrun.tab', cfg.feed ? 'feed' : 'ask')));
   const [bust, setBust] = useState(0);
   const reload = useCallback(() => server.me().then(setMe).catch((e) => setError(e.message)), []);
   const [unread, setUnread] = useState(0);
@@ -49,10 +50,10 @@ export function AccountApp({ cfg }: { cfg: Config }) {
   if (!me.user) return <><header className="topbar"><Brand />{testChip}</header><main><SignIn cfg={cfg} onDone={reload} /></main></>;
   const u = me.user;
   const tabs: [Tab, string, ReactNode, number?][] = [
+    ...(cfg.feed ? [['feed', 'Feed', <Icon.home />] as [Tab, string, ReactNode]] : []),
     ['ask', 'Ask', <Icon.search />], ['orders', 'Orders', <Icon.box />],
     ...(cfg.chat ? [['chats', 'Chats', <Icon.chat />, unread] as [Tab, string, ReactNode, number]] : []),
     ['money', 'Money', <Icon.wallet />], ['me', 'Me', <Icon.user />],
-    ...(me.admin ? [['admin', 'Admin', <Icon.admin />] as [Tab, string, ReactNode]] : []),
   ];
   const go = (t: Tab) => { setTab(t); window.scrollTo({ top: 0 }); };
 
@@ -74,6 +75,9 @@ export function AccountApp({ cfg }: { cfg: Config }) {
           {tab === 'orders' && <Orders cfg={cfg} onChange={reload} goAsk={() => go('ask')} />}
           {tab === 'money' && <Money cfg={cfg} me={me} onChange={reload} />}
           {tab === 'admin' && me.admin && <Admin />}
+          {tab === 'me' && me.admin && <button className="nudge admin-link" onClick={() => go('admin')}><Icon.admin size={18} /> Admin: orders, payouts and stores <Icon.chevron size={16} /></button>}
+          {tab === 'admin' && me.admin && <button className="link-btn" onClick={() => go('me')}>‹ Back to Me</button>}
+          {tab === 'feed' && cfg.feed && <FeedTab user={u} onChat={startChat} goStore={() => go('me')} />}
           {tab === 'me' && <Profile user={u} bust={bust} onChange={() => { setBust(Date.now()); reload(); }} />}
           {tab === 'me' && cfg.business && u.role === 'shop' && <MyStore fee={cfg.business} banksOn={!!cfg.sellerBankLinks} balance={me.naira?.availableNaira ?? 0} onChange={reload} />}
         </section>
@@ -821,27 +825,6 @@ function Money({ cfg, me, onChange }: { cfg: Config; me: Me; onChange: () => voi
 // ---------------------------------------------------------------- deposit sheet: big amount and a keypad
 type Currency = 'ngn' | 'usd';
 const money = (c: Currency, n: number) => c === 'ngn' ? naira(n) : `$${n.toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
-
-function Sheet({ title, onClose, onBack, children }: { title: string; onClose: () => void; onBack?: () => void; children: ReactNode }) {
-  useEffect(() => {
-    const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', k);
-    document.body.style.overflow = 'hidden';
-    return () => { window.removeEventListener('keydown', k); document.body.style.overflow = ''; };
-  }, [onClose]);
-  return (
-    <div className="sheet-backdrop" onClick={onClose}>
-      <div className="sheet" role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
-        <div className="sheet-head">
-          {onBack && <button className="sheet-x" aria-label="Back" onClick={onBack}>‹</button>}
-          <h2>{title}</h2>
-          <button className="sheet-x" aria-label="Close" onClick={onClose}>✕</button>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-}
 
 /** max 0 = no limit known here (the server still checks). */
 function AmountSheet({ title, currency, max, onClose, onContinue }: { title: string; currency: Currency; max: number; onClose: () => void; onContinue: (n: number) => void }) {
