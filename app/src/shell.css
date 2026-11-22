@@ -149,6 +149,8 @@ details.more[open] { padding-bottom: 16px; }
 .balance-card::after { content: ""; position: absolute; right: -56px; top: -56px; width: 170px; height: 170px; border-radius: 50%; border: 22px solid var(--danfo); opacity: 0.16; }
 .order-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 .activity .num { white-space: nowrap; }
+.balance-card > * { position: relative; z-index: 1; }
+.balance-card::after { z-index: 0; }
 .bc-label { font-size: 0.85rem; opacity: 0.75; }
 .bc-amount { font-family: var(--display); font-weight: 900; font-stretch: 80%; font-size: clamp(2.4rem, 12vw, 3.2rem); line-height: 1; font-variant-numeric: tabular-nums; }
 .bc-sub { display: inline-flex; align-items: center; gap: 6px; font-size: 0.85rem; opacity: 0.8; }

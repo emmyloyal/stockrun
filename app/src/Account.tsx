@@ -571,12 +571,22 @@ function Orders({ cfg, onChange, goAsk }: { cfg: Config; onChange: () => void; g
             })}
           </ol>
         )}
-        <dl className="receipt compact">
-          <div><dt>{naira(o.unitPriceNaira)} × {o.ordered}</dt><dd>{naira(o.ordered * o.unitPriceNaira)}</dd></div>
-          {o.serviceFeeNaira ? <div><dt>StockRun fee</dt><dd>{naira(o.serviceFeeNaira)}</dd></div> : null}
-          {!o.self && <div><dt>Delivery</dt><dd>{naira(o.riderFeeNaira)}</dd></div>}
-          <div className="total"><dt>{o.status === 'Delivered' || o.status === 'Refunded' ? 'Total' : 'Locked'}</dt><dd>{naira(total)}</dd></div>
-        </dl>
+        {(() => {
+          // After collection the seller is paid for what was counted; the fee is charged on that share only (as the server does).
+          const settled = o.status === 'PickedUp' || o.status === 'Delivered';
+          const qty = settled ? o.pickup.picked : o.ordered;
+          const fee = !o.serviceFeeNaira ? 0 : qty === o.ordered ? o.serviceFeeNaira : Math.floor((o.serviceFeeNaira * 100 * qty) / o.ordered) / 100;
+          const paid = qty * o.unitPriceNaira + fee + (o.self ? 0 : o.riderFeeNaira);
+          return (
+            <dl className="receipt compact">
+              <div><dt>{naira(o.unitPriceNaira)} × {qty}{settled && qty < o.ordered ? ` of ${o.ordered}` : ''}</dt><dd>{naira(qty * o.unitPriceNaira)}</dd></div>
+              {fee ? <div><dt>StockRun fee</dt><dd>{naira(fee)}</dd></div> : null}
+              {!o.self && <div><dt>Delivery</dt><dd>{naira(o.riderFeeNaira)}</dd></div>}
+              <div className="total"><dt>{settled ? 'Paid' : o.status === 'Refunded' ? 'Refunded' : 'Locked'}</dt><dd>{naira(settled ? paid : total)}</dd></div>
+              {settled && total - paid > 0 && <div className="fine-row"><dt>Came back to you</dt><dd>{naira(total - paid)}</dd></div>}
+            </dl>
+          );
+        })()}
         {o.lastCheck && <Outcome r={o.lastCheck} />}
         {o.status === 'AwaitingOwner' && (
           <div className="next">
