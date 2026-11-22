@@ -80,10 +80,9 @@ export function WithdrawPanel({ available, onDone }: { available: number; onDone
 
   return (
     <div className="stack">
-      <h3>Withdraw to my bank</h3>
       <label className="field"><span>Amount (₦)</span><input className="money" inputMode="numeric" placeholder="10,000" value={n ? n.toLocaleString('en-NG') : ''} onChange={(e) => setAmount(e.target.value)} /></label>
       <BankFields banks={banks} bankCode={v.bankCode} accountNumber={v.accountNumber} onChange={setV} />
-      <button className="btn ghost" disabled={busy || n < 100 || n > available || !v.bankCode || v.accountNumber.length !== 10} onClick={async () => {
+      <button className="btn primary big" disabled={busy || n < 100 || n > available || !v.bankCode || v.accountNumber.length !== 10} onClick={async () => {
         setBusy(true); setMsg(null);
         try {
           const w = await server.withdraw(n, v.bankCode, v.accountNumber);

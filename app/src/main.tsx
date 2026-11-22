@@ -1,9 +1,10 @@
 import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { loadServerAddress, server, setExplorer, type Config } from './lib';
-import { AccountApp } from './Account';
+import { AccountApp, Brand } from './Account';
 import { SellerBankPage } from './Banks';
 import './styles.css';
+import './shell.css';
 
 // A seller opening the bank link a buyer forwarded: ?seller-bank=<id>&t=<token> (no sign-in).
 const q = new URLSearchParams(location.search);
@@ -19,19 +20,22 @@ function App() {
     }).catch((e) => setError(`Cannot reach the StockRun server: ${e.message}`));
   }, []);
 
+  if (!cfg) {
+    return (
+      <div className="shell">
+        <header className="topbar"><Brand /></header>
+        <main>{error ? <p className="alert">{error}</p> : <div className="loading"><span className="spinner" aria-hidden="true" /><span className="muted">Connecting…</span></div>}</main>
+      </div>
+    );
+  }
   return (
     <div className="shell">
-      <nav className="top"><span className="brand"><span className="mark" aria-hidden="true" />StockRun</span></nav>
-      <main>
-        {error && <p className="alert">{error}</p>}
-        {!cfg && !error && <p className="muted">Connecting… (the free server can take a minute to wake up)</p>}
-        {cfg && (sellerBank ? <SellerBankPage sellerId={sellerBank.id} token={sellerBank.t} /> : <AccountApp cfg={cfg} />)}
-      </main>
-      {cfg && (
-        <footer className={`demo-bar${cfg.network === 'xlayer' ? ' live' : ''}`}>
-          {cfg.network === 'xlayer' ? 'Circuits on X Layer mainnet' : 'Local test chain'} · naira {cfg.naira.paystack ? (cfg.naira.test ? 'via Paystack test mode' : 'via Paystack') : 'deposits off'}{cfg.naira.testCredit ? ' · demo naira on' : ''} · real sellers from OpenStreetMap, not checked by StockRun
-        </footer>
-      )}
+      {sellerBank
+        ? (<><header className="topbar"><Brand /></header><main><SellerBankPage sellerId={sellerBank.id} token={sellerBank.t} /></main></>)
+        : <AccountApp cfg={cfg} />}
+      <footer className="about">
+        {cfg.network === 'xlayer' ? 'Payment decisions by TapeOut circuits on X Layer mainnet' : 'Local test chain'} · naira {cfg.naira.paystack ? (cfg.naira.test ? 'through Paystack test mode (no real money)' : 'through Paystack') : 'deposits off'}{cfg.naira.testCredit ? ' · demo naira on' : ''} · sellers from OpenStreetMap, not checked by StockRun
+      </footer>
     </div>
   );
 }

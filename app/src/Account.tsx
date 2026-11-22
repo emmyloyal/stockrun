@@ -12,8 +12,14 @@ import { CircuitTrail, Outcome, StatusPill } from './ui';
 import { Admin } from './Admin';
 import { WithdrawPanel } from './Banks';
 import { ChatsTab, MyStore } from './Store';
+import { Icon } from './icons';
 
 type Tab = 'ask' | 'orders' | 'chats' | 'money' | 'me' | 'admin';
+export const Brand = () => <span className="brand"><span className="mark" aria-hidden="true" />StockRun</span>;
+const greeting = () => { const h = Number(new Date().toLocaleString('en-NG', { timeZone: 'Africa/Lagos', hour: 'numeric', hour12: false })); return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'; };
+const Avatar = ({ u, bust = 0, big = false }: { u: User; bust?: number; big?: boolean }) => u.hasAvatar
+  ? <img className={`avatar${big ? ' big' : ''}`} src={avatarUrl(u.id, bust)} alt="" />
+  : <span className={`avatar${big ? ' big' : ''}`} aria-hidden="true">{(u.displayName ?? u.username ?? u.email ?? '?').slice(0, 1).toUpperCase()}</span>;
 const LAGOS: [number, number] = [6.55, 3.37];
 const run = async (setBusy: (s: string) => void, setError: (s: string) => void, label: string, f: () => Promise<void>) => {
   setBusy(label); setError('');
@@ -37,35 +43,50 @@ export function AccountApp({ cfg }: { cfg: Config }) {
   useEffect(() => { reload(); }, [reload]);
   useEffect(() => { save('stockrun.tab', tab); }, [tab]);
 
-  if (error) return <p className="alert">{error}</p>;
-  if (!me) return <p className="muted">Loading…</p>;
-  if (!me.user) return <SignIn cfg={cfg} onDone={reload} />;
+  const testChip = cfg.naira.test || cfg.network !== 'xlayer' ? <span className="chip-test" title="No real money moves">Test money</span> : null;
+  if (error) return <><header className="topbar"><Brand />{testChip}</header><main><p className="alert">{error}</p></main></>;
+  if (!me) return <><header className="topbar"><Brand /></header><main><div className="loading"><span className="spinner" aria-hidden="true" /></div></main></>;
+  if (!me.user) return <><header className="topbar"><Brand />{testChip}</header><main><SignIn cfg={cfg} onDone={reload} /></main></>;
   const u = me.user;
-  const name = u.username ? `@${u.username}` : u.phone ?? u.email ?? (u.wallet ? short(u.wallet) : 'You');
+  const tabs: [Tab, string, ReactNode, number?][] = [
+    ['ask', 'Ask', <Icon.search />], ['orders', 'Orders', <Icon.box />],
+    ...(cfg.chat ? [['chats', 'Chats', <Icon.chat />, unread] as [Tab, string, ReactNode, number]] : []),
+    ['money', 'Money', <Icon.wallet />], ['me', 'Me', <Icon.user />],
+    ...(me.admin ? [['admin', 'Admin', <Icon.admin />] as [Tab, string, ReactNode]] : []),
+  ];
+  const go = (t: Tab) => { setTab(t); window.scrollTo({ top: 0 }); };
 
   return (
-    <section className="stack">
-      <header className="row between">
-        <span className="row">
-          {u.hasAvatar ? <img className="avatar" src={avatarUrl(u.id, bust)} alt="" /> : <span className="avatar empty" aria-hidden="true">{(u.displayName ?? u.username ?? '?').slice(0, 1).toUpperCase()}</span>}
-          <span className="stack tight"><strong>{u.displayName ?? name}</strong>{u.displayName && <span className="fine">{name}</span>}</span>
+    <>
+      <header className="topbar">
+        <Brand />
+        <span className="row tight-gap">
+          {testChip}
+          <button className="balance" title="Naira held by StockRun for you (not on-chain)" onClick={() => go('money')}>{naira(me.naira?.availableNaira ?? 0)}</button>
+          <button className="avatar-btn" aria-label="Your profile" onClick={() => go('me')}><Avatar u={u} bust={bust} /></button>
         </span>
-        <span className="balance" title="Naira held by StockRun for you (not on-chain)">{naira(me.naira?.availableNaira ?? 0)}</span>
       </header>
-      {!u.username && <p className="note">Choose a username in <button className="link" onClick={() => setTab('me')}>Me</button>.</p>}
-      <nav className="tabs" role="tablist">
-        {([['ask', 'Ask'], ['orders', 'Orders'], ...(cfg.chat ? [['chats', unread ? `Chats (${unread})` : 'Chats']] as const : []), ['money', 'Money'], ['me', 'Me'], ...(me.admin ? [['admin', 'Admin']] as const : [])] as const).map(([k, l]) => (
-          <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{l}</button>
+      <main>
+        <section className="stack">
+          {!u.username && tab !== 'me' && <button className="nudge" onClick={() => go('me')}><Icon.user size={18} /> Choose a username so sellers know who you are <Icon.chevron size={16} /></button>}
+          {tab === 'chats' && cfg.chat && <ChatsTab openId={openChat} onOpened={() => setOpenChat(null)} />}
+          {tab === 'ask' && <Ask onChat={startChat} cfg={cfg} user={u} me={me} onAsked={() => { reload(); go('orders'); }} goMoney={() => go('money')} />}
+          {tab === 'orders' && <Orders cfg={cfg} onChange={reload} goAsk={() => go('ask')} />}
+          {tab === 'money' && <Money cfg={cfg} me={me} onChange={reload} />}
+          {tab === 'admin' && me.admin && <Admin />}
+          {tab === 'me' && <Profile user={u} bust={bust} onChange={() => { setBust(Date.now()); reload(); }} />}
+          {tab === 'me' && cfg.business && u.role === 'shop' && <MyStore fee={cfg.business} banksOn={!!cfg.sellerBankLinks} balance={me.naira?.availableNaira ?? 0} onChange={reload} />}
+        </section>
+      </main>
+      <nav className="tabbar" aria-label="Main">
+        {tabs.map(([k, label, icon, badge]) => (
+          <button key={k} className={tab === k ? 'on' : ''} aria-current={tab === k ? 'page' : undefined} onClick={() => go(k)}>
+            <span className="tab-icon">{icon}{badge ? <span className="badge">{badge > 9 ? '9+' : badge}</span> : null}</span>
+            <span>{label}</span>
+          </button>
         ))}
       </nav>
-      {tab === 'chats' && cfg.chat && <ChatsTab openId={openChat} onOpened={() => setOpenChat(null)} />}
-      {tab === 'ask' && <Ask onChat={startChat} cfg={cfg} user={u} me={me} onAsked={() => { reload(); setTab('orders'); }} goMoney={() => setTab('money')} />}
-      {tab === 'orders' && <Orders cfg={cfg} onChange={reload} />}
-      {tab === 'money' && <Money cfg={cfg} me={me} onChange={reload} />}
-      {tab === 'admin' && me.admin && <Admin />}
-      {tab === 'me' && cfg.business && u.role === 'shop' && <MyStore fee={cfg.business} banksOn={!!cfg.sellerBankLinks} balance={me.naira?.availableNaira ?? 0} onChange={reload} />}
-      {tab === 'me' && <Profile user={u} onChange={() => { setBust(Date.now()); reload(); }} />}
-    </section>
+    </>
   );
 }
 
@@ -86,22 +107,24 @@ function SignIn({ cfg, onDone }: { cfg: Config; onDone: () => void }) {
   const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
 
   return (
-    <section className="stack">
-      <header className="screen-head">
-        <p className="eyebrow">StockRun</p>
-        <h1>Tell the AI what you need. It finds it on the map.</h1>
-        <p className="muted">It finds sellers near you, haggles on WhatsApp, and pays them only after the goods are picked up.</p>
+    <section className="stack welcome">
+      <header className="hero">
+        <p className="eyebrow">AI buying agent · Lagos</p>
+        <h1>Buy stock without the market run.</h1>
+        <p className="lead">Tell StockRun what you need and your budget. It finds real sellers near you, and your money is only released for goods you've counted.</p>
       </header>
-      <fieldset className="stack choice-group">
-        <legend className="fine">I am</legend>
-        <label className="row"><input type="radio" checked={!asShop} onChange={() => setAsShop(false)} /> Buying</label>
-        <label className="row"><input type="radio" checked={asShop} onChange={() => setAsShop(true)} /> A shop owner (sell on StockRun; you can still buy)</label>
-      </fieldset>
-      <nav className="tabs" role="tablist">
-        {cfg.emailSignIn && <button role="tab" aria-selected={way === 'email'} className={way === 'email' ? 'on' : ''} onClick={() => pick('email')}>Email</button>}
-        <button role="tab" aria-selected={way === 'wallet'} className={way === 'wallet' ? 'on' : ''} onClick={() => pick('wallet')}>Wallet</button>
-      </nav>
+      <ol className="how">
+        <li><span className="how-icon"><Icon.search /></span><span><strong>Ask</strong><span className="fine">"20 cartons of Indomie, ₦300,000, Ketu"</span></span></li>
+        <li><span className="how-icon"><Icon.whatsapp /></span><span><strong>Agree a price</strong><span className="fine">The AI writes your WhatsApp message to the seller</span></span></li>
+        <li><span className="how-icon"><Icon.shield /></span><span><strong>Pay on collection</strong><span className="fine">A circuit on X Layer approves the seller's payment for what you count</span></span></li>
+      </ol>
       <div className="panel stack">
+        <h2>{sent ? 'Check your email' : 'Sign in or create an account'}</h2>
+        <div className="seg two" role="radiogroup" aria-label="I am">
+          <button role="radio" aria-checked={!asShop} className={!asShop ? 'on' : ''} onClick={() => setAsShop(false)}>I'm buying</button>
+          <button role="radio" aria-checked={asShop} className={asShop ? 'on' : ''} onClick={() => setAsShop(true)}>I own a shop</button>
+        </div>
+        {asShop && <p className="fine">Shop owners can list their store and chat with buyers, and can still buy.</p>}
         {way === 'email' ? (<>
           <label className="field"><span>Email address</span>
             <input type="email" inputMode="email" autoComplete="email" placeholder="ada@gmail.com" value={email} onChange={(e) => setEmail(e.target.value)} disabled={sent} />
@@ -116,7 +139,7 @@ function SignIn({ cfg, onDone }: { cfg: Config; onDone: () => void }) {
                 if (c.length === 6 && !busy) signIn(c);   // pasted or filled in: sign in straight away
               }} />
             </label>
-            <p className="fine">We've emailed a code to {email.trim()}. Not there? Check Spam or Promotions.</p>
+            <p className="fine">We've emailed a 6-digit code to <strong>{email.trim()}</strong>. Not there? Check Spam or Promotions.</p>
             <button className="btn primary" disabled={!!busy || code.length !== 6} onClick={() => signIn(code)}>Sign in</button>
             <button className="link" disabled={!!busy} onClick={() => { setSent(false); setCode(''); }}>Use a different email</button>
           </>)}
@@ -130,7 +153,13 @@ function SignIn({ cfg, onDone }: { cfg: Config; onDone: () => void }) {
         </>)}
         {busy && <p className="busy">{busy}</p>}
         {error && <p className="alert">{error}</p>}
+        {!sent && (cfg.emailSignIn
+          ? (way === 'email'
+            ? <><div className="or"><span>or</span></div><button className="btn ghost" onClick={() => pick('wallet')}><Icon.wallet size={18} /> Continue with a wallet</button></>
+            : <button className="link" onClick={() => pick('email')}>Use email instead</button>)
+          : null)}
       </div>
+      <p className="fine center">No passwords. Signing in is free and moves no money.</p>
     </section>
   );
 }
@@ -140,7 +169,9 @@ function Ask({ cfg, user, me, onAsked, goMoney, onChat }: { cfg: Config; user: U
   const [text, setText] = useState('');
   const [budget, setBudget] = useState('');
   const [place, setPlace] = useState<Place>(() => load<Place>('stockrun.place', { lat: NaN, lng: NaN, address: '' }));
-  const [delivery, setDelivery] = useState<'logistics' | 'self'>('logistics');
+  // Delivery is only offered when the server has a logistics company; otherwise the buyer collects (or sends someone).
+  const canDeliver = cfg.logistics.length > 0;
+  const [delivery, setDelivery] = useState<'logistics' | 'self'>(canDeliver ? 'logistics' : 'self');
   const [contact, setContact] = useState('');
   const [sellers, setSellers] = useState<Seller[]>([]);
   const [hunt, setHunt] = useState<HuntResult | null>(null);
@@ -288,66 +319,144 @@ function Ask({ cfg, user, me, onAsked, goMoney, onChat }: { cfg: Config; user: U
     if (/locked|OK/.test(r.message)) onAsked();
   });
   const b = Number(budget.replace(/\D/g, '')) || 0;
+  const firstName = (user.displayName ?? user.username ?? '').split(' ')[0];
+  const SUGGEST = ['20 cartons of Indomie', '5 bags of rice (50kg)', '10 kegs of groundnut oil', '30 crates of malt'];
 
   return (
     <div className="stack">
-      <div className="panel stack">
-        <label className="field"><span>What do you want?</span>
-          <textarea rows={3} placeholder="20 cartons of Indomie, or 2 bags of rice" value={text} onChange={(e) => setText(e.target.value)} />
+      <header className="screen-head">
+        <p className="eyebrow">{greeting()}{firstName ? `, ${firstName}` : ''}</p>
+        <h1 className="h-page">What do you need today?</h1>
+      </header>
+
+      <div className="panel stack ask">
+        <label className="field"><span className="sr-only">What do you want?</span>
+          <textarea className="big-input" rows={3} placeholder="e.g. 20 cartons of Indomie" value={text} onChange={(e) => setText(e.target.value)} />
         </label>
-        <label className="field"><span>Your budget (₦)</span>
-          <input className="money" inputMode="numeric" placeholder="150,000" value={b ? b.toLocaleString('en-NG') : ''} onChange={(e) => setBudget(e.target.value)} />
-        </label>
-        {b > available && <p className="warn">Your balance is {naira(available)}. <button className="link" onClick={goMoney}>Deposit naira</button> first.</p>}
-        <label className="field"><span>Deliver to (your area is enough)</span>
-          <input placeholder="Ikeja, or 12 Ikorodu Road, Ketu" autoComplete="street-address" value={place.address}
-            onChange={(e) => setPlace({ lat: NaN, lng: NaN, address: e.target.value })} />
-        </label>
-        <button className="link" onClick={here}>Use where I am instead</button>
-        <fieldset className="stack choice-group">
-          <legend className="fine">How should it reach you?</legend>
-          <label className="row"><input type="radio" checked={delivery === 'logistics'} onChange={() => setDelivery('logistics')} /> A verified logistics company delivers it</label>
-          <label className="row"><input type="radio" checked={delivery === 'self'} onChange={() => setDelivery('self')} /> I'll collect it from the seller (no delivery fee)</label>
-        </fieldset>
-        {delivery === 'logistics' && !user.phone && (
+        {!text && (
+          <div className="suggest" aria-label="Suggestions">
+            {SUGGEST.map((s) => <button key={s} type="button" className="chip" onClick={() => setText(s)}>{s}</button>)}
+          </div>
+        )}
+        <div className="two-col">
+          <label className="field"><span>Budget</span>
+            <span className="input-icon"><span className="prefix">₦</span><input inputMode="numeric" placeholder="150,000" value={b ? b.toLocaleString('en-NG') : ''} onChange={(e) => setBudget(e.target.value)} /></span>
+          </label>
+          <label className="field"><span>Your area</span>
+            <span className="input-icon"><Icon.pin size={18} /><input placeholder="Ikeja, Ketu…" autoComplete="street-address" value={place.address}
+              onChange={(e) => setPlace({ lat: NaN, lng: NaN, address: e.target.value })} /></span>
+          </label>
+        </div>
+        <div className="row between small-row">
+          <button className="link-btn" onClick={here}><Icon.locate size={16} /> Use my location</button>
+          <span className={`fine${b > available ? ' warn' : ''}`}>Balance {naira(available)}{b > available && <> · <button className="link inline" onClick={goMoney}>Deposit</button></>}</span>
+        </div>
+        {canDeliver && (
+          <div className="options" role="radiogroup" aria-label="How should it reach you?">
+            <button role="radio" aria-checked={delivery === 'self'} className={`option${delivery === 'self' ? ' on' : ''}`} onClick={() => setDelivery('self')}>
+              <Icon.walk /><span><strong>I'll collect</strong><span className="fine">You or someone you send · no delivery fee</span></span>
+            </button>
+            <button role="radio" aria-checked={delivery === 'logistics'} className={`option${delivery === 'logistics' ? ' on' : ''}`} onClick={() => setDelivery('logistics')}>
+              <Icon.truck /><span><strong>Deliver it</strong><span className="fine">A verified logistics company</span></span>
+            </button>
+          </div>
+        )}
+        {canDeliver && delivery === 'logistics' && !user.phone && (
           <label className="field"><span>Phone number for the rider</span><input inputMode="tel" value={contact} onChange={(e) => setContact(e.target.value)} placeholder="0803 123 4567" /></label>
         )}
-        <button className="btn primary" disabled={!!busy || !cfg.sellerHunt || text.trim().length < 3 || (place.address.trim().length < 2 && !pinned)} onClick={findSellers}>Find sellers</button>
-        <p className="fine">{cfg.sellerHunt
-          ? 'The AI works out what kind of seller sells this, from your goods and budget, and finds the closest ones to your address that have a WhatsApp number. They are real businesses, not checked by StockRun.'
-          : 'Seller search is not switched on yet on this server.'}</p>
-        {busy && <p className="busy">{busy}</p>}
+        <button className="btn primary big" disabled={!!busy || !cfg.sellerHunt || text.trim().length < 3 || (place.address.trim().length < 2 && !pinned)} onClick={findSellers}>
+          {busy && busy.startsWith('Finding your address') ? <><span className="spinner small" aria-hidden="true" /> Finding sellers…</> : <><Icon.search size={20} /> Find sellers</>}
+        </button>
+        {!cfg.sellerHunt && <p className="warn">Seller search is not switched on yet on this server.</p>}
+        {busy && !busy.startsWith('Finding your address') && <p className="busy">{busy}</p>}
         {error && <p className="alert">{error}</p>}
-        {hunt && (
-          <div className="stack">
-            <p className="fine">Near <strong>{hunt.place.matched || hunt.place.address}</strong> · looked for {hunt.shopTypes.map((t) => t.replace(/_/g, ' ')).join(', ')}</p>
-            <FoundList hunt={hunt} onContact={(id) => contactSeller(id)} onDeal={openDeal} onChat={cfg.chat ? (id) => run(setBusy, setError, 'Opening the chat…', () => onChat(id)) : undefined} />
+      </div>
+
+      {hunt && (
+        <section className="stack">
+          <div className="section-head">
+            <h2>{hunt.sellers.length ? `${hunt.sellers.length} seller${hunt.sellers.length === 1 ? '' : 's'} near ${hunt.place.matched || hunt.place.address}` : 'No sellers found'}</h2>
+            <p className="fine"><Icon.spark size={14} /> The AI looked for {hunt.shopTypes.map((t) => t.replace(/_/g, ' ')).join(', ')} with a WhatsApp number</p>
           </div>
-        )}
-        {draft && (
-          <div ref={contactPanel} className="stack note contact">
-            <p><strong>Message to {draft.name}</strong> <span className="fine">· WhatsApp {draft.phone}</span></p>
-            <label className="field"><span>{draft.ai ? 'Written by the AI from your request. Change anything you like.' : 'Your message. Change anything you like.'}</span>
-              <textarea rows={4} value={draft.message} maxLength={600} onChange={(e) => setDraft({ ...draft, message: e.target.value })} />
+          <FoundList hunt={hunt} onContact={(id) => contactSeller(id)} onDeal={openDeal} onChat={cfg.chat ? (id) => run(setBusy, setError, 'Opening the chat…', () => onChat(id)) : undefined} />
+        </section>
+      )}
+      {!hunt && (
+        <ul className="trust">
+          <li><Icon.lock size={18} /><span>Your money is locked, not paid, when you record a deal</span></li>
+          <li><Icon.shield size={18} /><span>The seller is paid only for the goods you count at collection</span></li>
+          <li><Icon.whatsapp size={18} /><span>You chat with sellers on your own WhatsApp; StockRun sends nothing</span></li>
+        </ul>
+      )}
+
+      <details className="more">
+        <summary><Icon.map size={18} /> See sellers on the map</summary>
+        <div className="stack">
+          {!showMap && <button className="btn ghost" onClick={() => setShowMap(true)}>Open the map</button>}
+          {showMap && (<>
+            <div className="map-wrap">
+              <div ref={el} className="map pick" />
+              <form className="map-search" role="search" onSubmit={search}>
+                <input type="search" aria-label="Search sellers or places" placeholder="Search sellers or places" value={q}
+                  onChange={(e) => { setQ(e.target.value); if (!e.target.value) setResults(null); }} />
+                <button className="btn primary" type="submit" disabled={searching || q.trim().length < 2}>{searching ? '…' : 'Go'}</button>
+              </form>
+              {results && (
+                <div className="map-results" role="listbox">
+                  {!results.sellers.length && !results.places.length && <p className="muted">Nothing found for &ldquo;{q}&rdquo;.</p>}
+                  {results.sellers.map((s) => (
+                    <button key={s.id} type="button" className="map-hit" onClick={() => goSeller(s)}>
+                      <strong>{s.name}</strong><span className="fine">{s.demo ? 'demo seller' : `${(s.kind ?? 'seller').replace(/_/g, ' ')} · not confirmed`} · {s.km} km{s.address ? ` · ${s.address}` : ''}</span>
+                    </button>
+                  ))}
+                  {results.places.map((p, i) => (
+                    <button key={`p${i}`} type="button" className="map-hit place" onClick={() => goPlace(p)}>
+                      <strong>📍 {p.name}</strong><span className="fine">{p.kind}{p.address ? ` · ${p.address}` : ''} · tap to deliver here</span>
+                    </button>
+                  ))}
+                  <button type="button" className="link" onClick={() => setResults(null)}>Close</button>
+                </div>
+              )}
+            </div>
+            <span className="fine">{pinned ? `${found.length} real and ${sellers.length} demo seller(s) within 25 km · tap the map to move your pin` : 'Tap the map to drop your pin.'}</span>
+          </>)}
+        </div>
+      </details>
+      <details className="more">
+        <summary><Icon.spark size={18} /> Try the demo agent</summary>
+        <div className="stack">
+          <p className="fine">Six demo sellers answered by bots. The agent haggles within your budget, then RestockGuard locks the money. Needs your area found first (Find sellers).</p>
+          <button className="btn ghost" disabled={!!busy || text.trim().length < 3 || b < 1000 || !pinned || place.address.trim().length < 2} onClick={ask}>Ask the demo agent</button>
+          {reply && <pre className="reply">{reply}</pre>}
+        </div>
+      </details>
+
+      {draft && (
+        <Sheet title={`Message ${draft.name}`} onClose={() => setDraft(null)}>
+          <div ref={contactPanel} className="stack contact">
+            <p className="fine">WhatsApp {draft.phone}</p>
+            <label className="field"><span>{draft.ai ? 'Written by the AI from your request. Edit anything.' : 'Your message. Edit anything.'}</span>
+              <textarea rows={5} value={draft.message} maxLength={600} onChange={(e) => setDraft({ ...draft, message: e.target.value })} />
             </label>
-            <a className="btn wa" href={whatsappLink(draft.phone, draft.message)} target="_blank" rel="noreferrer" onClick={() => { server.sellerOpened(draft.id).catch(() => {}); }}>Open WhatsApp chat</a>
-            <button className="btn ghost" onClick={() => openDeal(draft.id, draft.name)}>Agreed a price? Record the deal</button>
-            <p className="fine">WhatsApp opens on your phone with this message typed in; you send it and chat with the seller yourself. StockRun does not see the chat. This seller was found on a public map and is not checked by StockRun, so agree the price and see the goods before you pay.</p>
-            <button className="link" onClick={() => setDraft(null)}>Close</button>
+            <a className="btn wa big" href={whatsappLink(draft.phone, draft.message)} target="_blank" rel="noreferrer" onClick={() => { server.sellerOpened(draft.id).catch(() => {}); }}><Icon.whatsapp size={20} /> Open in WhatsApp</a>
+            <button className="btn ghost" onClick={() => { const d = draft; setDraft(null); openDeal(d.id, d.name); }}><Icon.handshake size={18} /> Agreed a price? Record the deal</button>
+            <p className="fine">You send it and chat yourself; StockRun doesn't see the chat. This seller comes from a public map and isn't checked by StockRun, so agree the price before you record the deal.</p>
           </div>
-        )}
-        {deal && (
-          <div ref={dealPanel} className="stack note deal">
-            <p><strong>Record your deal with {deal.name}</strong></p>
-            {deal.seller?.status === 3 ? <p className="alert">You blocked this seller.</p>
-              : deal.seller?.status === 1 ? <p className="ok">✓ {deal.name} is on your sellers list.</p>
-              : deal.seller?.pendingStatus ? <p className="warn">{deal.name} joins your sellers on {lagosTime(deal.seller.effectiveAt!)}.</p>
-              : <p className="fine">Recording this deal adds {deal.name} to your sellers.</p>}
+        </Sheet>
+      )}
+      {deal && (
+        <Sheet title="Record the deal" onClose={() => setDeal(null)}>
+          <div ref={dealPanel} className="stack deal">
+            <div className="seller-line"><span className="seller-avatar">{deal.name.slice(0, 1).toUpperCase()}</span><span><strong>{deal.name}</strong>
+              {deal.seller?.status === 3 ? <span className="fine warn-text">You blocked this seller</span>
+                : deal.seller?.status === 1 ? <span className="fine ok">✓ On your sellers list</span>
+                : deal.seller?.pendingStatus ? <span className="fine warn">Joins your sellers on {lagosTime(deal.seller.effectiveAt!)}</span>
+                : <span className="fine">Recording this deal adds them to your sellers</span>}</span></div>
             <label className="field"><span>What you agreed to buy</span><input value={deal.item} maxLength={80} placeholder="Indomie noodles (40 x 70g)" onChange={(e) => setDeal({ ...deal, item: e.target.value })} /></label>
-            <div className="row wrap">
-              <label className="field"><span>How many</span><input type="number" min={1} max={255} value={deal.quantity} onChange={(e) => setDeal({ ...deal, quantity: e.target.value })} /></label>
+            <div className="three-col">
+              <label className="field"><span>How many</span><input inputMode="numeric" value={deal.quantity} onChange={(e) => setDeal({ ...deal, quantity: e.target.value.replace(/\D/g, '') })} /></label>
               <label className="field"><span>Unit</span><input value={deal.unit} maxLength={20} placeholder="carton" onChange={(e) => setDeal({ ...deal, unit: e.target.value })} /></label>
-              <label className="field"><span>Price per {deal.unit || 'unit'} (₦)</span><input className="money" inputMode="numeric" placeholder="14,000" value={Number(deal.price.replace(/\D/g, '')) ? Number(deal.price.replace(/\D/g, '')).toLocaleString('en-NG') : ''} onChange={(e) => setDeal({ ...deal, price: e.target.value })} /></label>
+              <label className="field"><span>Price each</span><span className="input-icon"><span className="prefix">₦</span><input inputMode="numeric" placeholder="14,000" value={Number(deal.price.replace(/\D/g, '')) ? Number(deal.price.replace(/\D/g, '')).toLocaleString('en-NG') : ''} onChange={(e) => setDeal({ ...deal, price: e.target.value })} /></span></label>
             </div>
             <label className="field"><span>Kind of goods</span>
               <select value={deal.category} onChange={(e) => setDeal({ ...deal, category: e.target.value as Category })}>
@@ -356,62 +465,33 @@ function Ask({ cfg, user, me, onAsked, goMoney, onChat }: { cfg: Config; user: U
             </label>
             {Number(deal.price.replace(/\D/g, '')) > 0 && Number(deal.quantity) > 0 && (() => {
               const goods = Number(deal.price.replace(/\D/g, '')) * Number(deal.quantity), fee = serviceFee(goods, cfg.naira.fee);
-              return <p className="fine">Goods {naira(goods)}{fee ? ` + StockRun fee ${naira(fee)} (${cfg.naira.fee!.percent}%, only on what you collect)` : ''} = {naira(goods + fee)}{delivery === 'logistics' ? ' plus delivery' : ', you collect it'} · your balance {naira(available)}. The seller gets the full agreed price.</p>;
+              return (
+                <dl className="receipt">
+                  <div><dt>Goods</dt><dd>{naira(goods)}</dd></div>
+                  {fee > 0 && <div><dt>StockRun fee ({cfg.naira.fee!.percent}%)</dt><dd>{naira(fee)}</dd></div>}
+                  {delivery === 'logistics' && <div><dt>Delivery</dt><dd>quoted next</dd></div>}
+                  <div className="total"><dt>Locked now</dt><dd>{naira(goods + fee)}</dd></div>
+                  <div className="fine-row"><dt>Your balance</dt><dd>{naira(available)}</dd></div>
+                </dl>
+              );
             })()}
-            <button className="btn primary" disabled={!!busy} onClick={submitDeal}>{busy && busy.startsWith('RestockGuard') ? 'Checking…' : 'Record deal and lock the money'}</button>
             {deal.note && <p className="alert">{deal.note}</p>}
-            <p className="fine">RestockGuard, a circuit on X Layer, decides whether the money locks. {deal.name} is paid from it only at pickup, for the number of good {deal.unit || 'unit'}s counted ({delivery === 'self' ? 'by you' : 'by the logistics company'}). Uses your pickup or delivery choice above.</p>
+            {!deal.result && <button className="btn primary big" disabled={!!busy} onClick={submitDeal}>{busy && busy.startsWith('RestockGuard') ? <><span className="spinner small" aria-hidden="true" /> RestockGuard is checking…</> : <><Icon.lock size={18} /> Lock the money</>}</button>}
+            <p className="fine"><Icon.shield size={14} /> RestockGuard, a circuit on X Layer, decides whether the money locks. The seller gets the full agreed price, paid only at collection for the good {deal.unit || 'unit'}s counted.</p>
             {deal.result && <pre className="reply">{deal.result.message}</pre>}
             {deal.result && (deal.result.status === 'locked' || deal.result.status === 'ask_owner') && (
-              <div className="stack tight">
-                <button className="btn ghost" onClick={onAsked}>See it in Orders</button>
+              <div className="stack">
+                <button className="btn primary" onClick={onAsked}>See it in Orders</button>
                 {cfg.sellerBankLinks && <button className="btn wa" disabled={!!busy} onClick={() => run(setBusy, setError, 'Making the link…', async () => {
                   const l = await server.sellerBankLink(deal.id);
                   if (l.whatsappUrl) window.open(l.whatsappUrl, '_blank', 'noopener'); else await navigator.clipboard?.writeText(l.message);
-                })}>Ask {deal.name} for their bank details</button>}
-                {cfg.sellerBankLinks && <p className="fine">Sends the seller a link on WhatsApp to add their bank account, so StockRun can pay them when you collect.</p>}
+                })}><Icon.whatsapp size={18} /> Ask {deal.name} for their bank details</button>}
+                {cfg.sellerBankLinks && <p className="fine">Sends the seller a link to add their bank account, so StockRun can pay them when you collect.</p>}
               </div>
             )}
-            <button className="link" onClick={() => setDeal(null)}>Close</button>
           </div>
-        )}
-        <button className="link" onClick={() => setShowMap((v) => !v)}>{showMap ? 'Hide the map' : 'Show on map'}</button>
-        {showMap && (<>
-        <div className="map-wrap">
-          <div ref={el} className="map pick" />
-          <form className="map-search" role="search" onSubmit={search}>
-            <input type="search" aria-label="Search sellers or places" placeholder="Search sellers or places (e.g. Shoprite, Mile 12)" value={q}
-              onChange={(e) => { setQ(e.target.value); if (!e.target.value) setResults(null); }} />
-            <button className="btn primary" type="submit" disabled={searching || q.trim().length < 2}>{searching ? '…' : 'Search'}</button>
-          </form>
-          {results && (
-            <div className="map-results" role="listbox">
-              {!results.sellers.length && !results.places.length && <p className="muted">Nothing found for &ldquo;{q}&rdquo;.</p>}
-              {results.sellers.map((s) => (
-                <button key={s.id} type="button" className="map-hit" onClick={() => goSeller(s)}>
-                  <strong>{s.name}</strong><span className="fine">{s.demo ? 'demo seller' : `${(s.kind ?? 'seller').replace(/_/g, ' ')} · not confirmed`} · {s.km} km{s.address ? ` · ${s.address}` : ''}</span>
-                </button>
-              ))}
-              {results.places.map((p, i) => (
-                <button key={`p${i}`} type="button" className="map-hit place" onClick={() => goPlace(p)}>
-                  <strong>📍 {p.name}</strong><span className="fine">{p.kind}{p.address ? ` · ${p.address}` : ''} · tap to deliver here</span>
-                </button>
-              ))}
-              <button type="button" className="link" onClick={() => setResults(null)}>Close</button>
-            </div>
-          )}
-        </div>
-          <span className="fine">{pinned ? `${found.length} real and ${sellers.length} demo seller(s) within 25 km · tap the map to move your pin` : 'Tap the map to drop your delivery pin.'}</span>
-        </>)}
-        <details className="supplier-list">
-          <summary>Try the demo agent (demo sellers, it haggles for you)</summary>
-          <div className="stack">
-            <p className="fine">Six demo sellers answered by bots. The agent haggles on your behalf within your budget, then RestockGuard locks the money. Needs your address found on the map first (Find sellers, or Show on map).</p>
-            <button className="btn ghost" disabled={!!busy || text.trim().length < 3 || b < 1000 || !pinned || place.address.trim().length < 2} onClick={ask}>Ask the demo agent</button>
-            {reply && <pre className="reply">{reply}</pre>}
-          </div>
-        </details>
-      </div>
+        </Sheet>
+      )}
     </div>
   );
 }
@@ -423,16 +503,33 @@ const CATEGORY_LABELS: [Category, string][] = [
   ['restricted', 'Alcohol or cigarettes (always needs your OK)'], ['highValue', 'Phones, electronics, anything else (always needs your OK)'],
 ];
 function FoundList({ hunt, onContact, onDeal, onChat }: { hunt: HuntResult; onContact: (id: string) => void; onDeal: (id: string, name: string) => void; onChat?: (id: string) => void }) {
-  if (!hunt.sellers.length) return <p className="muted">No seller of this kind with a WhatsApp number turned up near your address. Try other words, or a nearby area.</p>;
+  if (!hunt.sellers.length) return <div className="empty"><p><strong>No seller of this kind with a WhatsApp number turned up near you.</strong></p><p className="muted">Try other words, or a nearby area.</p></div>;
   return (
     <ul className="cards">
       {hunt.sellers.map((f: FoundSeller) => (
-        <li key={f.id} className="card stack tight">
-          <span className="row between"><strong>{f.name}</strong>{f.listed ? <span className="pill listed">Registered on StockRun</span> : <span className="pill found">found by AI</span>}</span>
-          {f.listed && f.products?.length ? <span className="fine">{f.products.map((p) => `${p.item}: ${naira(p.priceNaira)} per ${p.unit}`).join(' · ')}</span> : null}
-          <span className="fine">{f.kind ? `${f.kind.replace(/_/g, ' ')} · ` : ''}{f.km} km · {f.address}</span>
-          <span className="fine">WhatsApp {f.phone} · from {SOURCE_FROM[f.source]}{f.sourceUrl && <> · <a href={f.sourceUrl} target="_blank" rel="noreferrer">source</a></>}</span>
-          <span className="row wrap">{f.listed && onChat && <button className="btn primary small" onClick={() => onChat(f.id)}>Chat in StockRun</button>}<button className="btn wa small" onClick={() => onContact(f.id)}>Message on WhatsApp</button><button className="btn ghost small" onClick={() => onDeal(f.id, f.name)}>Record the deal</button></span>
+        <li key={f.id} className="card seller">
+          <div className="seller-line">
+            <span className={`seller-avatar${f.listed ? ' listed' : ''}`} aria-hidden="true">{f.name.slice(0, 1).toUpperCase()}</span>
+            <span className="grow">
+              <strong>{f.name}</strong>
+              <span className="fine">{f.kind ? `${f.kind.replace(/_/g, ' ')} · ` : ''}{f.address}</span>
+            </span>
+            <span className="km">{f.km} km</span>
+          </div>
+          <div className="row wrap tags">
+            {f.listed ? <span className="pill listed">✓ Registered on StockRun</span> : <span className="pill found">Found by AI · not checked</span>}
+            <span className="fine">from {SOURCE_FROM[f.source]}{f.sourceUrl && <> · <a href={f.sourceUrl} target="_blank" rel="noreferrer">source</a></>}</span>
+          </div>
+          {f.listed && f.products?.length ? (
+            <ul className="price-list">{f.products.slice(0, 4).map((p, i) => <li key={i}><span>{p.item}</span><span className="num">{naira(p.priceNaira)} / {p.unit}</span></li>)}</ul>
+          ) : null}
+          <div className="actions">
+            {f.listed && onChat
+              ? <button className="btn primary" onClick={() => onChat(f.id)}><Icon.chat size={18} /> Chat</button>
+              : <button className="btn wa" onClick={() => onContact(f.id)}><Icon.whatsapp size={18} /> WhatsApp</button>}
+            {f.listed && onChat && <button className="btn wa icon-only" aria-label={`Message ${f.name} on WhatsApp`} onClick={() => onContact(f.id)}><Icon.whatsapp size={18} /></button>}
+            <button className="btn ghost" onClick={() => onDeal(f.id, f.name)}><Icon.handshake size={18} /> Record deal</button>
+          </div>
         </li>
       ))}
     </ul>
@@ -441,7 +538,7 @@ function FoundList({ hunt, onContact, onDeal, onChat }: { hunt: HuntResult; onCo
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
 // ---------------------------------------------------------------- orders
-function Orders({ cfg, onChange }: { cfg: Config; onChange: () => void }) {
+function Orders({ cfg, onChange, goAsk }: { cfg: Config; onChange: () => void; goAsk: () => void }) {
   const [orders, setOrders] = useState<Order[] | null>(null);
   const [requests, setRequests] = useState<RequestRecord[]>([]);
   const [counts, setCounts] = useState<Record<string, string>>({});
@@ -457,65 +554,105 @@ function Orders({ cfg, onChange }: { cfg: Config; onChange: () => void }) {
     return n;
   };
 
-  if (!orders) return <p className="muted">Loading…</p>;
+  if (!orders) return <div className="loading"><span className="spinner" aria-hidden="true" /></div>;
+  const active = orders.filter((o) => o.status === 'AwaitingOwner' || o.status === 'Locked' || o.status === 'PickedUp');
+  const past = orders.filter((o) => !active.includes(o));
+  const card = (o: Order) => {
+    const total = o.ordered * o.unitPriceNaira + (o.serviceFeeNaira ?? 0) + (o.self ? 0 : o.riderFeeNaira);
+    const stage = o.status === 'AwaitingOwner' ? 0 : o.status === 'Locked' ? 1 : o.status === 'PickedUp' ? 2 : o.status === 'Delivered' ? 3 : -1;
+    const steps = o.self ? ['Locked', 'Collected', 'Seller paid'] : ['Locked', 'Picked up', 'Delivered'];
+    return (
+      <li key={o.orderId} className="card order">
+        <div className="stack tight">
+          <span className="order-meta"><StatusPill o={o} /><span className="fine">#{o.orderId}</span></span>
+          <strong className="order-title">{o.ordered} × {o.item}</strong>
+          <span className="fine">{o.supplier.name}</span>
+        </div>
+        {stage >= 0 && (
+          <ol className="tracker" aria-label="Progress">
+            {steps.map((s, i) => {
+              const done = stage > i;
+              const now = !done && stage === i;
+              return <li key={s} className={done ? 'done' : now ? 'now' : ''}><span className="dot">{done ? <Icon.check size={12} /> : null}</span>{s}</li>;
+            })}
+          </ol>
+        )}
+        <dl className="receipt compact">
+          <div><dt>{naira(o.unitPriceNaira)} × {o.ordered}</dt><dd>{naira(o.ordered * o.unitPriceNaira)}</dd></div>
+          {o.serviceFeeNaira ? <div><dt>StockRun fee</dt><dd>{naira(o.serviceFeeNaira)}</dd></div> : null}
+          {!o.self && <div><dt>Delivery</dt><dd>{naira(o.riderFeeNaira)}</dd></div>}
+          <div className="total"><dt>{o.status === 'Delivered' || o.status === 'Refunded' ? 'Total' : 'Locked'}</dt><dd>{naira(total)}</dd></div>
+        </dl>
+        {o.lastCheck && <Outcome r={o.lastCheck} />}
+        {o.status === 'AwaitingOwner' && (
+          <div className="next">
+            <p><strong>Needs your OK.</strong> <span className="fine">Approving never overrides a "no" from the circuit.</span></p>
+            <button className="btn primary" disabled={!!busy} onClick={() => act('Approving…', () => server.approve(o.orderId))}>Approve</button>
+          </div>
+        )}
+        {o.self && o.status === 'Locked' && (
+          <div className="next">
+            <p><strong>Next: collect from {o.supplier.name}.</strong> <span className="fine">Go yourself or send someone. Count the good {o.unit}s, then confirm here: the seller's payment is approved for that number and the rest comes back to you.</span></p>
+            {confirming !== o.orderId ? (
+              <div className="row wrap">
+                <label className="field stepper-field"><span>{o.unit}s collected</span>
+                  <span className="stepper">
+                    <button type="button" aria-label="One less" onClick={() => setCounts((c) => ({ ...c, [`p${o.orderId}`]: String(Math.max(0, Number(c[`p${o.orderId}`] ?? o.ordered) - 1)) }))}>−</button>
+                    <input inputMode="numeric" value={counts[`p${o.orderId}`] ?? String(o.ordered)} onChange={(e) => setCounts((c) => ({ ...c, [`p${o.orderId}`]: e.target.value.replace(/\D/g, '') }))} />
+                    <button type="button" aria-label="One more" onClick={() => setCounts((c) => ({ ...c, [`p${o.orderId}`]: String(Math.min(o.ordered, Number(c[`p${o.orderId}`] ?? o.ordered) + 1)) }))}>+</button>
+                  </span>
+                </label>
+                <button className="btn primary grow" disabled={!!busy} onClick={() => { setError(''); setConfirming(o.orderId); }}><Icon.check size={18} /> Goods collected</button>
+              </div>
+            ) : (() => {
+              const n = Number(counts[`p${o.orderId}`] ?? o.ordered);
+              return (
+                <div className="stack confirm">
+                  <p><strong>Approve {naira(n * o.unitPriceNaira)} for {o.supplier.name}?</strong> <span className="fine">For {n} {o.unit}{n === 1 ? '' : 's'}. This can't be undone, so only confirm once the goods are collected.</span></p>
+                  <div className="row wrap">
+                    <button className="btn primary grow" disabled={!!busy} onClick={() => act('PickupCheck is deciding…', async () => {
+                      await server.collect(o.orderId, count(`p${o.orderId}`, o.ordered));
+                      setConfirming(null);
+                    })}>Yes, approve payment</button>
+                    <button className="btn ghost" onClick={() => setConfirming(null)}>Not yet</button>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        )}
+        {o.logistics && <Logistics o={o} />}
+        {o.logistics && o.status === 'PickedUp' && o.logistics.ownerCount === undefined && (
+          <div className="next">
+            <p><strong>When the rider arrives, count before you give the code.</strong> <span className="fine">Fewer than {o.pickup.picked} means the delivery fee comes back to you.</span></p>
+            <div className="row wrap">
+              <label className="field"><span>{o.unit}s that arrived</span><input inputMode="numeric" value={counts[`d${o.orderId}`] ?? String(o.pickup.picked)} onChange={(e) => setCounts((c) => ({ ...c, [`d${o.orderId}`]: e.target.value.replace(/\D/g, '') }))} /></label>
+              <button className="btn primary grow" disabled={!!busy} onClick={() => act('Recording…', () => server.received(o.orderId, count(`d${o.orderId}`, o.pickup.picked)))}>Confirm what arrived</button>
+            </div>
+          </div>
+        )}
+        <CircuitTrail evidence={o.evidence} network={cfg.network} />
+      </li>
+    );
+  };
   return (
     <div className="stack">
+      <header className="screen-head"><h1 className="h-page">Orders</h1></header>
       {busy && <p className="busy">{busy}</p>}
       {error && <p className="alert">{error}</p>}
-      {orders.length === 0 ? <div className="empty"><p>No orders yet.</p><p className="muted">Ask the agent for something.</p></div> : (
-        <ul className="cards">
-          {orders.map((o) => (
-            <li key={o.orderId} className="card stack">
-              <span className="row between"><strong>{o.ordered} × {o.item}</strong><StatusPill o={o} /></span>
-              <span className="muted">{o.supplier.name} · {naira(o.unitPriceNaira)} each{o.self ? ' · you collect it' : ` · delivery ${naira(o.riderFeeNaira)}`}{o.serviceFeeNaira ? ` · StockRun fee ${naira(o.serviceFeeNaira)}` : ''} · paid in naira</span>
-              {o.lastCheck && <Outcome r={o.lastCheck} />}
-              {o.status === 'AwaitingOwner' && (
-                <div className="stack"><p className="warn">This needs your OK. Approving never overrides a "no" from the circuit.</p>
-                  <button className="btn primary" disabled={!!busy} onClick={() => act('Approving…', () => server.approve(o.orderId))}>Approve</button></div>
-              )}
-              {o.self && o.status === 'Locked' && (
-                <div className="stack">
-                  <p className="warn">Go to {o.supplier.name}. Count the good {o.unit}s you take. Confirm only when they are in your hands, at the shop: the seller's payment is approved for that number (StockRun then sends it to the seller's bank) and the rest comes back to you.</p>
-                  <div className="row wrap">
-                    <label className="field"><span>{o.unit}s taken</span><input type="number" min={0} max={o.ordered} value={counts[`p${o.orderId}`] ?? String(o.ordered)} onChange={(e) => setCounts((c) => ({ ...c, [`p${o.orderId}`]: e.target.value }))} /></label>
-                    {confirming !== o.orderId
-                      ? <button className="btn primary" disabled={!!busy} onClick={() => { setError(''); setConfirming(o.orderId); }}>I have the goods</button>
-                      : null}
-                  </div>
-                  {confirming === o.orderId && (() => {
-                    const n = Number(counts[`p${o.orderId}`] ?? o.ordered);
-                    return (
-                      <div className="stack note">
-                        <p><strong>Confirm {n} {o.unit}{n === 1 ? '' : 's'} from {o.supplier.name}?</strong> This approves {naira(n * o.unitPriceNaira)} for the seller and cannot be undone. Only confirm once you, or the person you sent, have the goods.</p>
-                        <div className="row wrap">
-                          <button className="btn primary" disabled={!!busy} onClick={() => act('Checking the count…', async () => {
-                            await server.collect(o.orderId, count(`p${o.orderId}`, o.ordered));
-                            setConfirming(null);
-                          })}>Yes, the goods are collected: approve payment</button>
-                          <button className="link" onClick={() => setConfirming(null)}>Not yet</button>
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </div>
-              )}
-              {o.logistics && <Logistics o={o} />}
-              {o.logistics && o.status === 'PickedUp' && o.logistics.ownerCount === undefined && (
-                <div className="stack">
-                  <p className="warn">When the rider arrives, count the good {o.unit}s before you give the delivery code. Fewer than {o.pickup.picked} means the delivery fee comes back to you.</p>
-                  <div className="row wrap">
-                    <label className="field"><span>{o.unit}s that arrived</span><input type="number" min={0} max={o.pickup.picked} value={counts[`d${o.orderId}`] ?? String(o.pickup.picked)} onChange={(e) => setCounts((c) => ({ ...c, [`d${o.orderId}`]: e.target.value }))} /></label>
-                    <button className="btn primary" disabled={!!busy} onClick={() => act('Recording…', () => server.received(o.orderId, count(`d${o.orderId}`, o.pickup.picked)))}>Confirm what arrived</button>
-                  </div>
-                </div>
-              )}
-              <CircuitTrail evidence={o.evidence} network={cfg.network} />
-            </li>
-          ))}
-        </ul>
-      )}
+      {orders.length === 0 ? (
+        <div className="empty big">
+          <span className="empty-icon"><Icon.box size={28} /></span>
+          <p><strong>No orders yet</strong></p>
+          <p className="muted">Find a seller, agree a price on WhatsApp, then record the deal. It shows up here.</p>
+          <button className="btn primary" onClick={goAsk}><Icon.search size={18} /> Find sellers</button>
+        </div>
+      ) : (<>
+        {active.length > 0 && <><h2 className="section-label">In progress</h2><ul className="cards">{active.map(card)}</ul></>}
+        {past.length > 0 && <><h2 className="section-label">Done</h2><ul className="cards">{past.map(card)}</ul></>}
+      </>)}
       {requests.length > 0 && (
-        <details className="supplier-list"><summary>Your requests ({requests.length})</summary>
+        <details className="more"><summary>Your requests to the demo agent ({requests.length})</summary>
           <ul className="cards">{requests.map((r) => (
             <li key={r.id} className="card stack"><strong>{r.text}</strong><span className="fine">Budget {naira(r.budgetNaira)} · {r.place.address} · {r.delivery === 'self' ? 'collect' : 'delivery'}</span><pre className="reply">{r.message}</pre></li>
           ))}</ul>
@@ -551,7 +688,8 @@ function Money({ cfg, me, onChange }: { cfg: Config; me: Me; onChange: () => voi
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
-  const [sheet, setSheet] = useState<null | 'amount' | 'pay'>(null);
+  const [sheet, setSheet] = useState<null | 'amount' | 'pay' | 'withdraw'>(null);
+  const [showAll, setShowAll] = useState(false);
   const [amount, setAmount] = useState(0);
   const [quote, setQuote] = useState<{ chargeNaira: number; totalNaira: number } | null>(null);
   useEffect(() => { if (sheet === 'pay' && amount > 0) server.depositQuote(amount).then(setQuote).catch(() => setQuote(null)); else setQuote(null); }, [sheet, amount]);
@@ -576,40 +714,63 @@ function Money({ cfg, me, onChange }: { cfg: Config; me: Me; onChange: () => voi
   const nairaOn = cfg.naira.paystack || cfg.naira.testCredit;
   const max = currency === 'usd' ? (Number.isFinite(walletDollars) ? walletDollars : 0) : cfg.naira.paystack ? 0 : 500_000;
 
+  const MOVE: Record<string, [string, 'in' | 'out' | 'lock']> = {
+    deposit: ['Deposit', 'in'], demo: ['Demo naira (not real money)', 'in'], hold: ['Locked for an order', 'lock'], release: ['Came back to you', 'in'],
+    withdraw: ['Withdrawn to your bank', 'out'], withdraw_failed: ['Withdrawal returned', 'in'],
+  };
+
   return (
     <div className="stack">
-      <div className="panel stack">
-        <h2>Naira</h2>
-        <dl className="money-grid">
-          <div><dt>Ready to spend</dt><dd>{naira(me.naira?.availableNaira ?? 0)}</dd></div>
-          <div><dt>Locked in orders</dt><dd>{naira(me.naira?.heldNaira ?? 0)}</dd></div>
-        </dl>
-        <p className="fine">Naira you deposit is held by StockRun and is not on-chain. Every payment from it is still decided by a TapeOut circuit on X Layer.</p>
-        <button className="btn primary" disabled={!!busy} onClick={() => { setNote(''); setError(''); setSheet('amount'); }}>Deposit</button>
-        {currency === 'ngn' && !nairaOn && <p className="warn">Naira deposits are not switched on yet on this server.</p>}
-        {busy && !sheet && <p className="busy">{busy}</p>}
-        {error && !sheet && <p className="alert">{error}</p>}
-        {note && <p className="ok">{note}</p>}
-        {cfg.withdrawals && <WithdrawPanel available={me.naira?.availableNaira ?? 0} onDone={() => { onChange(); refresh(); }} />}
-        {moves.length > 0 && (
-          <details className="supplier-list"><summary>History</summary>
-            <ul className="cards">{moves.map((m) => (
-              <li key={m.key} className="card row between"><span>{m.type === 'deposit' ? 'Deposit (Paystack)' : m.type === 'demo' ? 'Demo naira (not real money)' : m.type === 'hold' ? 'Locked for an order' : m.type === 'release' ? 'Came back to you' : m.type === 'withdraw' ? 'Withdrawn to your bank' : m.type === 'withdraw_failed' ? 'Withdrawal returned' : m.type}</span><span className={m.amountNaira > 0 ? 'ok' : ''}>{m.amountNaira > 0 ? '+' : ''}{naira(m.amountNaira)}</span></li>
-            ))}</ul>
-          </details>
-        )}
+      <header className="screen-head"><h1 className="h-page">Money</h1></header>
+      <div className="balance-card">
+        <span className="bc-label">Ready to spend</span>
+        <span className="bc-amount">{naira(me.naira?.availableNaira ?? 0)}</span>
+        <span className="bc-sub"><Icon.lock size={14} /> {naira(me.naira?.heldNaira ?? 0)} locked in orders</span>
+        <div className="bc-actions">
+          <button className="btn danfo" disabled={!!busy} onClick={() => { setNote(''); setError(''); setSheet('amount'); }}><Icon.plus size={18} /> Add money</button>
+          {cfg.withdrawals && <button className="btn on-dark" onClick={() => { setNote(''); setError(''); setSheet('withdraw'); }}><Icon.arrowUp size={18} /> Withdraw</button>}
+        </div>
       </div>
-      <div className="panel stack">
-        <h2>Coins</h2>
+      <p className="fine"><Icon.info size={14} /> Naira you add is held by StockRun in a ledger, not on-chain. Every payment from it is decided by a TapeOut circuit on X Layer.</p>
+      {currency === 'ngn' && !nairaOn && <p className="warn">Naira deposits are not switched on yet on this server.</p>}
+      {busy && !sheet && <p className="busy">{busy}</p>}
+      {error && !sheet && <p className="alert">{error}</p>}
+      {note && <p className="ok-box">{note}</p>}
+
+      <section className="stack">
+        <h2 className="section-label">Activity</h2>
+        {moves.length === 0 ? <div className="empty"><p className="muted">No activity yet. Add money to start buying.</p></div> : (
+          <ul className="activity">{moves.slice(0, showAll ? undefined : 8).map((m) => {
+            const [label, kind] = MOVE[m.type] ?? [m.type, m.amountNaira > 0 ? 'in' : 'out'];
+            return (
+              <li key={m.key}>
+                <span className={`act-icon ${kind}`}>{kind === 'in' ? <Icon.arrowDown size={16} /> : kind === 'lock' ? <Icon.lock size={16} /> : <Icon.arrowUp size={16} />}</span>
+                <span className="grow">{label}</span>
+                <span className={`num${m.amountNaira > 0 ? ' ok' : ''}`}>{m.amountNaira > 0 ? '+' : '−'}{naira(Math.abs(m.amountNaira))}</span>
+              </li>
+            );
+          })}</ul>
+        )}
+        {moves.length > 8 && <button className="link" onClick={() => setShowAll((v) => !v)}>{showAll ? 'Show less' : `Show all ${moves.length}`}</button>}
+      </section>
+
+      <section className="panel stack">
+        <div className="row between"><h2>Coins</h2><span className="pill muted">Wallet</span></div>
         {me.user?.wallet ? (coins?.wallet ? (<>
-          <p className="fine">Wallet {short(coins.wallet)} on {coins.network === 'xlayer' ? 'X Layer' : 'the local test chain'} (read from the chain; StockRun never holds it).</p>
+          <p className="fine">Wallet {short(coins.wallet)} on {coins.network === 'xlayer' ? 'X Layer' : 'the local test chain'}, read from the chain. StockRun never holds it.</p>
           <dl className="money-grid">
-            <div><dt>{coins.token?.symbol}</dt><dd>{coins.token?.amount} (≈ {naira(coins.token?.naira ?? 0)})</dd></div>
+            <div><dt>{coins.token?.symbol}</dt><dd>{coins.token?.amount} <span className="fine">≈ {naira(coins.token?.naira ?? 0)}</span></dd></div>
             <div><dt>OKB (gas)</dt><dd>{Number(coins.okb).toFixed(5)}</dd></div>
           </dl>
-          <p className="warn">Paying for orders with coins from your wallet is the next step being built. For now, orders are paid from your naira balance.</p>
+          <p className="fine">Paying with coins from your wallet isn't live yet. Orders are paid from your naira balance.</p>
         </>) : <p className="muted">Reading your wallet…</p>) : <p className="muted">Connect a wallet in <strong>Me</strong> to see your coins.</p>}
-      </div>
+      </section>
+
+      {sheet === 'withdraw' && (
+        <Sheet title="Withdraw to your bank" onClose={close}>
+          <WithdrawPanel available={me.naira?.availableNaira ?? 0} onDone={() => { onChange(); refresh(); }} />
+        </Sheet>
+      )}
 
       {sheet === 'amount' && (
         <AmountSheet title="Add money" currency={currency} max={max} onClose={close}
@@ -728,25 +889,31 @@ function AmountSheet({ title, currency, max, onClose, onContinue }: { title: str
 }
 
 // ---------------------------------------------------------------- profile
-function Profile({ user, onChange }: { user: User; onChange: () => void }) {
+function Profile({ user, bust, onChange }: { user: User; bust: number; onChange: () => void }) {
   const [username, setUsername] = useState(user.username ?? '');
   const [displayName, setDisplayName] = useState(user.displayName ?? '');
-  const [pic, setPic] = useState(0);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [saved, setSaved] = useState('');
   const go = (label: string, f: () => Promise<void>) => { setSaved(''); return run(setBusy, setError, label, f); };
+  const handle = user.username ? `@${user.username}` : user.email ?? (user.wallet ? short(user.wallet) : '');
 
   return (
     <div className="stack">
+      <div className="profile-card">
+        <label className="avatar-edit" title="Change picture">
+          <Avatar u={user} bust={bust} big />
+          <span className="avatar-badge"><Icon.plus size={14} /></span>
+          <input type="file" accept="image/*" aria-label="Change picture" onChange={(e) => { const f = e.target.files?.[0]; if (f) go('Uploading…', async () => { const p = await preparePhoto(f, 256, 0.8); await server.avatar(p.mediaType, p.data); onChange(); setSaved('Picture saved.'); }); }} />
+        </label>
+        <span className="stack tight">
+          <strong className="profile-name">{user.displayName ?? user.username ?? 'Your profile'}</strong>
+          <span className="fine">{handle}</span>
+          <span className="pill muted">{user.role === 'shop' ? 'Shop owner' : 'Buyer'}</span>
+        </span>
+      </div>
       <div className="panel stack">
         <h2>Profile</h2>
-        <div className="row wrap">
-          {user.hasAvatar ? <img className="avatar big" src={avatarUrl(user.id, pic)} alt="Your picture" /> : <span className="avatar big empty" aria-hidden="true">?</span>}
-          <label className="btn ghost file">Change picture
-            <input type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) go('Uploading…', async () => { const p = await preparePhoto(f, 256, 0.8); await server.avatar(p.mediaType, p.data); setPic(Date.now()); onChange(); setSaved('Picture saved.'); }); }} />
-          </label>
-        </div>
         <label className="field"><span>Username</span><input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="ada_lagos" maxLength={20} /></label>
         <label className="field"><span>Name</span><input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Ada Obi" maxLength={40} /></label>
         <button className="btn primary" disabled={!!busy} onClick={() => go('Saving…', async () => { await server.profile({ username: username.trim() || undefined, displayName }); onChange(); setSaved('Saved.'); })}>Save</button>
