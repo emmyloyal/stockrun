@@ -54,16 +54,17 @@ export const tokenAbi = parseAbi([
   'function decimals() view returns (uint8)', 'function symbol() view returns (string)',
 ]);
 
-/** Deploy a vault owned by `owner` (the shop owner's phone key). Budget and limit are whole naira. The shop starts
- *  trusting the platform's logistics companies (or `carriers`); the owner can add or remove them later. */
-export async function deployVault(p: Platform, owner: Address, weeklyBudgetNaira: number, limitNaira: number, carriers?: Address[]): Promise<Address> {
+/** Deploy a vault owned by `owner` (the buyer's wallet). Budget and limit are whole naira. The shop starts trusting the
+ *  platform's logistics companies (or `carriers`). Sellers are paid through `p.supplierPayout`, fixed in the vault, and
+ *  deposits stop at `maxBalance` token units (0 = no cap). */
+export async function deployVault(p: Platform, owner: Address, weeklyBudgetNaira: number, limitNaira: number, carriers?: Address[], maxBalance = 0n): Promise<Address> {
   const units = (naira: number) => BigInt(Math.floor(naira / 5000)) * p.unit;
   const a = artifact('StockRunVault');
   const hash = await p.deployer.deployContract({
     abi: a.abi, bytecode: a.bytecode.object,
     args: [p.token, p.circuits, p.circuitIds.restock, p.circuitIds.pickup, p.circuitIds.delivery, p.unit, owner,
       p.agent.account.address, p.checker.account.address, units(weeklyBudgetNaira), units(limitNaira),
-      carriers ?? p.carriers.map((c) => c.wallet.account.address)],
+      carriers ?? p.carriers.map((c) => c.wallet.account.address), p.supplierPayout, maxBalance],
   });
   const r = await p.pub.waitForTransactionReceipt({ hash });
   if (r.status !== 'success' || !r.contractAddress) throw new Error('vault deployment failed');

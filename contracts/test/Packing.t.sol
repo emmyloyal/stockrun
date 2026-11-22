@@ -9,7 +9,7 @@ import {MockCircuits} from "./mocks/MockCircuits.sol";
 /// Exposes the vault's internal packing so it can be checked against the golden vectors
 /// in circuits/test/circuits.test.ts (TAP-02 §5 layout, LSB-first).
 contract VaultHarness is StockRunVault {
-    constructor() StockRunVault(IERC20Min(address(1)), ITapeOutCircuits(address(2)), 1, 2, 3, 1, address(3), address(4), address(5), 0, 0, new address[](0)) {}
+    constructor() StockRunVault(IERC20Min(address(1)), ITapeOutCircuits(address(2)), 1, 2, 3, 1, address(3), address(4), address(5), 0, 0, new address[](0), address(0), 0) {}
 
     function packRestock(uint256 total, uint256 budget, uint256 lim, uint256 sup, uint256 cat, uint256 dist, uint256 ok)
         external pure returns (bytes memory)

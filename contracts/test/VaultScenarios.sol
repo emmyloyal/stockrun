@@ -15,6 +15,7 @@ abstract contract VaultScenarios is Test {
 
     address owner = makeAddr("owner"); address agent = makeAddr("agent"); address checker = makeAddr("checkService");
     address rider = makeAddr("logisticsCompany"); address payout = makeAddr("supplierOffRamp"); address stranger = makeAddr("stranger");
+    address stockrunPayout = makeAddr("stockrunPayoutWallet"); // the vault's fixed default payout
     bytes32 constant SUP = keccak256("mile12-wholesaler-1");
     uint256 constant UNIT = 5_000e6; // circuit money unit in token units (demo: 6-decimal token, 1 token = ₦1)
 
@@ -31,7 +32,7 @@ abstract contract VaultScenarios is Test {
     /// `rider` in these tests is a logistics company the owner picked at shop set-up (no bond).
     function _newVault(uint256 r, uint256 p, uint256 d) internal returns (StockRunVault) {
         address[] memory carriers = new address[](1); carriers[0] = rider;
-        return new StockRunVault(IERC20Min(address(token)), circuits, r, p, d, UNIT, owner, agent, checker, 100 * UNIT, 40 * UNIT, carriers);
+        return new StockRunVault(IERC20Min(address(token)), circuits, r, p, d, UNIT, owner, agent, checker, 100 * UNIT, 40 * UNIT, carriers, stockrunPayout, 0);
     }
 
     function _propose(uint8 qty, uint256 price) internal returns (uint256) {
@@ -392,6 +393,51 @@ abstract contract VaultScenarios is Test {
         vault.withdraw(free);
         vm.stopPrank();
         assertEq(token.balanceOf(address(vault)), vault.locked());
+    }
+
+    // ================================================================ deposit cap and the fixed payout wallet
+
+    function test_depositCap_refusesAboveMaxBalance() public {
+        StockRunVault capped = new StockRunVault(IERC20Min(address(token)), circuits, restockId, pickupId, deliveryId, UNIT, owner, agent, checker,
+            100 * UNIT, 40 * UNIT, new address[](0), stockrunPayout, 10 * UNIT);
+        vm.startPrank(owner);
+        token.approve(address(capped), type(uint256).max);
+        capped.deposit(6 * UNIT);
+        vm.expectRevert(StockRunVault.OverCap.selector); capped.deposit(5 * UNIT);   // 11 > 10
+        capped.deposit(4 * UNIT);                                                    // exactly the cap
+        vm.stopPrank();
+        assertEq(token.balanceOf(address(capped)), 10 * UNIT);
+        vm.prank(stranger); vm.expectRevert(StockRunVault.OverCap.selector); capped.deposit(1);
+    }
+
+    function test_noCap_whenMaxBalanceIsZero() public {
+        assertEq(vault.maxBalance(), 0);
+        vm.prank(owner); vault.deposit(400 * UNIT);
+        assertEq(token.balanceOf(address(vault)), 900 * UNIT);
+    }
+
+    function test_sellerPaidThroughDefaultPayout_isApprovedAtOnce() public {
+        bytes32 shop = keccak256("new-seller");
+        vm.prank(owner); vault.queueSupplier(shop, 1, stockrunPayout);
+        assertEq(vault.supplierStatus(shop), 1, "approved immediately");
+        assertEq(vault.supplierPayout(shop), stockrunPayout);
+        vm.prank(agent); uint256 id = vault.proposeOrder(shop, 5, UNIT, 0, 0, rider);
+        assertEq(uint8(_status(id)), uint8(StockRunVault.Status.Locked), "can order in the same sitting");
+    }
+
+    function test_anyOtherPayout_stillWaits24h() public {
+        bytes32 shop = keccak256("new-seller");
+        vm.prank(owner); vault.queueSupplier(shop, 1, stranger);
+        assertEq(vault.supplierStatus(shop), 0, "not yet");
+        vm.prank(agent); vm.expectRevert(abi.encodeWithSelector(StockRunVault.Rejected.selector, uint8(1)));
+        vault.proposeOrder(shop, 5, UNIT, 0, 0, rider);
+        vm.warp(block.timestamp + 1 days); vault.applySupplier(shop);
+        assertEq(vault.supplierPayout(shop), stranger);
+    }
+
+    function test_onlyOwnerCanUseTheInstantApproval() public {
+        vm.prank(agent); vm.expectRevert(StockRunVault.NotAuthorized.selector);
+        vault.queueSupplier(keccak256("x"), 1, stockrunPayout);
     }
 
     function test_stalePickup_refundsLockedFunds() public {

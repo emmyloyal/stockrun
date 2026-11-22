@@ -59,7 +59,7 @@ export async function startLocalChain(port = 18545 + Math.floor(Math.random() * 
   const token = await deploy('MockToken');
   const circuits = await deploy('MockCircuits');
   // Weekly budget 200 units (₦1,000,000); auto-approve limit 40 units (₦200,000).
-  const vault = await deploy('StockRunVault', [token, circuits, 1n, 2n, 3n, UNIT, owner.address, agent.address, checker.address, 200n * UNIT, 40n * UNIT, [rider.address]]);
+  const vault = await deploy('StockRunVault', [token, circuits, 1n, 2n, 3n, UNIT, owner.address, agent.address, checker.address, 200n * UNIT, 40n * UNIT, [rider.address], '0x0000000000000000000000000000000000000000', 0n]);  // single-shop demo: no fixed payout, sellers wait 24 h
 
   await send(o.writeContract({ address: token, abi: tokenAbi, functionName: 'mint', args: [owner.address, 1000n * UNIT] }));
   await send(o.writeContract({ address: token, abi: tokenAbi, functionName: 'approve', args: [vault, 1000n * UNIT] }));

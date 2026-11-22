@@ -44,6 +44,10 @@ contract StockRunVault {
     uint256 public immutable pickupCheckId;
     uint256 public immutable deliveryCheckId;
     uint256 public immutable unit;            // token amount per circuit money unit (e.g. ₦5,000 worth)
+    /// StockRun's payout wallet, fixed at creation. Sellers paid there are approved at once (it can't be redirected).
+    address public immutable defaultPayout;
+    /// Most this vault may hold through deposit() (token units). 0 = no cap. The vault is unaudited: keep it small.
+    uint256 public immutable maxBalance;
 
     address public immutable owner;           // shop owner
     address public agent;                     // AI agent key: propose only
@@ -79,15 +83,16 @@ contract StockRunVault {
     event SelfCollected(uint256 indexed id, uint8 qty);
 
     error NotAuthorized(); error BadStatus(); error CircuitFailed(); error Rejected(uint8 reason); error OrderTooLarge(); error NoPayout();
-    error UntrustedHandler();
+    error UntrustedHandler(); error OverCap();
 
     modifier only(address who) { if (msg.sender != who) revert NotAuthorized(); _; }
 
     constructor(
         IERC20Min token_, ITapeOutCircuits circuits_, uint256 restockId, uint256 pickupId, uint256 deliveryId,
         uint256 unit_, address owner_, address agent_, address checkService_, uint256 weeklyBudget_, uint256 limit_,
-        address[] memory carriers_
+        address[] memory carriers_, address defaultPayout_, uint256 maxBalance_
     ) {
+        defaultPayout = defaultPayout_; maxBalance = maxBalance_;
         token = token_; circuits = circuits_;
         restockGuardId = restockId; pickupCheckId = pickupId; deliveryCheckId = deliveryId;
         unit = unit_; owner = owner_; agent = agent_; checkService = checkService_;
@@ -97,7 +102,11 @@ contract StockRunVault {
     }
 
     // ================================================================ owner settings
-    function deposit(uint256 amount) external { require(token.transferFrom(msg.sender, address(this), amount)); }
+    /// @notice Anyone may top the vault up, but never above maxBalance (when set).
+    function deposit(uint256 amount) external {
+        if (maxBalance != 0 && token.balanceOf(address(this)) + amount > maxBalance) revert OverCap();
+        require(token.transferFrom(msg.sender, address(this), amount));
+    }
 
     /// @notice Owner withdraws free funds. Funds locked in open orders stay in the vault.
     function withdraw(uint256 amount) external only(owner) {
@@ -110,11 +119,15 @@ contract StockRunVault {
     function applyLimit() external { require(limitEffectiveAt != 0 && block.timestamp >= limitEffectiveAt); limit = pendingLimit; limitEffectiveAt = 0; }
 
     /// @notice Owner sets a supplier's status and payout address. Only the owner, never the agent, decides
-    ///         where supplier money goes. Changes wait DELAY; blocking (3) is immediate.
+    ///         where supplier money goes. Changes wait DELAY; blocking (3) is immediate, and so is approving a
+    ///         supplier paid through defaultPayout (fixed at creation, so the money can't be redirected).
     function queueSupplier(bytes32 id, uint8 status_, address payout_) external only(owner) {
         require(status_ <= 3);
         if (status_ == 3) { supplierStatus[id] = 3; supplierEffectiveAt[id] = 0; return; }
         if ((status_ == 1 || status_ == 2) && payout_ == address(0)) revert NoPayout();
+        if ((status_ == 1 || status_ == 2) && payout_ == defaultPayout) {
+            supplierStatus[id] = status_; supplierPayout[id] = payout_; supplierEffectiveAt[id] = 0; return;
+        }
         pendingSupplierStatus[id] = status_; pendingSupplierPayout[id] = payout_;
         supplierEffectiveAt[id] = block.timestamp + DELAY;
     }
