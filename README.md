@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/images/01-welcome.png" width="260" alt="StockRun welcome screen" />
+  <img src="docs/images/logo-icon.svg" width="96" alt="StockRun logo" />
 </p>
 
 <h1 align="center">StockRun</h1>
@@ -14,6 +14,10 @@
   <a href="https://stockrun-ai.duckdns.org"><strong>Live app → stockrun-ai.duckdns.org</strong></a>
   &nbsp;·&nbsp; Built for the X Layer × TapeOut "Build X" hackathon
   &nbsp;·&nbsp; Naira runs in Paystack <strong>test mode</strong>: no real money moves
+</p>
+
+<p align="center">
+  <img src="docs/images/01-welcome.png" width="260" alt="StockRun welcome screen" />
 </p>
 
 ---

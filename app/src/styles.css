@@ -27,7 +27,8 @@ button, input, textarea { font: inherit; color: inherit; }
 main { flex: 1; padding: 18px max(16px, env(safe-area-inset-right, 0px)) 24px max(16px, env(safe-area-inset-left, 0px)); }
 .top { position: sticky; top: 0; z-index: 5; display: flex; justify-content: space-between; align-items: center; padding: calc(12px + env(safe-area-inset-top, 0px)) 16px 12px; background: var(--bg); border-bottom: 1px solid var(--line); }
 .brand { display: flex; align-items: center; gap: 8px; font-family: var(--display); font-weight: 900; font-stretch: 80%; font-size: 1.3rem; }
-.mark { width: 22px; height: 22px; border-radius: 5px; background: var(--danfo); box-shadow: inset 0 -4px 0 var(--on-danfo); }
+.mark { flex: none; color: var(--ink); }
+@media (prefers-color-scheme: dark) { .mark { color: var(--danfo); } }
 .demo-bar { position: fixed; left: 0; right: 0; bottom: 0; text-align: center; font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.04em; padding: 8px 16px calc(8px + env(safe-area-inset-bottom, 0px)); background: var(--danfo); color: var(--on-danfo); }
 
 h1, h2, h3 { font-family: var(--display); margin: 0; line-height: 1.1; text-wrap: balance; }

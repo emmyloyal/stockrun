@@ -16,7 +16,17 @@ import { FeedTab } from './Feed';
 import { Icon } from './icons';
 
 type Tab = 'feed' | 'ask' | 'orders' | 'chats' | 'money' | 'me' | 'admin';
-export const Brand = () => <span className="brand"><span className="mark" aria-hidden="true" />StockRun</span>;
+/** The Route S mark: a solid dot at pickup, an open ring at the shop. Ink on light, danfo yellow on dark. */
+export const Mark = ({ size = 24 }: { size?: number }) => (
+  <svg className="mark" width={size} height={size} viewBox="190 416 410 410" aria-hidden="true">
+    <g fill="none" stroke="currentColor">
+      <path d="M522 475H360a73 73 0 0 0 0 146h80a73 73 0 0 1 0 146H318" strokeWidth="56" />
+      <circle cx="270" cy="767" r="40.5" strokeWidth="27" />
+    </g>
+    <circle cx="522" cy="474" r="52" fill="currentColor" />
+  </svg>
+);
+export const Brand = () => <span className="brand"><Mark />StockRun</span>;
 const greeting = () => { const h = Number(new Date().toLocaleString('en-NG', { timeZone: 'Africa/Lagos', hour: 'numeric', hour12: false })); return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'; };
 const Avatar = ({ u, bust = 0, big = false }: { u: User; bust?: number; big?: boolean }) => u.hasAvatar
   ? <img className={`avatar${big ? ' big' : ''}`} src={avatarUrl(u.id, bust)} alt="" />

@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>StockRun</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20100%20100%22%3E%3Crect%20width%3D%22100%22%20height%3D%22100%22%20rx%3D%2222%22%20fill%3D%22%23F4C20D%22%2F%3E%3Cg%20transform%3D%22translate(50%2050)%20scale(0.17)%20translate(-395%20-621)%22%3E%3Cg%20fill%3D%22none%22%20stroke%3D%22%23141B2E%22%3E%3Cpath%20d%3D%22M522%20475H360a73%2073%200%200%200%200%20146h80a73%2073%200%200%201%200%20146H318%22%20stroke-width%3D%2256%22%2F%3E%3Ccircle%20cx%3D%22270%22%20cy%3D%22767%22%20r%3D%2240.5%22%20stroke-width%3D%2227%22%2F%3E%3C%2Fg%3E%3Ccircle%20cx%3D%22522%22%20cy%3D%22474%22%20r%3D%2252%22%20fill%3D%22%23141B2E%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E">
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="description" content="StockRun restocks small Lagos shops from WhatsApp. Suppliers are paid only after a bonded rider checks the goods, and every payment decision is made by a circuit on X Layer.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -70,8 +71,8 @@ header.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20; 
 body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 21; background: var(--bg); }
 .nav { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-block: 14px; }
 .brand { display: flex; align-items: center; gap: 10px; font-family: var(--font-display); font-weight: 900; font-stretch: 80%; font-size: 1.45rem; text-decoration: none; letter-spacing: 0.01em; }
-.brand-mark { width: 26px; height: 26px; border-radius: 6px; background: var(--danfo); display: grid; place-items: center; }
-.brand-mark span { display: block; width: 14px; height: 4px; background: var(--on-danfo); box-shadow: 0 -6px 0 var(--on-danfo), 0 6px 0 var(--on-danfo); }
+.brand-mark { width: 28px; height: 28px; flex: none; color: var(--ink); }
+@media (prefers-color-scheme: dark) { .brand-mark { color: var(--danfo); } }
 .nav-links { display: flex; gap: 22px; font-size: var(--step--1); font-weight: 500; }
 .nav-links a { text-decoration: none; color: var(--muted); }
 .nav-links a:hover { color: var(--ink); }
@@ -206,7 +207,7 @@ footer p { max-width: 70ch; }
 
 <header class="top">
   <div class="wrap nav">
-    <a class="brand" href="#top" aria-label="StockRun home"><span class="brand-mark" aria-hidden="true"><span></span></span>StockRun</a>
+    <a class="brand" href="#top" aria-label="StockRun home"><svg class="brand-mark" viewBox="190 416 410 410" aria-hidden="true"><g fill="none" stroke="currentColor"><path d="M522 475H360a73 73 0 0 0 0 146h80a73 73 0 0 1 0 146H318" stroke-width="56"/><circle cx="270" cy="767" r="40.5" stroke-width="27"/></g><circle cx="522" cy="474" r="52" fill="currentColor"/></svg>StockRun</a>
     <nav class="nav-links" aria-label="Sections">
       <a href="#how">How it works</a>
       <a href="#checks">The checks</a>
