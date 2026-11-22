@@ -19,6 +19,41 @@ export async function depositCoins(cfg: Config, owner: Address, vault: Address, 
   return walletSend(cfg.coins!.chainId, owner, vault, 'deposit', [amount]);
 }
 
+/** Move free coins from the buyer's vault back to their own wallet (their wallet signs; locked coins stay put). */
+export function CoinWithdraw({ cfg, wallet, vault, onDone }: { cfg: Config; wallet: Address; vault: NonNullable<Coins['vault']>; onDone: () => void }) {
+  const [amount, setAmount] = useState('');
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  const [done, setDone] = useState<{ text: string; tx: string } | null>(null);
+  const n = Number(amount);
+  return (
+    <div className="stack">
+      <p className="fine">From your vault {short(vault.vault)} to your wallet {short(wallet)} on X Layer. Only free coins can leave; coins locked in an order stay until PickupCheck settles it.</p>
+      <dl className="money-grid">
+        <div><dt>Free to withdraw</dt><dd>{usd(vault.free)} <span className="fine">≈ {naira(vault.naira.free)}</span></dd></div>
+        <div><dt>Locked in orders</dt><dd>{usd(vault.locked)}</dd></div>
+      </dl>
+      <label className="field"><span>Amount ({vault.symbol})</span>
+        <span className="input-icon"><span className="prefix">$</span><input inputMode="decimal" placeholder={vault.free.toFixed(2)} value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ''))} /></span>
+      </label>
+      <div className="row wrap">
+        <button className="btn ghost" disabled={vault.free <= 0} onClick={() => setAmount(vault.free.toFixed(6).replace(/\.?0+$/, ''))}>Use all {usd(vault.free)}</button>
+        <button className="btn primary grow" disabled={!!busy || !(n >= 0.000001) || n > vault.free} onClick={async () => {
+          setBusy('Confirm the withdrawal in your wallet…'); setError(''); setDone(null);
+          try {
+            const tx = await walletSend(cfg.coins!.chainId, wallet, vault.vault, 'withdraw', [toUnits(n)]);
+            setDone({ text: `${usd(n)} is back in your wallet.`, tx }); setAmount(''); onDone();
+          } catch (e) { setError((e as Error).message); } finally { setBusy(''); }
+        }}>Withdraw to my wallet</button>
+      </div>
+      {n > vault.free && <p className="fine warn-text">Only {usd(vault.free)} is free.</p>}
+      {busy && <p className="busy">{busy}</p>}
+      {error && <p className="alert">{error}</p>}
+      {done && <p className="ok-box">{done.text} <Tx hash={done.tx} /></p>}
+    </div>
+  );
+}
+
 export function CoinsPanel({ cfg, me, coins, onChange }: { cfg: Config; me: Me; coins: Coins | null; onChange: () => void }) {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');

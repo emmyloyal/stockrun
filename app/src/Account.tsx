@@ -15,7 +15,7 @@ import { WithdrawPanel } from './Banks';
 import { ChatsTab, MyStore } from './Store';
 import { FeedTab } from './Feed';
 import { Icon } from './icons';
-import { CoinsPanel, depositCoins } from './Coins';
+import { CoinWithdraw, CoinsPanel, depositCoins } from './Coins';
 
 type Tab = 'feed' | 'ask' | 'orders' | 'chats' | 'money' | 'me' | 'admin';
 /** The Route S mark: a solid dot at pickup, an open ring at the shop. Ink on light, danfo yellow on dark. */
@@ -766,6 +766,7 @@ function Money({ cfg, me, onChange }: { cfg: Config; me: Me; onChange: () => voi
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
   const [sheet, setSheet] = useState<null | 'amount' | 'pay' | 'withdraw'>(null);
+  const [withdrawWhat, setWithdrawWhat] = useState<'naira' | 'coins'>('naira');
   const [showAll, setShowAll] = useState(false);
   const [amount, setAmount] = useState(0);
   const [quote, setQuote] = useState<{ chargeNaira: number; totalNaira: number } | null>(null);
@@ -806,7 +807,9 @@ function Money({ cfg, me, onChange }: { cfg: Config; me: Me; onChange: () => voi
         <span className="bc-sub"><Icon.lock size={14} /> {naira(me.naira?.heldNaira ?? 0)} locked in orders</span>
         <div className="bc-actions">
           <button className="btn danfo" disabled={!!busy} onClick={() => { setNote(''); setError(''); setSheet('amount'); }}><Icon.plus size={18} /> Add money</button>
-          {cfg.withdrawals && <button className="btn on-dark" onClick={() => { setNote(''); setError(''); setSheet('withdraw'); }}><Icon.arrowUp size={18} /> Withdraw</button>}
+          {(cfg.withdrawals || (vault && me.user?.wallet)) && <button className="btn on-dark" onClick={() => {
+            setNote(''); setError(''); setWithdrawWhat(cfg.withdrawals && currency === 'ngn' ? 'naira' : vault ? 'coins' : 'naira'); setSheet('withdraw');
+          }}><Icon.arrowUp size={18} /> Withdraw</button>}
         </div>
       </div>
       <p className="fine"><Icon.info size={14} /> Naira you add is held by StockRun in a ledger, not on-chain. Every payment from it is decided by a TapeOut circuit on X Layer.</p>
@@ -838,8 +841,18 @@ function Money({ cfg, me, onChange }: { cfg: Config; me: Me; onChange: () => voi
       </section>
 
       {sheet === 'withdraw' && (
-        <Sheet title="Withdraw to your bank" onClose={close}>
-          <WithdrawPanel available={me.naira?.availableNaira ?? 0} onDone={() => { onChange(); refresh(); }} />
+        <Sheet title={withdrawWhat === 'coins' ? 'Withdraw to your wallet' : 'Withdraw to your bank'} onClose={close}>
+          <div className="stack">
+            {cfg.withdrawals && vault && me.user?.wallet && (
+              <div className="seg two" role="radiogroup" aria-label="Withdraw">
+                <button role="radio" aria-checked={withdrawWhat === 'naira'} className={withdrawWhat === 'naira' ? 'on' : ''} onClick={() => setWithdrawWhat('naira')}>Naira → bank</button>
+                <button role="radio" aria-checked={withdrawWhat === 'coins'} className={withdrawWhat === 'coins' ? 'on' : ''} onClick={() => setWithdrawWhat('coins')}>{vault.symbol} → wallet</button>
+              </div>
+            )}
+            {withdrawWhat === 'coins' && vault && me.user?.wallet
+              ? <CoinWithdraw cfg={cfg} wallet={me.user.wallet} vault={vault} onDone={refresh} />
+              : <WithdrawPanel available={me.naira?.availableNaira ?? 0} onDone={() => { onChange(); refresh(); }} />}
+          </div>
         </Sheet>
       )}
 
