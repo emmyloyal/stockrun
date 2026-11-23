@@ -81,6 +81,9 @@ small logic circuits that were burned onto X Layer with TapeOut. Nobody can chan
 
 ## How it works, screen by screen
 
+<sub>Screenshots are from a local run of this code, set up the way the live site is (live Paystack mode, StockRun's
+1.5% on deposits, no demo sellers), with Paystack simulated so no real money moved.</sub>
+
 ### 1. Ask for what you need
 
 <table>
@@ -151,7 +154,7 @@ small logic circuits that were burned onto X Layer with TapeOut. Nobody can chan
 
 Each order shows where it is: **Locked → Collected → Seller paid**. You (or someone you send) collect the goods and
 count them. Here the seller handed over **9 of the 10** cartons. **PickupCheck** (circuit #2) approved the seller's
-payment for 9, and the money for the 10th, with its share of the fee, came straight back.
+payment for 9, and the money for the 10th came straight back.
 
 Under every order, *"Decided by TapeOut circuits"* lists each circuit's input, output and block number, so anyone
 can ask the circuit again and check the decision.
@@ -160,11 +163,18 @@ can ask the circuit again and check the decision.
 
 <table>
   <tr>
+    <td width="33%" valign="top"><img src="docs/images/17-add-money.png" alt="Adding money: the deposit, StockRun's 1.5% and Paystack's charge" /></td>
     <td width="33%" valign="top"><img src="docs/images/10-money.png" alt="Money screen" /></td>
-    <td width="33%" valign="top"><img src="docs/images/11-me.png" alt="Profile screen" /></td>
     <td valign="top">
+      <p><strong>Add money</strong> shows the whole price before you pay: the amount that goes to your balance,
+      StockRun's 1.5% fee and Paystack's charge. Your balance gets the full amount you chose.</p>
       <p><strong>Money</strong> shows what's ready to spend, what's locked in orders, and every movement. Withdrawal to
       any Nigerian bank through Paystack is built, and opens once StockRun's Paystack account is upgraded.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="33%" valign="top"><img src="docs/images/11-me.png" alt="Profile screen" /></td>
+    <td colspan="2" valign="top">
       <p><strong>Me</strong> holds your profile. Shop owners can also register their store (₦2,000 a month, after
       admin approval) so buyers find them and chat in the app.</p>
     </td>
@@ -380,7 +390,7 @@ run `sudo bash setup-server.sh stockrun-ai.duckdns.org <ip-with-dashes>.sslip.io
 | [`contracts/`](contracts/) | The vault (Foundry) |
 | [`deployments/xlayer.json`](deployments/xlayer.json) | Mainnet addresses |
 | [`docs/`](docs/) | Design notes and the screenshots in this README |
-| [`site/`](site/) | Landing page |
+| [`site/`](site/) | Early concept page (out of date: it describes the first design, with bonded riders) |
 
 ## Sources
 

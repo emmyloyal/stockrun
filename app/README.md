@@ -1,15 +1,21 @@
 # App
 
-Phone-first web app for shop owners. It is built with React and Vite. It works with either of the agent's servers and picks the mode from `/api/config`:
+Phone-first web app for buyers and shop owners. It is built with React and Vite. It works with either of the agent's servers and picks the mode from `/api/config`:
 - **Single-shop demo** (`npm run app`, `agent/src/server/api.ts`): demo keys, no sign-in. Described below.
-- **Real accounts** (`npm run serve` or `serve:xlayer`, `agent/src/server/app.ts`): `src/Account.tsx`. The owner signs in by SMS, makes the phone's key with a PIN backup (`src/keys.ts`), sets up the shop, deposits, approves suppliers, then orders. See "App servers" in `agent/README.md`.
+- **Real accounts** (`npm run serve` or `serve:xlayer`, `agent/src/server/app.ts`): `src/Account.tsx` and friends. People sign in
+  with an emailed code or a wallet, add naira (Paystack) or USD₮0 (their own vault), find sellers, record deals, collect and
+  count. Shops register a store, post on the feed and chat with buyers; admins get `src/Admin.tsx` and
+  `src/AdminControls.tsx`. This is what runs at https://stockrun-ai.duckdns.org. See "App servers" in `agent/README.md`.
 
 ## Try real accounts locally
 ```
 cd app && npm install && npm run build
-cd ../agent && npm run serve                # http://localhost:8080, local chain; SMS codes appear in this console
+cd ../agent && npm run serve                # http://localhost:8080, local chain; sign-in codes appear in this console
 ```
-Sign in as a shop owner, tap "Get test money", deposit, approve a supplier, then skip the 24 h wait with the test-chain control (`POST /api/dev/advance-day`). Choose "I'll collect them myself" to finish an order on your own: after it locks, confirm the count and the supplier is paid. "Send them with a logistics company" books the simulated company on the local server.
+Sign in with any email (the code is printed in the console), add free demo naira under **Money** (local only, labelled
+"not real money"), then on **Ask** find sellers and record a deal. After it locks, go to **Orders**, count what you
+collected, and PickupCheck approves the seller's payment for that many. The local server also has demo bot sellers and
+"Try the demo agent"; neither exists on the live site.
 
 ## Run the local demo
 ```
@@ -57,8 +63,10 @@ StockRun has no rider accounts and no bonds. The owner collects the goods, or a 
 - **GPS and camera on a phone over plain `http://`:** browsers block them. Testing on a phone needs HTTPS, for example the cloudflared tunnel.
 - **Reason codes for RestockGuard rejections:** these show as plain words in the order message, but not yet as a separate badge.
 
-## Hosting on DeWEB
-The built app is stored on X Layer under our circuit #1 as `1.2.433.tape`, served at `https://1-2-433.tapekit.org/`. The server runs elsewhere, at a public HTTPS address.
+## Hosting on DeWEB (built, not used)
+The live app is served by the StockRun server on AWS. Publishing it to DeWEB (stored on X Layer under our circuit #1 as
+`1.2.433.tape`, served at `https://1-2-433.tapekit.org/`) is built and rehearsed on a fork, but it has not been published.
+The server would keep running elsewhere, at a public HTTPS address.
 ```
 cd app && npm run build
 cd ../agent && npm run deweb:publish -- --api https://<server>             # rehearsal on a local fork: shows the cost

@@ -2,7 +2,19 @@
 
 Full plan (living doc): https://claude.ai/artifact/Eg2nTvmL9rk9ATxjSAcbcW
 
-## Schedule (2026)
+## Where it ended up (2026-11-23)
+Submitted to the X Layer × TapeOut "Build X" hackathon. Live at https://stockrun-ai.duckdns.org (AWS), naira through
+Paystack in live mode, the three circuits on X Layer mainnet. The original plan below changed along the way:
+- **Riders and bonds were dropped.** The buyer collects (or a verified logistics company delivers); the seller is paid at
+  pickup for what the buyer counted.
+- **Buyers, not only shop owners.** Anyone signs in by email or wallet, adds money and asks for what they want.
+- **Sellers come from OpenStreetMap and registered stores.** Buyers message them from their own WhatsApp; the haggling
+  agent and bot suppliers stay on the local chain.
+- **Money:** StockRun's 1.5% is paid on every deposit (naira and coins); stores pay ₦2,000 a month.
+- **DeWEB:** built and rehearsed, not published; the app is served from the AWS server.
+- **Still waiting:** Paystack's business upgrade (for withdrawals and automatic seller payouts) and a live Sendrelay key.
+
+## Original schedule (2026)
 | Dates | Workstream | Done when |
 | --- | --- | --- |
 | Nov 18–19 | Docs and truth tables | TapeOut docs read; bit order confirmed; reference model tests green |
@@ -14,25 +26,12 @@ Full plan (living doc): https://claude.ai/artifact/Eg2nTvmL9rk9ATxjSAcbcW
 | Dec 2–4 | Pilot with shop owners | 1–2 real owners try it; quotes and feedback captured |
 | Dec 5–6 | Video and submission | 3-min video, description, form submitted |
 
-**Cut order if late:** voice input, then the AI phone-call fallback, then REF reuse (tape out flat circuits instead). Never cut the pilot.
-
-## Demo video (≤ 3 min)
-| Time | Scene |
-| --- | --- |
-| 0:00–0:20 | Problem: half a day at Mile 12; short supply after paying up front |
-| 0:20–0:45 | Order → map → RestockGuard approves → funds lock |
-| 0:45–1:15 | WhatsApp negotiation (1 real supplier) → rider booked |
-| 1:15–1:45 | Pickup photo → AI count → PickupCheck pays 18 of 20 → naira alert |
-| 1:45–2:10 | Delivery → DeliveryCheck pays rider; blocked over-budget attempt with reason code |
-| 2:10–2:35 | Under the hood: processor, circuit IDs, eval() on explorer, DeWEB |
-| 2:35–3:00 | Users, fee model, pilot feedback |
-
 ## Submission checklist
 - [x] Processor address + circuit IDs (3 circuits, flat: no shared REF circuits; see README)
-- [ ] Vault address
-- [ ] DeWEB app link
-- [ ] Description: product, users + how to reach them, revenue, why they pay and stay
+- [x] Live app link (https://stockrun-ai.duckdns.org; DeWEB not used)
+- [x] Description: product, users + how to reach them, revenue, why they pay and stay
 - [x] TapeOut features used (README)
 - [x] Public GitHub repo
-- [ ] Demo video ≤ 3 min
-- [ ] Form: https://forms.gle/EoDNbxQ65dev1wFd9 — by Dec 6
+- [x] Form submitted
+- [ ] Demo video link in the README (still "coming soon")
+- [ ] Pilot with real shop owners

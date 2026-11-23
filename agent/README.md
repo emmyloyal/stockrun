@@ -42,18 +42,25 @@ There are two servers. Both serve the built app from `app/dist`.
 | Command | What it is | Chain |
 | --- | --- | --- |
 | `npm run app` | Single-shop demo (`api.ts`): one vault, demo keys, no sign-in | Local anvil |
-| `npm run serve` | Real-account server (`app.ts`, started by `main.ts`): phone sign-in, one vault per shop owner | Local anvil, test money, SMS codes printed on the console |
-| `npm run serve:xlayer` | The same server on **X Layer mainnet**: real USDT0, circuits #1-#3, real gas | X Layer (chain 196) |
+| `npm run serve` | The real server (`app.ts`, started by `main.ts`) on a local chain: demo naira and demo bot sellers for trying it, sign-in codes printed on the console | Local anvil, test money |
+| `npm run serve:xlayer` | The same server on **X Layer mainnet**, as at https://stockrun-ai.duckdns.org: Paystack naira, real USD₮0, circuits #1-#3, no demo naira, no demo sellers | X Layer (chain 196) |
 
-The buyer's path on the real-account server:
-1. **Sign in** with a phone number and SMS code, as a shop owner.
-2. **Make the phone's key.** It is created in the browser and backed up to the server encrypted with a 6-digit PIN the server never sees (PBKDF2-SHA256, 600,000 rounds, AES-GCM). A new phone restores it with the PIN.
-3. **Set up the shop:** name, a pin on the map, weekly budget and auto-approve limit. The server deploys the owner's vault (about 0.00006 OKB) and sends the phone key a one-off 0.00005 OKB of gas (once per account, recorded in the database).
-4. **Deposit** the amount the agent may spend. The phone signs it. The first deposit also approves the vault for the token; later deposits are one transaction.
-5. **Approve suppliers** in the list under the map. The vault makes the owner wait 24 h. The server then finishes the approval with the deployer key, so the owner signs only once.
-6. **Order** in plain words. Ordering stays off until something is deposited.
+A buyer's path on the real server:
+1. **Sign in** with an emailed 6-digit code, or with a wallet (OKX Wallet or MetaMask). Phone sign-in is off.
+2. **Add money.** Naira through Paystack: the buyer pays the deposit plus StockRun's 1.5% plus Paystack's charge, and the
+   balance gets the full deposit (held in StockRun's ledger, not on-chain). Or USD₮0 into the buyer's own vault on X Layer,
+   owned by their wallet and capped at $50; the vault itself sends StockRun's 1.5% on top of each deposit.
+3. **Find sellers** near an address: OpenStreetMap shops and stores registered on StockRun. The AI drafts a WhatsApp
+   message; the buyer sends it from their own phone.
+4. **Record the deal.** RestockGuard decides whether the money locks (goods only; no order fee).
+5. **Collect and count.** The buyer's count is the handover; PickupCheck approves the seller's payment for what was counted
+   and the rest comes back. Naira sellers are paid by StockRun at pickup (by hand until Paystack transfers are enabled).
 
-`serve:xlayer` needs in `../.env`: `DEPLOYER_PRIVATE_KEY`, `AGENT_PRIVATE_KEY`, `CHECK_SERVICE_PRIVATE_KEY`, `SUPPLIER_PAYOUT_ADDRESS`, `NGN_PER_USD`, `SERVER_SECRET` (32+ random characters), and an SMS sender: `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` + `TWILIO_SMS_FROM`, or `SMS=console` to print codes on the server console. Shops are kept in `data/stockrun.db` (`DB_FILE` to move it). Set `SECURE_COOKIES=1` behind HTTPS.
+Shops can register a store (₦2,000 a month after an admin approves it), post their stock on the feed, and chat with
+buyers in the app. Admins (`ADMIN_EMAILS`) get an Admin page: emergency pauses, the books against the Paystack balance,
+deposits that don't match, withdrawals, users (freeze, mute), feed moderation, stores and seller payouts.
+
+`serve:xlayer` needs in `../.env`: `DEPLOYER_PRIVATE_KEY`, `AGENT_PRIVATE_KEY`, `CHECK_SERVICE_PRIVATE_KEY`, `SUPPLIER_PAYOUT_ADDRESS`, `NGN_PER_USD`, `SERVER_SECRET` (32+ random characters), `PAYSTACK_SECRET_KEY` and the `GMAIL_*` keys for emailed codes (or `SMS=console` to print them). Fees and limits are in `../.env.example`. The database is `data/stockrun.db` (`DB_FILE` to move it). Set `SECURE_COOKIES=1` behind HTTPS.
 
 ## Logistics companies (`src/logistics/`)
 For "send it with a logistics company" orders:
@@ -114,15 +121,14 @@ You play the supplier on your own phone. Only the negotiation runs: no vault, no
 - **Tunnel address:** the quick-tunnel address changes every time cloudflared restarts, so update the callback URL each time.
 - **24-hour window:** WhatsApp only delivers free-form text within 24 hours of the contact's last message. To start a conversation with a supplier who hasn't messaged first, you need an approved template (`order_request`), which is not registered yet.
 
-## Not built yet (say so in the demo)
-- **WhatsApp template and hosting:** the `order_request` template for first contact is not registered, and there is no hosted webhook yet. The agent and webhook run locally behind a tunnel.
-- **Owner replies:** handling "YES <id>" as `approveOrder` is not built. The owner must sign that with the owner key; the agent key cannot do it.
-- **Hosted app:** the app is built (`app/`, served by `npm run app` and `npm run serve`), but it is not deployed anywhere yet.
+## Not built yet
+- **Naira withdrawals and automatic seller payouts:** built and tested, but StockRun's Paystack account is a Starter
+  business, which Paystack doesn't let pay third parties. They work once the account is upgraded; until then sellers are
+  paid by hand from the Admin page.
+- **The WhatsApp agent on the live site:** the haggling agent (`src/agent.ts`, the WhatsApp channel) runs on the local
+  chain with bot suppliers. On the live site buyers message sellers from their own WhatsApp; the `order_request`
+  template for first contact is not registered.
 - **Sendrelay on mainnet:** needs a live key (`sk_live_`, which needs a verified business with Sendrelay), `SENDRELAY_DESK_PRIVATE_KEY` with a little OKB, and a public HTTPS address for its webhooks (the server also checks every 20 s without them). Until then `serve:xlayer` offers self-pickup only.
 - **Delivery photo:** Sendrelay's drop-off photo is requested but not yet counted by the photo check; the owner's count at the door decides the fee.
-- **Individual riders:** dropped in favour of logistics companies. Rider sign-in still exists but shows "not built yet".
-- **Getting USDT0 onto a buyer's phone:** not built. The deposit screen shows the phone's address to send USDT0 to.
-- **Real suppliers:** every supplier in `data/suppliers.json` is a simulated bot, also on `serve:xlayer`.
-- **Signed GPS:** the rider's "at the supplier" and "at the shop" are still self-reported.
-- **Fallbacks and inputs:** voice-call fallback, voice-note transcription, and OpenStreetMap search beyond `suppliers.json`.
-- **Multi-line orders:** they are proposed line by line, one vault order per line. Lines with no deal are reported, not retried.
+- **Fallbacks and inputs:** voice-call fallback and voice-note transcription.
+- **Multi-line orders:** the agent proposes them line by line, one order per line. Lines with no deal are reported, not retried.
