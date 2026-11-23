@@ -163,8 +163,8 @@ can ask the circuit again and check the decision.
     <td width="33%" valign="top"><img src="docs/images/10-money.png" alt="Money screen" /></td>
     <td width="33%" valign="top"><img src="docs/images/11-me.png" alt="Profile screen" /></td>
     <td valign="top">
-      <p><strong>Money</strong> shows what's ready to spend, what's locked in orders, and every movement. Withdraw to
-      any Nigerian bank through Paystack.</p>
+      <p><strong>Money</strong> shows what's ready to spend, what's locked in orders, and every movement. Withdrawal to
+      any Nigerian bank through Paystack is built, and opens once StockRun's Paystack account is upgraded.</p>
       <p><strong>Me</strong> holds your profile. Shop owners can also register their store (₦2,000 a month, after
       admin approval) so buyers find them and chat in the app.</p>
     </td>
@@ -301,7 +301,7 @@ StockRun's fee, Paystack's charge and the total before they pay.
 
 **Live:**
 - email and wallet sign-in
-- Paystack naira deposits, withdrawals to your bank and automatic seller payouts (live, real money)
+- Paystack naira deposits (live, real money)
 - AI seller search by address
 - AI-written WhatsApp messages
 - record a deal → RestockGuard → money locked
@@ -318,6 +318,10 @@ StockRun's fee, Paystack's charge and the total before they pay.
   first), users (search, money history, freeze, mute) and feed moderation
 
 **Not yet:**
+- **Naira withdrawals to your bank and automatic seller payouts:** built and tested, but Paystack refuses transfers
+  to other people's accounts from a Starter business. They open once StockRun's Paystack account is upgraded to a
+  registered business (CAC documents). Meanwhile sellers are paid by hand from the admin page, and a withdrawal that
+  Paystack refuses puts the money straight back in the buyer's balance.
 - **Coin orders with delivery:** coin orders are collect-it-yourself for now.
 - **Paying sellers their naira for coin orders automatically:** the vault pays StockRun's payout wallet on-chain;
   StockRun then pays the seller in naira by hand (the admin page lists who is owed).
@@ -330,7 +334,7 @@ StockRun's fee, Paystack's charge and the total before they pay.
 
 1. Open **https://stockrun-ai.duckdns.org** and sign in with your email (you'll get a 6-digit code).
 2. **Money → Add money** and pay with your own card or bank through Paystack. This is **real money**: start with a
-   small amount (from ₦100). **Money → Withdraw** sends what you haven't spent back to your bank.
+   small amount (from ₦100). Withdrawing to a bank opens once StockRun's Paystack account is upgraded (see Not yet).
 3. **Ask** for something, message a seller, record the deal, then confirm the count on **Orders**.
 
 **Paying with coins (real USD₮0 on X Layer mainnet, up to $50):** you need a wallet (OKX Wallet or MetaMask) with a
