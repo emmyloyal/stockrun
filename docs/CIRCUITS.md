@@ -12,7 +12,7 @@ Decides whether an order may lock funds.
 
 | Bits | Name | Meaning | Source |
 | --- | --- | --- | --- |
-| 8 | `total` | Order total (units of ₦5,000, 0–255): the goods, plus StockRun's fee for naira orders. **Never a delivery fee** (paid to the courier directly) | Negotiated price saved to the order |
+| 8 | `total` | Order total (units of ₦5,000, 0–255): the goods (plus an order fee only if the server sets FEE_PERCENT; by default StockRun's fee is taken on deposits, so it is the goods alone). **Never a delivery fee** (paid to the courier directly) | Negotiated price saved to the order |
 | 8 | `budget` | Remaining weekly budget | Vault storage |
 | 8 | `limit` | Owner's auto-approve limit | Vault storage (owner-set, 24 h delay) |
 | 2 | `sup` | 00 unknown, 01 approved, 10 preferred, 11 blocked | Supplier registry |

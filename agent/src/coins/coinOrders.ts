@@ -1,7 +1,9 @@
 // Coin orders: the buyer's own StockRunVault on X Layer, owned by their connected wallet.
 //
 //   set up   -> StockRun deploys the vault (owner = the buyer's wallet) and pays that gas; deposits stop at the cap
-//   deposit  -> the buyer's wallet signs approve + deposit (StockRun never holds the coins)
+//   deposit  -> the buyer's wallet signs approve + deposit (StockRun never holds the coins). The vault receives the
+//               full deposit; StockRun's fee (1.5%) is paid on top, straight to StockRun's fee wallet, in the same
+//               transaction (fixed in the vault when it is created)
 //   seller   -> the buyer's wallet signs queueSupplier(seller, approved, StockRun's payout wallet): instant, because
 //               that wallet is fixed in the vault and can't be redirected
 //   order    -> the agent key proposes; RestockGuard (#1) decides inside the vault and locks the goods money
@@ -24,7 +26,7 @@ export const coinVaultAbi = parseAbi([
   'function locked() view returns (uint256)', 'function maxBalance() view returns (uint256)', 'function owner() view returns (address)',
   'function supplierStatus(bytes32) view returns (uint8)', 'function supplierPayout(bytes32) view returns (address)',
   'function defaultPayout() view returns (address)', 'function weeklyBudget() view returns (uint256)', 'function spentThisWeek() view returns (uint256)',
-  'function settlePickup(uint256 id)',
+  'function settlePickup(uint256 id)', 'function depositFeeBps() view returns (uint256)', 'function feeRecipient() view returns (address)',
   'event SupplierPaid(uint256 indexed id, address payout, uint8 qty, uint256 amount, uint8 reason)',
   'event PickupHeld(uint256 indexed id, uint8 reason)',
   'error NotAuthorized()', 'error BadStatus()', 'error CircuitFailed()',
@@ -47,9 +49,13 @@ interface Row {
 
 export class CoinOrders {
   private db: DatabaseSync; private p: Platform; private capTokens: bigint; private now: () => number; private log: (s: string) => void;
-  constructor(o: { db: DatabaseSync; platform: Platform; capTokens: bigint; now?: () => number; log?: (s: string) => void }) {
+  /** StockRun's deposit fee for vaults set up from now on (null: none). Vaults keep the fee they were created with. */
+  readonly fee: { recipient: Address; bps: number } | null;
+  constructor(o: { db: DatabaseSync; platform: Platform; capTokens: bigint; now?: () => number; log?: (s: string) => void; fee?: { recipient: Address; bps: number } | null }) {
     this.db = o.db; this.p = o.platform; this.capTokens = o.capTokens; this.now = o.now ?? Date.now; this.log = o.log ?? (() => {});
     if (o.capTokens <= 0n) throw new Error('coin vaults need a deposit cap');
+    this.fee = o.fee && o.fee.bps > 0 ? o.fee : null;
+    if (this.fee && (this.fee.bps > 500 || !/^0x[0-9a-fA-F]{40}$/.test(this.fee.recipient) || /^0x0{40}$/.test(this.fee.recipient))) throw new Error('coin deposit fee: at most 5%, paid to a real address');
     o.db.exec(`CREATE TABLE IF NOT EXISTS coin_vaults (user_id INTEGER PRIMARY KEY, vault TEXT NOT NULL, owner TEXT NOT NULL, created_at INTEGER NOT NULL)`);
     o.db.exec(`CREATE TABLE IF NOT EXISTS coin_orders (
       user_id INTEGER NOT NULL, vault TEXT NOT NULL, order_id INTEGER NOT NULL, seller_id TEXT NOT NULL, seller_name TEXT NOT NULL,
@@ -78,7 +84,7 @@ export class CoinOrders {
     if (have) return { vault: have.vault, created: false, gasTopUpTx: null };
     // Weekly budget and auto-approve limit = the cap: one vault can't spend more than it may hold in a week.
     const capNaira = this.cap.naira;
-    const vault = await deployVault(this.p, user.wallet, capNaira, capNaira, [], this.capTokens);
+    const vault = await deployVault(this.p, user.wallet, capNaira, capNaira, [], this.capTokens, this.fee);
     this.db.prepare('INSERT INTO coin_vaults (user_id, vault, owner, created_at) VALUES (?, ?, ?, ?)').run(user.id, vault, getAddress(user.wallet), this.now());
     this.log(`coin vault ${vault} for user ${user.id} (owner ${user.wallet})`);
     const gasTopUpTx = await sendGasTopUp(this.p, user.wallet).catch((e) => { this.log(`gas top-up for ${user.wallet}: ${(e as Error).message}`); return null; });
@@ -90,9 +96,11 @@ export class CoinOrders {
     const v = user.wallet ? this.vaultOf(user.id) : null;
     if (!v) return null;
     const read = <T>(functionName: 'locked' | 'spentThisWeek' | 'weeklyBudget') => this.p.pub.readContract({ address: v.vault, abi: coinVaultAbi, functionName }) as Promise<T>;
-    const [balance, locked, spent, budget] = await Promise.all([
+    const [balance, locked, spent, budget, feeBps] = await Promise.all([
       this.p.pub.readContract({ address: this.p.token, abi: tokenAbi, functionName: 'balanceOf', args: [v.vault] }),
       read<bigint>('locked'), read<bigint>('spentThisWeek'), read<bigint>('weeklyBudget'),
+      // Vaults made before the deposit fee have no depositFeeBps(): their deposits are free.
+      this.p.pub.readContract({ address: v.vault, abi: coinVaultAbi, functionName: 'depositFeeBps' }).catch(() => 0n),
     ]);
     const usd = (x: bigint) => Number(x) / 1e6;
     return {
@@ -100,6 +108,8 @@ export class CoinOrders {
       balance: usd(balance), locked: usd(locked), free: usd(balance - locked), cap: usd(this.capTokens),
       room: usd(this.capTokens > balance ? this.capTokens - balance : 0n),
       spentThisWeek: usd(spent), weeklyBudget: usd(budget),
+      /** StockRun's fee on each deposit into THIS vault, in basis points (150 = 1.5%), paid on top of the deposit. */
+      depositFeeBps: Number(feeBps),
       naira: { balance: this.p.money.toNaira(balance), free: this.p.money.toNaira(balance - locked) },
     };
   }

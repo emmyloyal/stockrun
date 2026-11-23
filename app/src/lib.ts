@@ -31,7 +31,9 @@ export type Switch = 'deposits' | 'orders' | 'withdrawals' | 'payouts';
 export interface SwitchState { paused: boolean; note: string | null; by: string | null; at: number | null }
 export interface UserFlags { frozen: boolean; muted: boolean; note: string | null; by: string | null; at: number | null }
 export interface AdminUser { id: number; email: string | null; username: string | null; displayName: string | null; wallet: string | null; phone: string | null; role: string; createdAt: number; flags: UserFlags; label: string; naira: NairaBalance }
-export interface AdminDeposit { reference: string; userId: number; amountNaira: number; chargeNaira: number; status: string; createdAt: number; verifiedAt: number | null; buyer: string }
+/** What adding naira costs: the deposit (all to the balance), StockRun's fee and Paystack's charge, both on top. */
+export interface DepositQuote { amountNaira: number; feeNaira: number; feePercent: number; chargeNaira: number; totalNaira: number }
+export interface AdminDeposit { reference: string; userId: number; amountNaira: number; feeNaira: number; chargeNaira: number; status: string; createdAt: number; verifiedAt: number | null; buyer: string }
 export interface AdminWithdrawal extends Withdrawal { userId: number; updatedAt: number; amountNaira: number; buyer: string }
 export interface AdminUserDetail {
   user: Omit<AdminUser, 'flags' | 'label' | 'naira'>; label: string; flags: UserFlags; naira: NairaBalance;
@@ -114,6 +116,8 @@ export interface Movement { key: string; type: string; amountNaira: number; memo
 export interface CoinVault {
   vault: Address; owner: Address; payout: Address; token: Address; symbol: string;
   balance: number; locked: number; free: number; cap: number; room: number; spentThisWeek: number; weeklyBudget: number;
+  /** StockRun's fee on each deposit into this vault, in basis points (150 = 1.5%), paid on top. */
+  depositFeeBps: number;
   naira: { balance: number; free: number };
 }
 export interface Coins { wallet: Address | null; network?: string; okb?: string; token?: { symbol: string; amount: string; naira: number }; vault?: CoinVault | null }
@@ -186,7 +190,7 @@ export const server = {
   post: (p: { text: string; priceNaira?: number; unit?: string; photo?: { mediaType: string; data: string } }) => call<Post>('/api/posts', p),
   deletePost: (id: number) => call<{ ok: true }>(`/api/posts/${id}/delete`, {}),
   store: (sellerId: string) => call<StorePage>(`/api/stores/${sellerId}`),
-  depositQuote: (amountNaira: number) => call<{ amountNaira: number; chargeNaira: number; totalNaira: number }>(`/api/naira/deposit-quote?amountNaira=${amountNaira}`),
+  depositQuote: (amountNaira: number) => call<DepositQuote>(`/api/naira/deposit-quote?amountNaira=${amountNaira}`),
   withdraw: (amountNaira: number, bankCode: string, accountNumber: string) => call<Withdrawal>('/api/naira/withdraw', { amountNaira, bankCode, accountNumber }),
   withdrawals: () => call<Withdrawal[]>('/api/naira/withdrawals'),
   adminApproveBank: (orderId: number) => call<Payout>(`/api/admin/payouts/${orderId}/approve-bank`, {}),

@@ -48,6 +48,11 @@ contract StockRunVault {
     address public immutable defaultPayout;
     /// Most this vault may hold through deposit() (token units). 0 = no cap. The vault is unaudited: keep it small.
     uint256 public immutable maxBalance;
+    /// StockRun's deposit fee: each deposit(amount) puts `amount` in the vault and the depositor pays
+    /// amount * depositFeeBps / 10_000 on top, straight to feeRecipient. Both fixed at creation. 0 bps: no fee.
+    address public immutable feeRecipient;
+    uint256 public immutable depositFeeBps;
+    uint256 public constant MAX_DEPOSIT_FEE_BPS = 500;   // the fee can never be set above 5%
 
     address public immutable owner;           // shop owner
     address public agent;                     // AI agent key: propose only
@@ -81,6 +86,7 @@ contract StockRunVault {
     event DeliveryHeld(uint256 indexed id, uint8 reason);
     event Refunded(uint256 indexed id, uint256 amount);
     event SelfCollected(uint256 indexed id, uint8 qty);
+    event Deposited(address indexed from, uint256 amount, uint256 fee);
 
     error NotAuthorized(); error BadStatus(); error CircuitFailed(); error Rejected(uint8 reason); error OrderTooLarge(); error NoPayout();
     error UntrustedHandler(); error OverCap();
@@ -90,9 +96,12 @@ contract StockRunVault {
     constructor(
         IERC20Min token_, ITapeOutCircuits circuits_, uint256 restockId, uint256 pickupId, uint256 deliveryId,
         uint256 unit_, address owner_, address agent_, address checkService_, uint256 weeklyBudget_, uint256 limit_,
-        address[] memory carriers_, address defaultPayout_, uint256 maxBalance_
+        address[] memory carriers_, address defaultPayout_, uint256 maxBalance_, address feeRecipient_, uint256 depositFeeBps_
     ) {
+        require(depositFeeBps_ <= MAX_DEPOSIT_FEE_BPS, "fee");
+        require(depositFeeBps_ == 0 || feeRecipient_ != address(0), "fee recipient");
         defaultPayout = defaultPayout_; maxBalance = maxBalance_;
+        feeRecipient = feeRecipient_; depositFeeBps = depositFeeBps_;
         token = token_; circuits = circuits_;
         restockGuardId = restockId; pickupCheckId = pickupId; deliveryCheckId = deliveryId;
         unit = unit_; owner = owner_; agent = agent_; checkService = checkService_;
@@ -102,11 +111,18 @@ contract StockRunVault {
     }
 
     // ================================================================ owner settings
-    /// @notice Anyone may top the vault up, but never above maxBalance (when set).
+    /// @notice Anyone may top the vault up, but never above maxBalance (when set). The vault receives `amount`;
+    ///         the depositor also pays StockRun's fee on top (depositFee(amount)), so approve amount + fee.
     function deposit(uint256 amount) external {
         if (maxBalance != 0 && token.balanceOf(address(this)) + amount > maxBalance) revert OverCap();
+        uint256 fee = depositFee(amount);
         require(token.transferFrom(msg.sender, address(this), amount));
+        if (fee != 0) require(token.transferFrom(msg.sender, feeRecipient, fee));
+        emit Deposited(msg.sender, amount, fee);
     }
+
+    /// @notice StockRun's fee on a deposit of `amount` (rounded down).
+    function depositFee(uint256 amount) public view returns (uint256) { return amount * depositFeeBps / 10_000; }
 
     /// @notice Owner withdraws free funds. Funds locked in open orders stay in the vault.
     function withdraw(uint256 amount) external only(owner) {

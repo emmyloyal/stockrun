@@ -7,7 +7,7 @@ import 'leaflet/dist/leaflet.css';
 import {
   walletSend, type CoinVault,
   avatarUrl, currentPosition, hasWallet, load, naira, preparePhoto, save, server, serviceFee, short, signWithWallet, whatsappLink,
-  type Category, type Coins, type Config, type DealResult, type FoundSeller, type HuntResult, type Me, type MySeller, type PlaceHit, type SellerHit, type Movement, type Order, type Place, type RequestRecord, type Seller, type User,
+  type Category, type Coins, type Config, type DealResult, type DepositQuote, type FoundSeller, type HuntResult, type Me, type MySeller, type PlaceHit, type SellerHit, type Movement, type Order, type Place, type RequestRecord, type Seller, type User,
 } from './lib';
 import { CircuitTrail, Outcome, Sheet, StatusPill, Tx } from './ui';
 import { Admin } from './Admin';
@@ -15,7 +15,7 @@ import { WithdrawPanel } from './Banks';
 import { ChatsTab, MyStore } from './Store';
 import { FeedTab } from './Feed';
 import { Icon } from './icons';
-import { CoinWithdraw, CoinsPanel, depositCoins } from './Coins';
+import { CoinWithdraw, CoinsPanel, coinFee, depositCoins, maxDepositFor } from './Coins';
 
 type Tab = 'feed' | 'ask' | 'orders' | 'chats' | 'money' | 'me' | 'admin';
 /** The Route S mark: a solid dot at pickup, an open ring at the shop. Ink on light, danfo yellow on dark. */
@@ -294,7 +294,7 @@ function Ask({ cfg, user, me, onAsked, goMoney, onChat }: { cfg: Config; user: U
     }
     if (delivery === 'logistics' && !user.phone && contact.replace(/\D/g, '').length < 10) return 'Add a phone number for the rider (under "How should it reach you?"), or choose to collect it yourself.';
     const total = price * qty + serviceFee(price * qty, cfg.naira.fee);
-    if (total > available) return `This deal is ${naira(total)} with StockRun's fee, but your balance is ${naira(available)}. Deposit naira first.`;
+    if (total > available) return `This deal is ${naira(total)}, but your balance is ${naira(available)}. Deposit naira first.`;
     return '';
   };
   const submitDeal = async () => {
@@ -769,7 +769,7 @@ function Money({ cfg, me, onChange }: { cfg: Config; me: Me; onChange: () => voi
   const [withdrawWhat, setWithdrawWhat] = useState<'naira' | 'coins'>('naira');
   const [showAll, setShowAll] = useState(false);
   const [amount, setAmount] = useState(0);
-  const [quote, setQuote] = useState<{ chargeNaira: number; totalNaira: number } | null>(null);
+  const [quote, setQuote] = useState<DepositQuote | null>(null);
   useEffect(() => { if (sheet === 'pay' && amount > 0) server.depositQuote(amount).then(setQuote).catch(() => setQuote(null)); else setQuote(null); }, [sheet, amount]);
   // Naira for people who signed in with email, dollars for people who signed in with a wallet.
   const how = load<'phone' | 'email' | 'wallet' | ''>('stockrun.signin', '');
@@ -791,7 +791,7 @@ function Money({ cfg, me, onChange }: { cfg: Config; me: Me; onChange: () => voi
   const walletDollars = Number(coins?.token?.amount ?? 0);
   const nairaOn = cfg.naira.paystack || cfg.naira.testCredit;
   const vault = coins?.vault ?? null;
-  const max = currency === 'usd' ? Math.max(0, Math.min(Number.isFinite(walletDollars) ? walletDollars : 0, vault ? vault.room : Infinity)) : cfg.naira.paystack ? 0 : 500_000;
+  const max = currency === 'usd' ? Math.max(0, Math.min(maxDepositFor(Number.isFinite(walletDollars) ? walletDollars : 0, vault?.depositFeeBps ?? 0), vault ? vault.room : Infinity)) : cfg.naira.paystack ? 0 : 500_000;
 
   const MOVE: Record<string, [string, 'in' | 'out' | 'lock']> = {
     deposit: ['Deposit', 'in'], demo: ['Demo naira (not real money)', 'in'], hold: ['Locked for an order', 'lock'], release: ['Came back to you', 'in'],
@@ -872,8 +872,9 @@ function Money({ cfg, me, onChange }: { cfg: Config; me: Me; onChange: () => voi
                 <button className="btn ghost" onClick={close}>Close</button>
               </>) : (<>
                 <p>{money(currency, amount)} of {vault.symbol} goes from your wallet into your own vault on X Layer. Your wallet asks you twice: once to allow it, once to deposit.</p>
+                {vault.depositFeeBps > 0 && <p className="fine">StockRun's fee ({vault.depositFeeBps / 100}%) is {money(currency, coinFee(amount, vault.depositFeeBps))}, paid on top: {money(currency, amount + coinFee(amount, vault.depositFeeBps))} leaves your wallet and your vault gets the full {money(currency, amount)}.</p>}
                 <button className="btn primary" disabled={!!busy} onClick={() => run(setBusy, setError, 'Waiting for your wallet…', async () => {
-                  await depositCoins(cfg, me.user!.wallet!, vault.vault, amount, setBusy);
+                  await depositCoins(cfg, me.user!.wallet!, vault.vault, amount, vault.depositFeeBps, setBusy);
                   setNote(`${money(currency, amount)} added to your vault.`); refresh(); close();
                 })}><Icon.lock size={18} /> Deposit {money(currency, amount)}</button>
                 <p className="fine">Your vault holds at most {money(currency, vault.cap)} for now (it's new and not yet audited).</p>
@@ -897,7 +898,14 @@ function Money({ cfg, me, onChange }: { cfg: Config; me: Me; onChange: () => voi
                   const r = await server.deposit(amount, email);
                   location.href = r.checkoutUrl;
                 })}>Pay {naira(quote?.totalNaira ?? amount)} with Paystack</button>
-                {quote && quote.chargeNaira > 0 && <p className="fine">{naira(amount)} goes to your balance + {naira(quote.chargeNaira)} Paystack charge = {naira(quote.totalNaira)} to pay.</p>}
+                {quote && (quote.feeNaira > 0 || quote.chargeNaira > 0) && (
+                  <dl className="receipt">
+                    <div><dt>Goes to your balance</dt><dd>{naira(amount)}</dd></div>
+                    {quote.feeNaira > 0 && <div><dt>StockRun fee ({quote.feePercent}%)</dt><dd>{naira(quote.feeNaira)}</dd></div>}
+                    {quote.chargeNaira > 0 && <div><dt>Paystack charge</dt><dd>{naira(quote.chargeNaira)}</dd></div>}
+                    <div className="total"><dt>You pay</dt><dd>{naira(quote.totalNaira)}</dd></div>
+                  </dl>
+                )}
                 {cfg.naira.test && <p className="fine">Paystack is in test mode: use their test card, no real money moves.</p>}
               </>)}
               {!nairaOn && <p className="warn">Naira deposits are not switched on yet on this server.</p>}

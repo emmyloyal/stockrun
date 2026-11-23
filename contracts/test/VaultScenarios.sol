@@ -32,7 +32,7 @@ abstract contract VaultScenarios is Test {
     /// `rider` in these tests is a logistics company the owner picked at shop set-up (no bond).
     function _newVault(uint256 r, uint256 p, uint256 d) internal returns (StockRunVault) {
         address[] memory carriers = new address[](1); carriers[0] = rider;
-        return new StockRunVault(IERC20Min(address(token)), circuits, r, p, d, UNIT, owner, agent, checker, 100 * UNIT, 40 * UNIT, carriers, stockrunPayout, 0);
+        return new StockRunVault(IERC20Min(address(token)), circuits, r, p, d, UNIT, owner, agent, checker, 100 * UNIT, 40 * UNIT, carriers, stockrunPayout, 0, address(0), 0);
     }
 
     function _propose(uint8 qty, uint256 price) internal returns (uint256) {
@@ -399,7 +399,7 @@ abstract contract VaultScenarios is Test {
 
     function test_depositCap_refusesAboveMaxBalance() public {
         StockRunVault capped = new StockRunVault(IERC20Min(address(token)), circuits, restockId, pickupId, deliveryId, UNIT, owner, agent, checker,
-            100 * UNIT, 40 * UNIT, new address[](0), stockrunPayout, 10 * UNIT);
+            100 * UNIT, 40 * UNIT, new address[](0), stockrunPayout, 10 * UNIT, address(0), 0);
         vm.startPrank(owner);
         token.approve(address(capped), type(uint256).max);
         capped.deposit(6 * UNIT);
@@ -408,6 +408,58 @@ abstract contract VaultScenarios is Test {
         vm.stopPrank();
         assertEq(token.balanceOf(address(capped)), 10 * UNIT);
         vm.prank(stranger); vm.expectRevert(StockRunVault.OverCap.selector); capped.deposit(1);
+    }
+
+    // ================================================================ StockRun's deposit fee (1.5%)
+
+    function _feeVault(uint256 cap) internal returns (StockRunVault v) {
+        v = new StockRunVault(IERC20Min(address(token)), circuits, restockId, pickupId, deliveryId, UNIT, owner, agent, checker,
+            100 * UNIT, 40 * UNIT, new address[](0), stockrunPayout, cap, feeWallet, 150);
+        vm.prank(owner); token.approve(address(v), type(uint256).max);
+    }
+    address feeWallet = makeAddr("stockrunFeeWallet");
+
+    function test_depositFee_vaultGetsAll_feePaidOnTop() public {
+        StockRunVault v = _feeVault(0);
+        uint256 before = token.balanceOf(owner);
+        vm.prank(owner); v.deposit(1_000e6);
+        assertEq(token.balanceOf(address(v)), 1_000e6, "the vault holds the full deposit");
+        assertEq(token.balanceOf(feeWallet), 15e6, "1.5% to StockRun");
+        assertEq(before - token.balanceOf(owner), 1_015e6, "the depositor paid deposit + fee");
+        assertEq(v.depositFee(333), 4, "rounded down");
+    }
+
+    function test_depositFee_capCountsTheDepositOnly() public {
+        StockRunVault v = _feeVault(10 * UNIT);
+        vm.startPrank(owner);
+        v.deposit(10 * UNIT);                                                         // exactly the cap; the fee goes elsewhere
+        vm.expectRevert(StockRunVault.OverCap.selector); v.deposit(1);
+        vm.stopPrank();
+        assertEq(token.balanceOf(address(v)), 10 * UNIT);
+        assertEq(token.balanceOf(feeWallet), 10 * UNIT * 150 / 10_000);
+    }
+
+    function test_depositFee_withoutAllowanceForTheFee_reverts() public {
+        StockRunVault v = _feeVault(0);
+        vm.startPrank(owner);
+        token.approve(address(v), 1_000e6);                                           // the deposit only, not the fee
+        vm.expectRevert(); v.deposit(1_000e6);
+        vm.stopPrank();
+        assertEq(token.balanceOf(address(v)), 0, "nothing moved");
+    }
+
+    function test_depositFee_isBounded() public {
+        vm.expectRevert(bytes("fee"));
+        new StockRunVault(IERC20Min(address(token)), circuits, restockId, pickupId, deliveryId, UNIT, owner, agent, checker, 0, 0, new address[](0), stockrunPayout, 0, feeWallet, 501);
+        vm.expectRevert(bytes("fee recipient"));
+        new StockRunVault(IERC20Min(address(token)), circuits, restockId, pickupId, deliveryId, UNIT, owner, agent, checker, 0, 0, new address[](0), stockrunPayout, 0, address(0), 150);
+    }
+
+    function test_noFee_whenBpsIsZero() public {
+        assertEq(vault.depositFeeBps(), 0);
+        uint256 before = token.balanceOf(owner);
+        vm.prank(owner); vault.deposit(10e6);
+        assertEq(before - token.balanceOf(owner), 10e6);
     }
 
     function test_noCap_whenMaxBalanceIsZero() public {

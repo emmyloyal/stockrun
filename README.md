@@ -131,7 +131,7 @@ small logic circuits that were burned onto X Layer with TapeOut. Nobody can chan
     <td width="33%" valign="top"><img src="docs/images/06-locked.png" alt="RestockGuard approved, money locked" /></td>
     <td valign="top">
       <p>When you've agreed a price, record it: what, how many, price each. The receipt shows exactly what will be
-      locked, including StockRun's 1.5% fee.</p>
+      locked: the goods, nothing more.</p>
       <p><strong>RestockGuard</strong> (circuit #1) decides: lock the money, ask you first (far away, alcohol,
       electronics, over your limit), or reject it with nothing charged.</p>
       <p>A link lets the seller add their bank account so StockRun can pay them at collection.</p>
@@ -220,8 +220,8 @@ flowchart LR
 
 When a logistics company delivers, the buyer pays its delivery fee to the company directly. StockRun never holds it:
 
-- **An order locks goods money only** (plus StockRun's 1.5% fee). RestockGuard checks that amount against the budget,
-  with no delivery fee added.
+- **An order locks goods money only.** RestockGuard checks that amount against the budget, with no delivery fee
+  added. StockRun's fee is taken when money is added, not on orders.
 - **The seller is paid at pickup**, as before, for what the handler counted.
 - **DeliveryCheck (#3) records the outcome and moves no money.** It records "delivered in full" or "N short". The vault
   stores the verdict on the order and emits `DeliveryRecorded`; for naira orders it's saved with the order's circuit
@@ -285,13 +285,17 @@ The rules each circuit implements are in [`docs/CIRCUITS.md`](docs/CIRCUITS.md).
 
 ## How StockRun makes money
 
-- **Buyers** pay a **1.5% service fee** on what they collect (minimum ₦100, maximum ₦10,000). Sellers always receive
-  the full agreed price.
+- **Buyers** pay **1.5% on every deposit**, on top, so their balance gets the full amount. Orders carry no StockRun
+  fee, and sellers always receive the full agreed price.
+  - **Naira:** adding ₦10,000 costs ₦10,150 plus Paystack's charge; ₦10,000 goes to the balance and ₦150 to StockRun.
+  - **Coins:** each deposit into the buyer's vault sends 1.5% on top to StockRun's wallet in the same transaction,
+    enforced by the vault contract (`depositFeeBps`, fixed when the vault is created, never above 5%). Adding $40
+    costs $40.60; the vault gets $40.
 - **Stores** pay **₦2,000 a month** to be listed and found by buyers, after admin approval.
 
-Paystack's charge is separate and is not StockRun's income. When a buyer adds naira, they pay Paystack's card charge
-on top (**1.5%**, plus ₦100 on payments of ₦2,500 or more, capped at ₦2,000), so their balance gets the full amount.
-The app shows the total before they pay.
+Paystack's charge is separate and is not StockRun's income. When a buyer adds naira, they also pay Paystack's card
+charge on top (**1.5%**, plus ₦100 on payments of ₦2,500 or more, capped at ₦2,000). The app shows the deposit,
+StockRun's fee, Paystack's charge and the total before they pay.
 
 ## Status
 
@@ -334,7 +338,8 @@ little USD₮0 and OKB on X Layer.
 
 1. Sign in with your wallet (or connect one under **Me**).
 2. **Money → Coins → Set up my coin vault.** StockRun creates a vault contract that your wallet owns.
-3. **Add** a few dollars of USD₮0. Your wallet asks twice: allow, then deposit.
+3. **Add** a few dollars of USD₮0. Your wallet asks twice: allow, then deposit. StockRun's 1.5% is paid on top
+   (adding $10 costs $10.15).
 4. Record a deal and choose **USD₮0 vault**. Approve the seller when your wallet asks; RestockGuard locks the coins.
 5. On **Orders**, count what you collected and sign it. PickupCheck pays for that many through your vault, and the
    rest stays yours (withdraw it any time under **Money → Coins**).

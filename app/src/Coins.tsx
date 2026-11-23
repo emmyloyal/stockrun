@@ -10,11 +10,16 @@ import { Tx } from './ui';
 const toUnits = (dollars: number) => BigInt(Math.round(dollars * 1_000_000));
 const usd = (n: number) => `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-/** Approve the vault to take exactly `dollars`, then deposit them. Two wallet signatures. */
-export async function depositCoins(cfg: Config, owner: Address, vault: Address, dollars: number, step: (s: string) => void) {
-  const amount = toUnits(dollars);
+/** StockRun's fee on a coin deposit, exactly as the vault works it out (rounded down), in dollars. */
+export const coinFee = (dollars: number, feeBps: number) => Number((toUnits(dollars) * BigInt(feeBps)) / 10_000n) / 1_000_000;
+/** The most a wallet holding `walletUsd` can deposit when the fee is paid on top. */
+export const maxDepositFor = (walletUsd: number, feeBps: number) => Math.floor((walletUsd * 10_000 / (10_000 + feeBps)) * 100) / 100;
+
+/** Approve the vault to take `dollars` plus StockRun's fee, then deposit `dollars`. Two wallet signatures. */
+export async function depositCoins(cfg: Config, owner: Address, vault: Address, dollars: number, feeBps: number, step: (s: string) => void) {
+  const amount = toUnits(dollars), fee = (amount * BigInt(feeBps)) / 10_000n;
   step('1 of 2: approve in your wallet…');
-  await walletSend(cfg.coins!.chainId, owner, cfg.coins!.token, 'approve', [vault, amount]);
+  await walletSend(cfg.coins!.chainId, owner, cfg.coins!.token, 'approve', [vault, amount + fee]);
   step('2 of 2: deposit in your wallet…');
   return walletSend(cfg.coins!.chainId, owner, vault, 'deposit', [amount]);
 }
@@ -96,7 +101,7 @@ export function CoinsPanel({ cfg, me, coins, onChange }: { cfg: Config; me: Me; 
   );
 
   const addN = Number(add), outN = Number(out);
-  const maxAdd = Math.min(walletUsd, v.room);
+  const maxAdd = Math.min(maxDepositFor(walletUsd, v.depositFeeBps), v.room), addFee = coinFee(addN || 0, v.depositFeeBps);
   const vaultLink = addressUrl(v.vault);
   return (
     <div className="stack">
@@ -114,11 +119,12 @@ export function CoinsPanel({ cfg, me, coins, onChange }: { cfg: Config; me: Me; 
           <span className="input-icon"><span className="prefix">$</span><input inputMode="decimal" placeholder="10.00" value={add} onChange={(e) => setAdd(e.target.value.replace(/[^\d.]/g, ''))} /></span>
         </label>
         <button className="btn primary" disabled={!!busy || !(addN >= 0.01) || addN > maxAdd} onClick={() => act('Waiting for your wallet…', async () => {
-          const tx = await depositCoins(cfg, wallet, v.vault, addN, setBusy);
+          const tx = await depositCoins(cfg, wallet, v.vault, addN, v.depositFeeBps, setBusy);
           setAdd(''); setNote({ text: `${usd(addN)} added to your vault.`, tx });
         })}><Icon.plus size={18} /> Add</button>
       </div>
-      {addN > maxAdd && <p className="fine warn-text">{addN > walletUsd ? `Your wallet holds ${usd(walletUsd)}.` : `The vault can take ${usd(v.room)} more (cap ${usd(v.cap)}).`}</p>}
+      {v.depositFeeBps > 0 && addN > 0 && <p className="fine">Your vault gets {usd(addN)}. StockRun's fee ({v.depositFeeBps / 100}%) is {usd(addFee)}, paid on top: {usd(addN + addFee)} leaves your wallet.</p>}
+      {addN > maxAdd && <p className="fine warn-text">{addN + addFee > walletUsd ? `Your wallet holds ${usd(walletUsd)}${v.depositFeeBps ? `, enough to add ${usd(maxDepositFor(walletUsd, v.depositFeeBps))} with the fee` : ''}.` : `The vault can take ${usd(v.room)} more (cap ${usd(v.cap)}).`}</p>}
       {Number(coins.okb) === 0 && <p className="fine warn-text">Your wallet has no OKB for gas. Add a little OKB on X Layer to sign.</p>}
 
       <div className="row wrap">

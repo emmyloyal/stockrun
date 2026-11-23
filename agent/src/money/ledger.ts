@@ -7,7 +7,8 @@
 //
 // Per person: `available` (can be spent) and `held` (locked for open orders). System: `paystack` (money in),
 // `sellers` and `logistics` (what StockRun owes them and pays out by bank transfer), `paid_out` (seller payouts an admin
-// sent by bank transfer and recorded with its reference), `fees` (StockRun's service fee, paid by buyers on completed pickups).
+// sent by bank transfer and recorded with its reference), `fees` (StockRun's fee: 1.5% paid on top of each deposit,
+// and any order fee the server is set to charge on completed pickups).
 import type { DatabaseSync } from 'node:sqlite';
 
 export type Kind = 'available' | 'held';
@@ -75,6 +76,11 @@ export class Ledger {
   /** A verified Paystack payment. Credited once per reference. */
   deposit(userId: number, reference: string, kobo: number): boolean {
     return this.post(`paystack:${reference}`, 'deposit', userId, kobo, ['system', 'paystack'], [`user:${userId}`, 'available'], `Paystack ${reference}`);
+  }
+  /** StockRun's fee on a verified deposit: the buyer paid it on top at Paystack, so it goes straight to StockRun's
+   *  income and never touches the buyer's balance. Once per reference. */
+  depositFee(userId: number, reference: string, kobo: number): boolean {
+    return this.post(`depfee:${reference}`, 'deposit_fee', userId, kobo, ['system', 'paystack'], ['system', 'fees'], `StockRun fee on Paystack ${reference}`);
   }
   /** Demo naira for trying StockRun without money: NOT real money, labelled as such, from the same system account. */
   demoCredit(userId: number, key: string, kobo: number): boolean {

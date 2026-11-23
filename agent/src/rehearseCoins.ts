@@ -56,7 +56,8 @@ try {
   buyers = new Buyers(db, p, ledger, orders, { extractor: new RuleExtractor(), channel: new BotChannel(), prices: new PriceBook(), foundDb: db });
   foundTable(db);
   db.prepare("INSERT INTO found_sellers (id, name, address, lat, lng, phone, source, source_url, found_at, kind) VALUES ('found-00000000000000d4', 'Agora Marketplace', 'Egbe, Lagos', 6.6050, 3.3900, '+2349079579400', 'osm', 'https://www.openstreetmap.org/node/1', 0, 'supermarket')").run();
-  const coins = new CoinOrders({ db, platform: p, capTokens: BigInt(CAP_USD * 1e6), log: (l) => console.log(`  [server] ${l}`) });
+  // StockRun's 1.5% deposit fee goes to the payout wallet (main.ts's default COIN_FEE_ADDRESS).
+  const coins = new CoinOrders({ db, platform: p, capTokens: BigInt(CAP_USD * 1e6), log: (l) => console.log(`  [server] ${l}`), fee: { recipient: p.supplierPayout, bps: 150 } });
   const server = createApp({ platform: p, accounts: new Accounts(db, new ConsoleSms(), 'x'.repeat(40), Date.now, null, new ConsoleEmail()), buyers, ledger, prices: new PriceBook(), paystack: null, coins });
   await new Promise<void>((r) => server.listen(0, r));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -88,10 +89,13 @@ try {
     if (r.status !== 'success') throw new Error(`${functionName} reverted`);
   };
 
-  await sign(p.token, 'approve', [vault, 40_000_000n]);
+  const feeBefore = await usdt(p.supplierPayout), walletBefore = await usdt(buyer.address);
+  await sign(p.token, 'approve', [vault, 40_600_000n]);                      // $40 + StockRun's 1.5% ($0.60) on top
   await sign(vault, 'deposit', [40_000_000n]);
   ok(await usdt(vault) === 40, 'buyer deposited $40 of USDT0 into their vault');
-  await sign(p.token, 'approve', [vault, 20_000_000n]);
+  ok(Math.abs(await usdt(p.supplierPayout) - feeBefore - 0.6) < 1e-9 && Math.abs(walletBefore - await usdt(buyer.address) - 40.6) < 1e-9,
+    'StockRun\'s 1.5% ($0.60) was paid on top, straight to StockRun\'s wallet, in the same transaction');
+  await sign(p.token, 'approve', [vault, 20_300_000n]);
   const over = await bw.writeContract({ address: vault, abi: ownerAbi, functionName: 'deposit', args: [20_000_000n] }).then(() => false, (e: Error) => /OverCap/.test(e.message));
   ok(over, 'a further $20 is refused on-chain: the vault holds at most $50');
 

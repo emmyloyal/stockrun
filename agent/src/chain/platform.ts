@@ -56,15 +56,18 @@ export const tokenAbi = parseAbi([
 
 /** Deploy a vault owned by `owner` (the buyer's wallet). Budget and limit are whole naira. The shop starts trusting the
  *  platform's logistics companies (or `carriers`). Sellers are paid through `p.supplierPayout`, fixed in the vault, and
- *  deposits stop at `maxBalance` token units (0 = no cap). */
-export async function deployVault(p: Platform, owner: Address, weeklyBudgetNaira: number, limitNaira: number, carriers?: Address[], maxBalance = 0n): Promise<Address> {
+ *  deposits stop at `maxBalance` token units (0 = no cap). `fee`: StockRun's deposit fee, paid on top of each deposit
+ *  straight to `fee.recipient` (fixed in the vault; at most 5%). */
+export async function deployVault(p: Platform, owner: Address, weeklyBudgetNaira: number, limitNaira: number, carriers?: Address[], maxBalance = 0n,
+  fee: { recipient: Address; bps: number } | null = null): Promise<Address> {
   const units = (naira: number) => BigInt(Math.floor(naira / 5000)) * p.unit;
   const a = artifact('StockRunVault');
   const hash = await p.deployer.deployContract({
     abi: a.abi, bytecode: a.bytecode.object,
     args: [p.token, p.circuits, p.circuitIds.restock, p.circuitIds.pickup, p.circuitIds.delivery, p.unit, owner,
       p.agent.account.address, p.checker.account.address, units(weeklyBudgetNaira), units(limitNaira),
-      carriers ?? p.carriers.map((c) => c.wallet.account.address), p.supplierPayout, maxBalance],
+      carriers ?? p.carriers.map((c) => c.wallet.account.address), p.supplierPayout, maxBalance,
+      fee?.recipient ?? '0x0000000000000000000000000000000000000000', BigInt(fee?.bps ?? 0)],
   });
   const r = await p.pub.waitForTransactionReceipt({ hash });
   if (r.status !== 'success' || !r.contractAddress) throw new Error('vault deployment failed');

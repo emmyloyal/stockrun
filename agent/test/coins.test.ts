@@ -31,6 +31,7 @@ const ownerAbi = parseAbi([
 describe.skipIf(!localChainAvailable())('coin orders through the buyer\'s own vault', () => {
   let chain: LocalChain; let p: Platform; let server: Server; let base: string;
   const CAP_NAIRA = 75_000;
+  const FEE_WALLET = privateKeyToAccount(generatePrivateKey()).address;   // StockRun's fee wallet for this test
 
   function person() {
     let cookie = '';
@@ -67,7 +68,7 @@ describe.skipIf(!localChainAvailable())('coin orders through the buyer\'s own va
     foundTable(db);
     db.prepare("INSERT INTO found_sellers (id, name, address, lat, lng, phone, source, source_url, found_at, kind) VALUES (?, ?, ?, ?, ?, ?, 'osm', 'https://www.openstreetmap.org/node/1', 0, 'supermarket')")
       .run('found-00000000000000c3', 'Agora Marketplace', 'Egbe, Lagos', 6.6050, 3.3900, '+2349079579400');
-    const coins = new CoinOrders({ db, platform: p, capTokens: p.money.toToken(CAP_NAIRA) });
+    const coins = new CoinOrders({ db, platform: p, capTokens: p.money.toToken(CAP_NAIRA), fee: { recipient: FEE_WALLET, bps: 150 } });
     server = createApp({ platform: p, accounts: new Accounts(db, new ConsoleSms(), 'x'.repeat(40), Date.now, null, new ConsoleEmail()), buyers, ledger, prices: new PriceBook(), paystack: null, coins });
     await new Promise<void>((r) => server.listen(0, r));
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -86,11 +87,15 @@ describe.skipIf(!localChainAvailable())('coin orders through the buyer\'s own va
     expect(await p.pub.readContract({ address: vault, abi: ownerAbi, functionName: 'owner' })).toBe(ada.account.address);
     expect((await ada.call('/api/coins/vault', {})).json).toMatchObject({ vault, created: false });       // once per buyer
 
-    // Deposit from the buyer's own wallet; the cap is enforced by the vault itself.
+    // Deposit from the buyer's own wallet; the cap is enforced by the vault itself. StockRun's 1.5% is paid on top,
+    // straight to StockRun's fee wallet, in the same transaction; the vault gets the full deposit.
+    const walletBefore = await balance(ada.account.address);
     await ada.send(p.token, tokenAbi, 'approve', [vault, p.money.toToken(1_000_000)]);
     await ada.send(vault, ownerAbi, 'deposit', [p.money.toToken(60_000)]);
     await expect(ada.send(vault, ownerAbi, 'deposit', [p.money.toToken(20_000)])).rejects.toThrow(/OverCap/);
-    expect((await ada.call('/api/me/coins')).json.vault).toMatchObject({ vault, naira: { balance: 60_000, free: 60_000 } });
+    expect((await ada.call('/api/me/coins')).json.vault).toMatchObject({ vault, depositFeeBps: 150, naira: { balance: 60_000, free: 60_000 } });
+    expect(await balance(FEE_WALLET)).toBe(p.money.toToken(900));                                       // 1.5% of 60,000
+    expect(walletBefore - await balance(ada.account.address)).toBe(p.money.toToken(60_900));
 
     // First try: the seller is not in the vault yet, so nothing is proposed; the wallet approves them (instant).
     const first = (await ada.call('/api/coins/deals', deal)).json;

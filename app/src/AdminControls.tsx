@@ -105,10 +105,10 @@ export function DepositsPanel() {
         <ul className="cards">{rows.map((d) => (
           <li key={d.reference} className="card stack tight">
             <span className="row between"><strong>{naira(d.amountNaira)} · {d.buyer}</strong><span className="pill">{d.status}</span></span>
-            <span className="fine">{d.reference} · started {when(d.createdAt)}{d.chargeNaira ? ` · Paystack charge ${naira(d.chargeNaira)}` : ''}</span>
+            <span className="fine">{d.reference} · started {when(d.createdAt)}{d.feeNaira ? ` · StockRun fee ${naira(d.feeNaira)}` : ''}{d.chargeNaira ? ` · Paystack charge ${naira(d.chargeNaira)}` : ''}</span>
             <div className="row wrap">
               {d.status === 'mismatch' && <>
-                <button className="btn primary small" disabled={busy} onClick={() => confirm(`Credit ${d.buyer} with what Paystack actually received (minus the charge)?`) && act(() => server.adminDepositResolve(d.reference, 'credit'), 'Credited.')}>Credit what Paystack received</button>
+                <button className="btn primary small" disabled={busy} onClick={() => confirm(`Credit ${d.buyer} with what Paystack actually received (minus Paystack's charge and StockRun's fee)?`) && act(() => server.adminDepositResolve(d.reference, 'credit'), 'Credited.')}>Credit what Paystack received</button>
                 <button className="btn ghost small" disabled={busy} onClick={() => confirm('Refund this payment to the payer through Paystack? Nothing is credited.') && act(() => server.adminDepositResolve(d.reference, 'refund'), 'Refund asked of Paystack.')}>Refund through Paystack</button>
               </>}
               {d.status === 'started' && <button className="btn ghost small" disabled={busy} onClick={() => act(async () => { const r = await server.adminDepositRecheck(d.reference); if (r.status === 'pending') throw new Error('Paystack says it is not paid (yet).'); }, 'Checked with Paystack.')}>Check with Paystack</button>}

@@ -16,7 +16,7 @@ import { IN_NIGERIA, type Buyers } from '../buyers/buyers.ts';
 import { tokenAbi, type Platform } from '../chain/platform.ts';
 import { verifySendrelayWebhook } from '../logistics/sendrelay.ts';
 import { kobo, toNaira, LedgerError, type Ledger } from '../money/ledger.ts';
-import { PaystackError, depositCharge, type Paystack } from '../money/paystack.ts';
+import { PaystackError, type Paystack } from '../money/paystack.ts';
 import { SELF_HANDLER } from '../orders/nairaOrders.ts';
 import { RESTOCK_REASONS } from '../tools/vault.ts';
 import { foundNear, foundSeller, huntEnabled, huntSellers, type HuntDeps } from '../discovery/hunt.ts';
@@ -188,7 +188,7 @@ export function createApp(o: AppOptions): Server {
     // ---------------------------------------------------------------- me
     ['GET', /^\/api\/config$/, async () => ({
       chainId: p.chain.id, network: p.name, token: p.token, tokenSymbol: p.tokenSymbol, explorerTx: p.explorerTx,
-      naira: { paystack: !!paystack, test: paystack?.test ?? true, depositChargePaidByBuyer: !!paystack?.charge, testCredit: !!o.demoNaira || (!paystack && !!p.faucet),
+      naira: { paystack: !!paystack, test: paystack?.test ?? true, depositChargePaidByBuyer: !!paystack?.charge, depositFeePercent: (paystack?.feeBps ?? 0) / 100, testCredit: !!o.demoNaira || (!paystack && !!p.faucet),
         fee: { percent: buyers.orders.fee.bps / 100, minNaira: buyers.orders.fee.minKobo / 100, maxNaira: buyers.orders.fee.maxKobo / 100 } },
       logistics: p.carriers.map((x) => ({ id: x.id, name: x.name, api: !!x.connector })),
       emailSignIn: accounts.emailSignIn,
@@ -425,10 +425,11 @@ export function createApp(o: AppOptions): Server {
       codeRequests.set(`bank:${c.ip}`, [...hits, t]);
       return adminTryAsync(() => o.payouts!.sellerSubmitBank(c.m[1], c.body ?? {}));
     }],
-    /** What a deposit costs: the deposit plus Paystack's charge (the balance gets the full deposit). */
+    /** What a deposit costs: the deposit, StockRun's fee and Paystack's charge (the balance gets the full deposit). */
     ['GET', /^\/api\/naira\/deposit-quote$/, async (c) => {
-      const n = Math.round(Number(c.url.searchParams.get('amountNaira')) || 0), charge = depositCharge(kobo(n), paystack?.charge ?? null);
-      return { amountNaira: n, chargeNaira: charge / 100, totalNaira: n + charge / 100 };
+      const n = Math.max(0, Math.round(Number(c.url.searchParams.get('amountNaira')) || 0));
+      const q = paystack ? paystack.quote(kobo(n)) : { amountKobo: kobo(n), feeKobo: 0, chargeKobo: 0, totalKobo: kobo(n) };
+      return { amountNaira: n, feeNaira: q.feeKobo / 100, feePercent: (paystack?.feeBps ?? 0) / 100, chargeNaira: q.chargeKobo / 100, totalNaira: q.totalKobo / 100 };
     }],
     /** The buyer takes spendable naira out to their own bank. */
     ['POST', /^\/api\/naira\/withdraw$/, async (c) => {
@@ -510,7 +511,7 @@ export function createApp(o: AppOptions): Server {
       admin(c);
       if (!paystack) return [];
       const status = c.url.searchParams.get('status') || undefined;
-      return paystack.deposits(status, 100).map((d) => ({ ...d, amountNaira: d.amountKobo / 100, chargeNaira: d.chargeKobo / 100, buyer: o.payouts!.buyerLabel(d.userId) }));
+      return paystack.deposits(status, 100).map((d) => ({ ...d, amountNaira: d.amountKobo / 100, feeNaira: d.feeKobo / 100, chargeNaira: d.chargeKobo / 100, buyer: o.payouts!.buyerLabel(d.userId) }));
     }],
     /** Ask Paystack again about a deposit that was started (e.g. the webhook never came): credits it if it is paid. */
     ['POST', /^\/api\/admin\/deposits\/([A-Za-z0-9_-]{6,80})\/recheck$/, async (c) => {

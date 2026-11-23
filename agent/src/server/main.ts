@@ -30,7 +30,7 @@ import { Listings } from '../business/listings.ts';
 import { Chats } from '../business/chat.ts';
 import { Posts } from '../business/posts.ts';
 import { loadSuppliers, supplierKey, useDemoSellers } from '../tools/suppliers.ts';
-import type { Hash } from 'viem';
+import type { Address, Hash } from 'viem';
 import { WebSellerSearch } from '../discovery/webSearch.ts';
 import { geminiClient } from '../llm.ts';
 import { circuitEvaluator, envValue, localPlatform, xlayerPlatform, type Platform } from '../chain/platform.ts';
@@ -77,8 +77,9 @@ const ledger = new Ledger(db);
 const prices = new PriceBook();
 // Naira orders: the ledger holds the money; circuits #1-#3 decide every payment through eval on the platform's chain.
 let buyers: Buyers;
-// StockRun's service fee, paid by the buyer on completed pickups (the seller always gets the full agreed price).
-const fee = { bps: Math.round(Number(envValue(env, 'FEE_PERCENT') ?? 1.5) * 100), minKobo: Math.round(Number(envValue(env, 'FEE_MIN_NAIRA') ?? 100) * 100), maxKobo: Math.round(Number(envValue(env, 'FEE_MAX_NAIRA') ?? 10_000) * 100) };
+// An optional order fee, paid by the buyer on completed pickups (the seller always gets the full agreed price). Off by
+// default (FEE_PERCENT=0): StockRun charges its 1.5% on deposits instead (DEPOSIT_FEE_PERCENT below).
+const fee = { bps: Math.round(Number(envValue(env, 'FEE_PERCENT') ?? 0) * 100), minKobo: Math.round(Number(envValue(env, 'FEE_MIN_NAIRA') ?? 100) * 100), maxKobo: Math.round(Number(envValue(env, 'FEE_MAX_NAIRA') ?? 10_000) * 100) };
 const orders = new NairaOrders({ db, ledger, fee, evalCircuit: circuitEvaluator(p), supplierStatus: (k, u) => buyers.sellerStatus(k, u), carriers: () => buyers.carrierKeys() });
 // data/suppliers.json holds simulated bot sellers, used on the local chain only (see useDemoSellers above).
 buyers = new Buyers(db, p, ledger, orders, { extractor, channel: new BotChannel(), prices, log, foundDb: db, sellerHidden: (id: string) => listings.hidden(id), sellerDelayMs: Number(envValue(env, 'SELLER_APPROVAL_DELAY_HOURS') ?? 0) * 3600_000, dataDir: network === 'local' ? null : dirname(dbFile) });
@@ -87,9 +88,11 @@ const publicUrl = envValue(env, 'PUBLIC_URL') ?? `http://localhost:${port}`;
 // Sign-in is by email or wallet. Phone sign-in is off (no SMS sender); accounts made earlier by phone still work.
 const noSms = { send: async () => { throw new AuthError(503, 'Phone sign-in is off. Use email or a wallet.'); } };
 const accounts = new Accounts(db, noSms, secret, Date.now, null, mail);
-// Paystack's fee on deposits is paid by the buyer on top (PAYSTACK_CHARGE_BUYER=0: StockRun absorbs it).
+// StockRun's fee: DEPOSIT_FEE_PERCENT (1.5) of every naira deposit, paid by the buyer on top. Paystack's own charge is
+// also paid by the buyer on top (PAYSTACK_CHARGE_BUYER=0: StockRun absorbs it). The buyer's balance gets the full deposit.
+const depositFeeBps = Math.round(Number(envValue(env, 'DEPOSIT_FEE_PERCENT') ?? 1.5) * 100);
 const paystack = paystackKey ? new Paystack(db, ledger, { secretKey: paystackKey, callbackUrl: `${publicUrl}/?deposit=done`,
-  depositCharge: envValue(env, 'PAYSTACK_CHARGE_BUYER') === '0' ? null : PAYSTACK_LOCAL }) : null;
+  depositCharge: envValue(env, 'PAYSTACK_CHARGE_BUYER') === '0' ? null : PAYSTACK_LOCAL, depositFeeBps }) : null;
 // Free demo naira and real naira must never share a ledger: a live key refuses DEMO_NAIRA.
 if (paystack && !paystack.test && envValue(env, 'DEMO_NAIRA') === '1') throw new Error('DEMO_NAIRA=1 hands out free naira, which would mix with real deposits under a live Paystack key. Remove DEMO_NAIRA from .env.');
 
@@ -132,7 +135,11 @@ const withdrawals = paystack ? new Withdrawals(db, ledger, paystack, Date.now, {
 // Coin orders through each buyer's own vault. The vault is unaudited, so deposits stop at COIN_VAULT_CAP_USD (default
 // $50; on the local chain the test token is naira, so the cap is that many dollars' worth at ₦1,500).
 const capUsd = Number(envValue(env, 'COIN_VAULT_CAP_USD') ?? 50);
-const coins = envValue(env, 'COIN_ORDERS') === 'off' || !(capUsd > 0) ? null : new CoinOrders({ db, platform: p, log,
+// StockRun's 1.5% on every coin deposit (COIN_DEPOSIT_FEE_PERCENT), paid on top by the buyer's wallet straight to
+// COIN_FEE_ADDRESS (default: StockRun's payout wallet). Fixed in each vault when it is created.
+const coinFeeBps = Math.round(Number(envValue(env, 'COIN_DEPOSIT_FEE_PERCENT') ?? 1.5) * 100);
+const coinFeeTo = (envValue(env, 'COIN_FEE_ADDRESS') ?? p.supplierPayout) as Address;
+const coins = envValue(env, 'COIN_ORDERS') === 'off' || !(capUsd > 0) ? null : new CoinOrders({ db, platform: p, log, fee: coinFeeBps > 0 ? { recipient: coinFeeTo, bps: coinFeeBps } : null,
   capTokens: network === 'xlayer' ? BigInt(Math.round(capUsd * 1e6)) : p.money.toToken(capUsd * 1_500) });
 const admins = adminList(envValue(env, 'ADMIN_EMAILS'));
 
