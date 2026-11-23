@@ -729,7 +729,7 @@ function Orders({ cfg, wallet, onChange, goAsk }: { cfg: Config; wallet: User['w
         {past.length > 0 && <><h2 className="section-label">Done</h2><ul className="cards">{past.map(card)}</ul></>}
       </>)}
       {requests.length > 0 && (
-        <details className="more"><summary>Your requests to the demo agent ({requests.length})</summary>
+        <details className="more"><summary>{cfg.demoSellers ? 'Your requests to the demo agent' : 'Your requests to the agent'} ({requests.length})</summary>
           <ul className="cards">{requests.map((r) => (
             <li key={r.id} className="card stack"><strong>{r.text}</strong><span className="fine">Budget {naira(r.budgetNaira)} · {r.place.address} · {r.delivery === 'self' ? 'collect' : 'delivery'}</span><pre className="reply">{r.message}</pre></li>
           ))}</ul>
