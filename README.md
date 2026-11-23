@@ -336,7 +336,10 @@ StockRun's fee, Paystack's charge and the total before they pay.
 - **Paying sellers their naira for coin orders automatically:** the vault pays StockRun's payout wallet on-chain;
   StockRun then pays the seller in naira by hand (the admin page lists who is owed).
 - **Delivery by a logistics company:** built and tested with Sendrelay's test mode; needs a live Sendrelay account.
-  The buyer pays the delivery fee to the company directly.
+  The buyer pays the delivery fee to the company directly. The live site never shows a simulated courier; to see the
+  delivery flow, run it away from the live site: `cd agent && npm run serve` (a simulated logistics company on a local
+  chain, choose **Deliver it**) or `npm run rehearse:xlayer` (a full courier order against the real circuits on a fork
+  of X Layer: PickupCheck pays the seller, DeliveryCheck records the delivery and pays nobody).
 - **Google Maps sellers:** built; needs billing.
 - **Wholesaler coverage:** OpenStreetMap lists few Lagos wholesalers, so many results are supermarkets.
 
